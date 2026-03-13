@@ -1,0 +1,482 @@
+#!/usr/bin/env python3
+"""
+feat_nature_browser.py  Nature browser and recommender
+
+Displays all 25 natures and their stat effects.
+When a Pokémon is loaded, also shows the concrete stat-point impact of each
+nature on that Pokémon's base stats, and gives a top-3 role-aware recommendation.
+
+Natures were introduced in Gen 3. A warning is shown for Gen 1/2 games but the
+feature is always accessible — the user may want to browse natures regardless.
+
+Nature data is fetched from PokeAPI once and cached in cache/natures.json.
+The data never changes between games.
+
+Entry points:
+  run(game_ctx=None, pkm_ctx=None)   called from pokemain
+  main()                             standalone
+"""
+
+import sys
+
+try:
+    import pkm_cache as cache
+except ModuleNotFoundError as e:
+    print(f"\n  ERROR: {e}")
+    print("  Make sure all files are in the same folder.\n")
+    sys.exit(1)
+
+
+# ── Static data ───────────────────────────────────────────────────────────────
+
+# Short display labels for stat names (PokeAPI slugs → abbreviations)
+STAT_SHORT = {
+    "attack":          "Atk",
+    "defense":         "Def",
+    "special-attack":  "SpA",
+    "special-defense": "SpD",
+    "speed":           "Spe",
+}
+
+# Canonical display order for the nature table (grouped by boosted stat)
+_NATURE_ORDER = [
+    # Atk boosters
+    "Lonely", "Brave", "Adamant", "Naughty",
+    # Def boosters
+    "Bold", "Relaxed", "Impish", "Lax",
+    # SpA boosters
+    "Modest", "Mild", "Quiet", "Rash",
+    # SpD boosters
+    "Calm", "Gentle", "Sassy", "Careful",
+    # Spe boosters
+    "Timid", "Hasty", "Jolly", "Naive",
+    # Neutral (no effect)
+    "Hardy", "Docile", "Serious", "Bashful", "Quirky",
+]
+
+# Generation in which natures were introduced
+_NATURE_MIN_GEN = 3
+
+
+# ── Role-aware scorer ─────────────────────────────────────────────────────────
+
+def _role_score(inc: str | None, dec: str | None, stats: dict) -> float:
+    """
+    Compute a role-aware desirability score for a nature on a given Pokémon.
+
+    Returns 0.0 for neutral natures (inc/dec both None).
+
+    Scoring model:
+      role_score = boost_value - cut_value
+        boost_value = base_stat[inc] × 0.1 × weight(inc)
+        cut_value   = base_stat[dec] × 0.1 × weight(dec)
+
+    weight(stat) depends on three factors:
+      1. Attacking role  (Atk vs SpA, threshold 1.2×)
+           key attacking stat   → 1.5  (directly powers damage)
+           dump attacking stat  → 0.3  (cutting it is nearly free)
+      2. Speed tier  (Spe ≥ 90 = fast, 70–89 = mid, < 70 = slow)
+           fast → 1.0, mid → 0.6, slow → 0.2
+      3. Bulk relevance  (Def / SpD)
+           weight = min(stat / 80, 1.0)  so low bulk hurts less to cut
+    """
+    if inc is None:
+        return 0.0
+
+    atk = stats.get("attack", 1) or 1
+    spa = stats.get("special-attack", 1) or 1
+    spe = stats.get("speed", 1) or 1
+    df  = stats.get("defense", 1) or 1
+    spd = stats.get("special-defense", 1) or 1
+
+    # Attacking role
+    if atk >= spa * 1.2:
+        key_atk, dump_atk = "attack", "special-attack"
+    elif spa >= atk * 1.2:
+        key_atk, dump_atk = "special-attack", "attack"
+    else:
+        key_atk, dump_atk = None, None     # mixed: neither is clearly the dump
+
+    # Speed tier weight
+    if spe >= 90:   spe_w = 1.0
+    elif spe >= 70: spe_w = 0.6
+    else:           spe_w = 0.2
+
+    def _weight(stat: str) -> float:
+        if stat == key_atk:   return 1.5
+        if stat == dump_atk:  return 0.3
+        if stat == "speed":   return spe_w
+        if stat == "defense": return min(df / 80.0, 1.0)
+        if stat == "special-defense": return min(spd / 80.0, 1.0)
+        return 0.8     # mixed attacker: treat both attack stats as moderately important
+
+    boost_val = stats[inc] * 0.1 * _weight(inc)
+    cut_val   = stats[dec] * 0.1 * _weight(dec)
+    return boost_val - cut_val
+
+
+def _infer_role(stats: dict) -> str:
+    """Return 'physical', 'special', or 'mixed' based on Atk vs SpA."""
+    atk = stats.get("attack", 1) or 1
+    spa = stats.get("special-attack", 1) or 1
+    if atk >= spa * 1.2:
+        return "physical"
+    if spa >= atk * 1.2:
+        return "special"
+    return "mixed"
+
+
+def _infer_speed_tier(stats: dict) -> str:
+    """Return 'fast', 'mid', or 'slow' based on base Speed."""
+    spe = stats.get("speed", 0)
+    if spe >= 90:   return "fast"
+    if spe >= 70:   return "mid"
+    return "slow"
+
+
+# ── Net stat-point calculation ────────────────────────────────────────────────
+
+def _net_pts(inc: str | None, dec: str | None, stats: dict) -> tuple[int, int]:
+    """
+    Return (gain_pts, loss_pts) for a nature on a given Pokémon.
+    Uses floor(base_stat × 0.1) as an approximation of the ±10% effect.
+    Both values are non-negative; caller formats them with +/- signs.
+    Returns (0, 0) for neutral natures.
+    """
+    if inc is None:
+        return 0, 0
+    return int(stats[inc] * 0.1), int(stats[dec] * 0.1)
+
+
+# ── Display ───────────────────────────────────────────────────────────────────
+
+# Column widths (content only; GAP added uniformly between columns)
+_C_NAME =  12   # nature name
+_C_STAT =   5   # stat abbreviation
+_C_PTS  =   6   # +pts / -pts values
+_C_NET  =   5   # net value
+_GAP    = "  "  # 2-space separator between every column
+_MINUS  = "\u2212"  # Unicode minus sign (−), defined outside f-strings
+                    # for Python < 3.12 compatibility
+
+
+def _table_header(with_pts: bool) -> str:
+    """Build the header row for the nature table."""
+    _ms = _MINUS + "Stat"
+    r = f"  {'Nature':<{_C_NAME}}{_GAP}{'+Stat':<{_C_STAT}}{_GAP}{_ms:<{_C_STAT}}"
+    if with_pts:
+        _mp = _MINUS + "pts"
+        r += f"{_GAP}{'+pts':>{_C_PTS}}{_GAP}{_mp:>{_C_PTS}}{_GAP}{'net':>{_C_NET}}"
+    return r
+
+
+def _table_row(name: str, inc_s: str, dec_s: str,
+               gain: int | None = None, loss: int | None = None,
+               net: int | None = None) -> str:
+    """Build one data row for the nature table."""
+    r = f"  {name:<{_C_NAME}}{_GAP}{inc_s:<{_C_STAT}}{_GAP}{dec_s:<{_C_STAT}}"
+    if gain is not None:
+        r += (f"{_GAP}{'+'+str(gain):>{_C_PTS}}"
+              f"{_GAP}{'-'+str(loss):>{_C_PTS}}"
+              f"{_GAP}{net:>+{_C_NET}d}")
+    return r
+
+
+def _group_label(boosted: str | None) -> str:
+    if boosted is None:
+        return "Neutral (no stat change)"
+    return f"{STAT_SHORT[boosted]} boosters"
+
+
+def _print_nature_table(natures: dict, stats: dict | None) -> None:
+    """
+    Print the full 25-nature table.
+    If stats is provided, add +pts / -pts / net columns.
+    """
+    with_pts = stats is not None
+    header   = _table_header(with_pts)
+    sep      = "  " + "─" * (len(header) - 2)
+
+    # Group natures by boosted stat for display
+    groups = {}   # boosted_stat_or_None → [nature_name, ...]
+    for name in _NATURE_ORDER:
+        entry = natures.get(name)
+        if entry is None:
+            continue
+        key = entry["increased"]   # None for neutral
+        groups.setdefault(key, []).append(name)
+
+    group_order = ["attack", "defense", "special-attack",
+                   "special-defense", "speed", None]
+
+    first_group = True
+    for gkey in group_order:
+        names_in_group = groups.get(gkey, [])
+        if not names_in_group:
+            continue
+        if not first_group:
+            print()
+        first_group = False
+        print(f"\n  {_group_label(gkey)}")
+        print(header)
+        print(sep)
+        for name in names_in_group:
+            entry = natures[name]
+            inc   = entry["increased"]
+            dec   = entry["decreased"]
+            inc_s = STAT_SHORT.get(inc, "—") if inc else "—"
+            dec_s = STAT_SHORT.get(dec, "—") if dec else "—"
+
+            if with_pts:
+                if inc:
+                    gain, loss = _net_pts(inc, dec, stats)
+                    print(_table_row(name, inc_s, dec_s, gain, loss, gain - loss))
+                else:
+                    # Neutral nature: show dashes in pts/net columns
+                    row = (f"  {name:<{_C_NAME}}{_GAP}{'—':<{_C_STAT}}{_GAP}{'—':<{_C_STAT}}"
+                           f"{_GAP}{'—':>{_C_PTS}}{_GAP}{'—':>{_C_PTS}}{_GAP}{'—':>{_C_NET}}")
+                    print(row)
+            else:
+                print(_table_row(name, inc_s, dec_s))
+
+
+_C_RANK = 14    # "1. Modest     " — rank + nature name column
+
+def _print_top5(natures: dict, stats: dict, form_name: str) -> None:
+    """
+    Print the top-5 role-aware nature recommendations for a Pokémon.
+    Effect column shows base stats + delta for full context,
+    e.g.  109+10 SpA,  84−8 Atk
+    """
+    role = _infer_role(stats)
+    tier = _infer_speed_tier(stats)
+
+    scored = []
+    for name, entry in natures.items():
+        inc = entry["increased"]
+        dec = entry["decreased"]
+        if inc is None:
+            continue    # neutral natures never recommended
+        rs         = _role_score(inc, dec, stats)
+        gain, loss = _net_pts(inc, dec, stats)
+        scored.append((rs, name, inc, dec, gain, loss))
+
+    scored.sort(key=lambda r: r[0], reverse=True)
+    top5 = scored[:5]
+
+    print(f"\n  Top-5 recommended natures for {form_name}  [{role}, {tier} speed]")
+    hdr = (f"  {'':<{_C_RANK}}{_GAP}{'Boost':<{_C_STAT}}"
+           f"{_GAP}{'Cut':<{_C_STAT}}{_GAP}Effect")
+    print(hdr)
+    print("  " + "─" * (len(hdr) + 12))
+    for rank, (rs, name, inc, dec, gain, loss) in enumerate(top5, 1):
+        inc_s  = STAT_SHORT[inc]
+        dec_s  = STAT_SHORT[dec]
+        effect = f"{stats[inc]}+{gain} {inc_s},  {stats[dec]}{_MINUS}{loss} {dec_s}"
+        label  = f"{rank}. {name}"
+        print(f"  {label:<{_C_RANK}}{_GAP}{inc_s:<{_C_STAT}}{_GAP}{dec_s:<{_C_STAT}}{_GAP}{effect}")
+    print()
+
+
+# ── Main feature entry point ──────────────────────────────────────────────────
+
+def run(game_ctx=None, pkm_ctx=None) -> None:
+    """
+    Nature browser entry point.  Always accessible; warns for Gen 1/2 games.
+    Shows the full 25-nature table, with per-stat impact if a Pokémon is loaded,
+    and a top-3 role-aware recommendation if a Pokémon is loaded.
+    """
+    # Gen 1/2 warning
+    if game_ctx is not None:
+        game_gen = game_ctx.get("game_gen", 1)
+        if game_gen < _NATURE_MIN_GEN:
+            game_name = game_ctx.get("game", f"Gen {game_gen}")
+            print(f"\n  ⚠  Natures did not exist in {game_name}.")
+            print(    "     They were introduced in Generation 3 (Ruby / Sapphire).")
+            print(    "     The table below is shown for reference only.\n")
+
+    # Fetch natures from cache / PokeAPI
+    natures = cache.get_natures_or_fetch()
+    if natures is None:
+        print("\n  Could not load nature data (network unavailable and no cache).")
+        return
+
+    # Reorder to canonical display order (fill in any that are in cache but not
+    # in our static order list — unlikely but safe)
+    ordered = {k: natures[k] for k in _NATURE_ORDER if k in natures}
+    for k in natures:
+        if k not in ordered:
+            ordered[k] = natures[k]
+
+    stats = None
+    form_name = None
+    if pkm_ctx is not None:
+        stats = pkm_ctx.get("base_stats")
+        if not isinstance(stats, dict) or not stats:
+            stats = None
+        form_name = pkm_ctx.get("form_name", pkm_ctx.get("pokemon", "?"))
+
+    if stats:
+        print(f"\n  Nature impact for {form_name}")
+        print( "  (±pts = approximate stat change at base stat level; "
+               "actual values depend on level, EVs, IVs)")
+    else:
+        print("\n  All natures  (load a Pokémon to see stat impact)")
+
+    _print_nature_table(ordered, stats)
+
+    if stats:
+        _print_top5(ordered, stats, form_name)
+
+
+# ── Standalone entry point ────────────────────────────────────────────────────
+
+def main() -> None:
+    run()
+
+
+# ── Unit tests ────────────────────────────────────────────────────────────────
+
+def _run_tests(with_cache: bool = False) -> None:
+    passed = 0
+    failed = 0
+
+    def check(label, condition):
+        nonlocal passed, failed
+        if condition:
+            passed += 1
+            print(f"  PASS  {label}")
+        else:
+            failed += 1
+            print(f"  FAIL  {label}")
+
+    # ── _infer_role ───────────────────────────────────────────────────────────
+    check("role: Machamp physical (Atk 130, SpA 65)",
+          _infer_role({"attack": 130, "special-attack": 65}) == "physical")
+    check("role: Alakazam special (Atk 45, SpA 135)",
+          _infer_role({"attack": 45, "special-attack": 135}) == "special")
+    check("role: mixed when ratio < 1.2× (Atk 85, SpA 90 → 1.06×)",
+          _infer_role({"attack": 85, "special-attack": 90}) == "mixed")
+    check("role: exactly 1.2× threshold is physical",
+          _infer_role({"attack": 120, "special-attack": 100}) == "physical")
+    check("role: just below 1.2× threshold is mixed",
+          _infer_role({"attack": 119, "special-attack": 100}) == "mixed")
+
+    # ── _infer_speed_tier ─────────────────────────────────────────────────────
+    check("speed tier: 90 → fast",  _infer_speed_tier({"speed": 90})  == "fast")
+    check("speed tier: 89 → mid",   _infer_speed_tier({"speed": 89})  == "mid")
+    check("speed tier: 70 → mid",   _infer_speed_tier({"speed": 70})  == "mid")
+    check("speed tier: 69 → slow",  _infer_speed_tier({"speed": 69})  == "slow")
+    check("speed tier: 30 → slow",  _infer_speed_tier({"speed": 30})  == "slow")
+
+    # ── _net_pts ──────────────────────────────────────────────────────────────
+    # Modest (+SpA/-Atk) on Charizard (SpA 109, Atk 84)
+    gain, loss = _net_pts("special-attack", "attack",
+                          {"attack": 84, "special-attack": 109})
+    check("net_pts: Modest Charizard gain=10 (floor(109*0.1))", gain == 10)
+    check("net_pts: Modest Charizard loss=8  (floor(84*0.1))",  loss == 8)
+
+    # Neutral nature
+    gain0, loss0 = _net_pts(None, None, {"attack": 100, "special-attack": 100})
+    check("net_pts: neutral → (0, 0)", gain0 == 0 and loss0 == 0)
+
+    # ── _role_score ───────────────────────────────────────────────────────────
+    # Charizard (special, fast): Modest > Timid > Adamant
+    charizard = {"attack": 84, "defense": 78, "special-attack": 109,
+                 "special-defense": 85, "speed": 100}
+    modest_s  = _role_score("special-attack", "attack",    charizard)
+    timid_s   = _role_score("speed",          "attack",    charizard)
+    adamant_s = _role_score("attack",         "special-attack", charizard)
+    check("role_score Charizard: Modest > Timid",   modest_s  > timid_s)
+    check("role_score Charizard: Modest > Adamant", modest_s  > adamant_s)
+    check("role_score Charizard: Adamant negative", adamant_s < 0)
+
+    # Machamp (physical, slow): Adamant > Modest
+    machamp = {"attack": 130, "defense": 80, "special-attack": 65,
+               "special-defense": 85, "speed": 55}
+    adamant_m = _role_score("attack",         "special-attack", machamp)
+    modest_m  = _role_score("special-attack", "attack",         machamp)
+    check("role_score Machamp: Adamant > Modest", adamant_m > modest_m)
+    check("role_score Machamp: Adamant positive", adamant_m > 0)
+
+    # Snorlax (physical, slow): Brave (+Atk/-Spe) better than Lonely (+Atk/-Def)
+    # because cutting useless speed (weight 0.2) hurts much less than cutting Def
+    snorlax = {"attack": 110, "defense": 65, "special-attack": 65,
+               "special-defense": 110, "speed": 30}
+    brave_s  = _role_score("attack", "speed",   snorlax)
+    lonely_s = _role_score("attack", "defense", snorlax)
+    check("role_score Snorlax: Brave > Lonely (cutting Spe is nearly free)", brave_s > lonely_s)
+
+    # Neutral nature always scores 0.0
+    check("role_score neutral → 0.0",
+          _role_score(None, None, charizard) == 0.0)
+
+    # ── _NATURE_ORDER completeness ────────────────────────────────────────────
+    check("_NATURE_ORDER has exactly 25 entries", len(_NATURE_ORDER) == 25)
+    check("_NATURE_ORDER has no duplicates",      len(set(_NATURE_ORDER)) == 25)
+
+    # ── STAT_SHORT coverage ───────────────────────────────────────────────────
+    for stat in ("attack", "defense", "special-attack", "special-defense", "speed"):
+        check(f"STAT_SHORT has '{stat}'", stat in STAT_SHORT)
+
+    # ── withcache tests ───────────────────────────────────────────────────────
+    if with_cache:
+        natures = cache.get_natures_or_fetch()
+        check("withcache: natures dict is non-empty",
+              isinstance(natures, dict) and len(natures) > 0)
+        check("withcache: exactly 25 natures",
+              len(natures) == 25)
+
+        # Spot-check a few known natures
+        check('withcache: Adamant present',   "Adamant" in natures)
+        check('withcache: Modest present',    "Modest"  in natures)
+        check('withcache: Hardy present',     "Hardy"   in natures)
+
+        adamant = natures.get("Adamant", {})
+        check('withcache: Adamant increases attack',
+              adamant.get("increased") == "attack")
+        check('withcache: Adamant decreases special-attack',
+              adamant.get("decreased") == "special-attack")
+
+        modest = natures.get("Modest", {})
+        check('withcache: Modest increases special-attack',
+              modest.get("increased") == "special-attack")
+        check('withcache: Modest decreases attack',
+              modest.get("decreased") == "attack")
+
+        hardy = natures.get("Hardy", {})
+        check('withcache: Hardy is neutral (increased=None)',
+              hardy.get("increased") is None)
+        check('withcache: Hardy is neutral (decreased=None)',
+              hardy.get("decreased") is None)
+
+        # All 25 entries must have name / increased / decreased keys
+        all_valid = all(
+            "name" in v and "increased" in v and "decreased" in v
+            for v in natures.values()
+        )
+        check("withcache: all entries have required keys", all_valid)
+
+        # Neutral count must be exactly 5
+        neutral_count = sum(1 for v in natures.values() if v["increased"] is None)
+        check("withcache: exactly 5 neutral natures", neutral_count == 5)
+
+    print()
+    if failed:
+        print(f"  {passed} passed, {failed} failed out of {passed+failed} tests.")
+        sys.exit(1)
+    else:
+        print(f"  {passed} passed, 0 failed out of {passed} tests.")
+        print("  All tests passed.")
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--autotest",  action="store_true")
+    parser.add_argument("--withcache", action="store_true")
+    args = parser.parse_args()
+    if args.autotest:
+        _run_tests(with_cache=args.withcache)
+    else:
+        main()
