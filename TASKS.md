@@ -49,7 +49,7 @@ No step is considered complete until **tests pass and documentation is updated**
 
 # 4.1 Create team moveset module
 
-Status: TO DO
+Status: IN PROGRESS
 
 Create new module:
 

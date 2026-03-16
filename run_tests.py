@@ -114,6 +114,7 @@ SUITES = [
     ("feat_team_loader",         "feat_team_loader.py",     ["--autotest"],               []),
     ("feat_team_analysis",        "feat_team_analysis.py",   ["--autotest"],               []),
     ("feat_team_offense",         "feat_team_offense.py",    ["--autotest"],               []),
+    ("feat_team_moveset",         "feat_team_moveset.py",    ["--autotest"],               []),
     # ── cache-dependent suites ────────────────────────────────────────────────
     ("feat_moveset (cache)",
         "feat_moveset.py",     ["--autotest", "--withcache"],

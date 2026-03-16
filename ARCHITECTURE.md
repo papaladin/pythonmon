@@ -22,6 +22,8 @@ pokemon-toolkit/
   feat_ability_browser.py   Feature: ability browser + Pokemon roster drill-in
   feat_team_loader.py       Feature: team context management (add/remove/view)
   feat_team_analysis.py     Feature: team defensive vulnerability table
+  feat_team_offense.py      Feature: team offensive type coverage (key O)
+  feat_team_moveset.py      Feature: team moveset synergy (key S)
   run_tests.py              Test runner (calls --autotest on each module)
   cache/                    Local JSON cache (see section 4)
 ```

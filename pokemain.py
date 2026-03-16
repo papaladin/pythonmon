@@ -37,6 +37,7 @@ try:
     import feat_team_loader
     import feat_team_analysis
     import feat_team_offense
+    import feat_team_moveset
     import pkm_cache as cache
     import pkm_pokeapi
 except ModuleNotFoundError as e:
@@ -119,48 +120,73 @@ def _print_menu(pkm_ctx, game_ctx, team_ctx=None):
     has_pkm  = pkm_ctx is not None
     has_game = game_ctx is not None
     both     = has_pkm and has_game
+
     print()
     _top()
     _print_context_lines(pkm_ctx, game_ctx, team_ctx)
     _sep()
 
-    # Pokemon-dependent features — only shown when both contexts are loaded
+    lines = []
+
+    # Pokemon-dependent features
     if both:
         for i, (label, _mod, _fn, np, ng, avail) in enumerate(PKM_FEATURES, start=1):
             if avail:
-                print(_box_line(f"{i}. {label}"))
+                lines.append(f"{i}. {label}")
             else:
                 short = label[:W-18]
-                print(_box_line(f"   {short:<{W-18}}  [coming soon]"))
-        print(_box_line())
+                lines.append(f"   {short:<{W-18}}  [coming soon]")
 
-    # Move lookup — only shown when game is loaded
+        lines.append("")
+
+    # Move lookup
     if has_game:
-        print(_box_line("M. Look up a move"))
-    print(_box_line("B. Browse Pokémon by type"))
-    print(_box_line("N. Browse natures / recommend for current Pokémon"))
-    print(_box_line("A. Ability browser"))
+        lines.append("M. Look up a move")
 
-    # Context management
+    # Browsing utilities
+    lines.append("B. Browse Pokémon by type")
+    lines.append("N. Browse natures / recommend for current Pokémon")
+    lines.append("A. Ability browser")
+
+    # Pokemon context
     if has_pkm:
-        print(_box_line("P. Load a different Pokemon"))
-        print(_box_line("R. Refresh data for current Pokemon"))
+        lines.append("P. Load a different Pokemon")
+        lines.append("R. Refresh data for current Pokemon")
     else:
-        print(_box_line("P. Load a Pokemon"))
+        lines.append("P. Load a Pokemon")
 
+    # Game context
     if has_game:
-        print(_box_line("G. Change game"))
+        lines.append("G. Change game")
     else:
-        print(_box_line("G. Select game"))
+        lines.append("G. Select game")
 
-    print(_box_line("T. Manage team  (load up to 6 Pokémon)"))
+    # Team management
+    lines.append("T. Manage team  (load up to 6 Pokémon)")
+
     if team_ctx is not None and feat_team_loader.team_size(team_ctx) > 0:
-        print(_box_line("V. Team defensive vulnerability analysis"))
-        print(_box_line("O. Team offensive coverage"))
-    print(_box_line("MOVE. Pre-load move table  (stats for all ~920 moves)"))
-    print(_box_line("W.    Pre-load TM/HM table (TM numbers in move lists)"))
-    print(_box_line())
-    print(_box_line("Q. Quit"))
+        lines.append("V. Team defensive vulnerability analysis")
+        lines.append("O. Team offensive coverage")
+        lines.append("S. Team moveset synergy")
+
+    lines.append("MOVE. Pre-load move table  (stats for all ~920 moves)")
+    lines.append("W.    Pre-load TM/HM table (TM numbers in move lists)")
+    lines.append("")
+    lines.append("Q. Quit")
+
+    # Remove duplicate menu lines while preserving order
+    seen = set()
+    for ln in lines:
+        if ln == "":
+            print(_box_line())
+            continue
+
+        if ln in seen:
+            continue
+
+        print(_box_line(ln))
+        seen.add(ln)
+
     _bot()
 
 
@@ -253,6 +279,14 @@ def main():
             else:
                 feat_team_analysis.run(team_ctx, game_ctx)
 
+        elif choice == "v":
+            if game_ctx is None:
+                print("\n  Select a game first (press G).")
+            elif feat_team_loader.team_size(team_ctx) == 0:
+                print("\n  Load a team first (press T).")
+            else:
+                feat_team_analysis.run(team_ctx, game_ctx)
+
         elif choice == "o":
             if game_ctx is None:
                 print("\n  Select a game first (press G).")
@@ -260,6 +294,14 @@ def main():
                 print("\n  Load a team first (press T).")
             else:
                 feat_team_offense.run(team_ctx, game_ctx)
+
+        elif choice == "s":
+            if game_ctx is None:
+                print("\n  Select a game first (press G).")
+            elif feat_team_loader.team_size(team_ctx) == 0:
+                print("\n  Load a team first (press T).")
+            else:
+                feat_team_moveset.run(team_ctx, game_ctx)
 
         elif choice == "move":
             existing = cache.get_moves()
@@ -317,6 +359,14 @@ def main():
 
         elif choice == "a":
             feat_ability_browser.run(game_ctx=game_ctx, pkm_ctx=pkm_ctx)
+
+        elif choice == "v":
+            if game_ctx is None:
+                print("\n  Select a game first (press G).")
+            elif feat_team_loader.team_size(team_ctx) == 0:
+                print("\n  Load a team first (press T).")
+            else:
+                feat_team_analysis.run(team_ctx, game_ctx)
 
         # ── Pokemon-dependent features ────────────────────────────────────────
 

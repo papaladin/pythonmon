@@ -403,3 +403,29 @@ hitting type, comma-separated after the member abbreviation.
 
 ### Tests
 44 tests in this module. Full suite: 544 offline tests, 0 failures.
+
+---
+
+## §65 — Step 4.1: feat_team_moveset.py stub created
+
+### What changed
+- New file: `feat_team_moveset.py` — team moveset synergy module (stub)
+- Modified: `run_tests.py` — new suite added
+- Modified: `ARCHITECTURE.md` — new module documented
+
+### Why
+Step 4.1 per TASKS.md: create the module skeleton and wire it into the test runner
+before implementing the full scoring logic (step 4.2).
+
+### Key decisions
+- **Stub approach**: `recommend_team_movesets` iterates team slots and returns
+  `_empty_member_result` dicts (correct shape, empty move lists). Full scoring deferred to 4.2.
+- **`_empty_member_result(form_name)`** defines the agreed member result structure:
+  `form_name`, `moves`, `weakness_types`, `se_types`. Shape is tested offline.
+- **`_mode_prompt()`** implemented now: `(C)overage / co(U)nter / (S)TAB`.
+- **`run()`** entry point exists and guards empty team; calls `_mode_prompt()` then prints a stub message.
+- **`_MODES` constant** maps key letters to mode strings — tested for completeness.
+- No menu wiring in `pokemain.py` yet — deferred to step 4.4.
+
+### Test count
+11 tests in this module. Full suite: 555 offline tests, 0 failures.
