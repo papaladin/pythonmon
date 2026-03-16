@@ -746,6 +746,13 @@ def build_candidate_pool(pkm_ctx: dict, game_ctx: dict) -> dict:
     # ── Auto-fetch move details not yet in cache ──────────────────────────────
     # This means the user never needs to manually run "Full learnable move list"
     # before requesting a moveset recommendation.
+    #
+    # KEY RULE: always save under `name` (the learnset display name), NOT under
+    # the API canonical name.  Learnset entries use _slug_to_display() which
+    # produces e.g. "Double Edge" (no hyphen).  The API canonical name is
+    # "Double-Edge" (hyphen).  Saving under the canonical name creates a key
+    # mismatch: the next get_move("Double Edge") call still returns None, so the
+    # move is re-fetched on every single session.
     missing = [n for n in all_names if cache.get_move(n) is None]
     if missing:
         import pkm_pokeapi as pokeapi
@@ -754,11 +761,8 @@ def build_candidate_pool(pkm_ctx: dict, game_ctx: dict) -> dict:
         for i, name in enumerate(missing, start=1):
             print(f"  {i}/{total}  {name:<28}", end="\r", flush=True)
             try:
-                entries   = pokeapi.fetch_move(name)
-                slug      = pokeapi._name_to_slug(name)
-                data      = pokeapi._get(f"move/{slug}")
-                canonical = pokeapi._en_name(data.get("names", []), None) or name
-                cache.upsert_move(canonical, entries)
+                entries = pokeapi.fetch_move(name)
+                cache.upsert_move(name, entries)
             except (ValueError, ConnectionError):
                 pass   # leave as skipped — scored as missing
         print(f"  Done.                                   ")
@@ -2092,6 +2096,76 @@ def _run_tests():
     # Dragon Dance (tier 2, q=9) must be #1; Swords Dance (tier 2, q=8) must be #2
     check("Charizard: Dragon Dance ranked 1st", charzi_ranked[0]["name"] == "Dragon Dance")
     check("Charizard: Swords Dance ranked 2nd", charzi_ranked[1]["name"] == "Swords Dance")
+
+    # ── build_candidate_pool: cache-key bug regression ────────────────────────
+    #
+    # Moves whose learnset display name differs from the API canonical name
+    # (e.g. "Double Edge" vs "Double-Edge") were previously saved under the
+    # canonical name, causing get_move("Double Edge") to return None on every
+    # subsequent call and triggering an infinite re-fetch loop.
+    #
+    # Fix: upsert_move(name, entries) — always save under the learnset key.
+    #
+    # We verify this with a minimal fake cache + fake pokeapi that records
+    # which key was passed to upsert_move.
+    import tempfile, os, json
+
+    _saved_keys = []
+
+    class _FakeCache:
+        def get_learnset_or_fetch(self, *a, **kw):
+            return {"forms": {"TestMon": {"level-up": [{"move": "Double Edge"}]}}}
+        def get_move(self, name):
+            # Simulate: "Double Edge" not cached, "Double-Edge" also not cached
+            return None
+        def upsert_move(self, name, entries):
+            _saved_keys.append(name)
+
+    class _FakePokeapi:
+        def fetch_move(self, name):
+            return [{"from_gen": 1, "to_gen": None, "type": "Normal",
+                     "category": "Physical", "power": 120, "accuracy": 100,
+                     "pp": 15, "priority": 0, "drain": 0,
+                     "effect_chance": 0, "ailment": "none"}]
+
+    # Patch module-level names used inside build_candidate_pool
+    import sys as _sys
+    _mod = _sys.modules[__name__]
+    _orig_cache_mod   = None
+    _orig_pokeapi_mod = None
+
+    # build_candidate_pool does `import pkm_cache as cache` and
+    # `import pkm_pokeapi as pokeapi` locally — we inject via sys.modules
+    _real_pkm_cache   = _sys.modules.get("pkm_cache")
+    _real_pkm_pokeapi = _sys.modules.get("pkm_pokeapi")
+    _sys.modules["pkm_cache"]   = _FakeCache()
+    _sys.modules["pkm_pokeapi"] = _FakePokeapi()
+
+    _fake_pkm_ctx = {
+        "form_name": "TestMon", "type1": "Normal", "type2": "None",
+        "pokemon": "testmon", "variety_slug": "testmon",
+        "species_gen": 1, "form_gen": 1,
+        "base_stats": {"hp": 80, "attack": 80, "defense": 80,
+                       "special-attack": 80, "special-defense": 80, "speed": 80},
+    }
+    _fake_game_ctx = {"game": "Red / Blue", "era_key": "era1",
+                      "game_gen": 1, "game_slug": "red-blue"}
+
+    try:
+        build_candidate_pool(_fake_pkm_ctx, _fake_game_ctx)
+    except Exception:
+        pass  # pool may be empty — we only care about the saved key
+    finally:
+        # Restore
+        if _real_pkm_cache   is not None: _sys.modules["pkm_cache"]   = _real_pkm_cache
+        else:                              del _sys.modules["pkm_cache"]
+        if _real_pkm_pokeapi is not None: _sys.modules["pkm_pokeapi"] = _real_pkm_pokeapi
+        else:                              del _sys.modules["pkm_pokeapi"]
+
+    check("build_candidate_pool: move saved under learnset name, not canonical",
+          "Double Edge" in _saved_keys)
+    check("build_candidate_pool: hyphenated canonical name NOT used as cache key",
+          "Double-Edge" not in _saved_keys)
 
     # ── Summary ───────────────────────────────────────────────────────────────
 

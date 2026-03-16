@@ -429,3 +429,74 @@ before implementing the full scoring logic (step 4.2).
 
 ### Test count
 11 tests in this module. Full suite: 555 offline tests, 0 failures.
+
+---
+
+## §70 — Step 4.4: team offensive coverage summary implemented
+
+### What changed
+- Modified: `feat_team_moveset.py` — `build_offensive_coverage`,
+  `_display_coverage_summary`, updated `display_team_movesets`; tests 45 → 61
+- Modified: `TASKS.md` — all steps 4.1–4.4 marked complete; history table updated
+- Modified: `ARCHITECTURE.md` — added §7 Public API entries for
+  `feat_team_offense` and `feat_team_moveset` (both had been missing since §65)
+- Modified: `ROADMAP.md` — Step 4 progress updated
+
+### Why
+Step 4.4 per TASKS.md: aggregate the `se_types` already computed per member
+into a team-level coverage summary, and replace the 4.3 stub footer with it.
+
+### Key decisions
+- **Input is `member_results`, not `team_ctx`**: `build_offensive_coverage`
+  takes the list already returned by `recommend_team_movesets`. The spec
+  says "must NOT recompute movesets" — passing `team_ctx` would invite
+  accidental re-computation. Receiving the result list makes the constraint
+  structurally enforced.
+- **`era_key` explicit parameter**: the function needs `CHARTS[era_key]`
+  for the valid-type list. Passing it separately keeps the function pure and
+  avoids threading a full `game_ctx` into what is otherwise a data-only
+  aggregator.
+- **Overlap threshold ≥3**: matches the spec exactly.
+- **Overlap sorted descending by count, then alphabetically**: deterministic
+  output regardless of insertion order.
+- **`_display_coverage_summary` is a display-only function**: it prints and
+  returns nothing. Tested via stdout capture.
+- **Gaps line / Overlap line conditional**: only printed when non-empty.
+  Full-coverage case shows `Full coverage!` instead of an empty gaps line.
+- **§7 ARCHITECTURE catch-up**: `feat_team_offense` and `feat_team_moveset`
+  both lacked Public API entries since they were added. Fixed here alongside
+  4.4 rather than creating separate history entries for documentation-only
+  changes.
+
+### Bugs found during testing
+None. All 61 tests passed on first run.
+
+### Test count
+61 tests in this module. Full suite: 605 offline tests, 0 failures.
+
+---
+
+## §71 — Step 4.5: menu integration verified; Step 4 closed
+
+### What changed
+- Modified: `README.md` — S feature section rewritten with proper markdown;
+  test counts updated (feat_moveset_data 152→154, feat_team_moveset 11→61)
+- Modified: `ROADMAP.md` — Step 4 marked ✅ Done; added to completed features table
+- Modified: `TASKS.md` — 4.5 marked complete; overall Step 4 status set to ✅ COMPLETE;
+  recently-completed table updated
+- Modified: `ARCHITECTURE.md` — no further changes needed (updated in §70)
+- No code changes
+
+### Why
+Step 4.5 closure pass. The pokemain.py wiring (import, menu line, handler,
+context guards) was already added in §65 and required no changes.
+
+### Verification
+All four 4.5 checkpoints confirmed against the live pokemain.py:
+1. `feat_team_moveset` import is inside the `try/except ModuleNotFoundError` block (line 40)
+2. `S. Team moveset synergy` gated behind `team_size > 0` — same condition as V and O (line 167–170)
+3. Handler guards present: `game_ctx is None` and empty-team check (lines 298–304)
+4. `feat_team_moveset.run(team_ctx, game_ctx)` called correctly in the happy path
+
+### Test count
+No new tests. Full suite: 605 offline tests, 0 failures.

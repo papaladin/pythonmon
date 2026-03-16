@@ -267,6 +267,42 @@ Team defensive analysis.
 - `display_team_analysis(team_ctx, game_ctx)`  Full table to stdout
 - `run(team_ctx, game_ctx)`  Called from pokemain; calls display + waits for Enter
 
+### feat_team_offense.py
+Team offensive coverage table (key O).
+
+- `build_team_offense(team_ctx, era_key) → dict`  Per-type hitter list
+- `build_offense_rows(team_offense, era_key) → list`  One row per era type, sorted
+- `coverage_gaps(rows) → list`  Types with zero SE coverage across the team
+- `display_team_offense(team_ctx, game_ctx)`  Full table to stdout (fetches learnsets)
+- `run(team_ctx, game_ctx)`  Called from pokemain; key O
+
+### feat_team_moveset.py
+Team moveset synergy (key S).
+
+- `_weakness_types(pkm_ctx, era_key) → list[str]`  Types that hit this Pokemon SE
+- `_se_types(combo, era_key) → list[str]`  Types hit SE by at least one combo move
+- `_format_weak_line(weakness_types) → str`  Weak line string for display
+- `_format_move_pair(left, right) → str`  Side-by-side move pair, left col 22 chars
+- `_format_se_line(se_types, era_key) → str`  SE count / total string
+- `build_offensive_coverage(member_results, era_key) → dict`
+  Aggregates `se_types` from all member result dicts. Returns `covered`,
+  `gaps`, `overlap` (≥3 members, sorted desc), `counts`, `total_types`.
+  Pure — does not recompute movesets or call the scoring engine.
+- `recommend_team_movesets(team_ctx, game_ctx, mode) → list[dict]`
+  One member result dict per filled slot. Calls `build_candidate_pool` +
+  `select_combo` from `feat_moveset_data`; no scoring logic duplicated.
+  Graceful degradation: empty pool → shaped result with empty lists.
+- `display_team_movesets(results, game_ctx, mode)`  Full screen to stdout;
+  member blocks + coverage summary
+- `run(team_ctx, game_ctx)`  Called from pokemain; key S
+
+Member result dict keys: `form_name`, `types` (list[str]), `moves` (list[dict]),
+`weakness_types` (list[str]), `se_types` (list[str]).
+
+Depends on: `feat_team_loader` (team_slots, team_size), `feat_moveset_data`
+(build_candidate_pool, select_combo), `matchup_calculator` (compute_defense,
+get_multiplier, CHARTS).
+
 ---
 
 ## 8. Interface contracts

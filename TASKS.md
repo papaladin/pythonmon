@@ -3,7 +3,7 @@
 # STEP 4 — Team moveset synergy
 
 **Roadmap item:** Team features / Step 4
-**Status:** NOT STARTED
+**Status:** ✅ COMPLETE — all steps done (§66–§71)
 
 Goal:
 
@@ -49,347 +49,89 @@ No step is considered complete until **tests pass and documentation is updated**
 
 # 4.1 Create team moveset module
 
-Status: IN PROGRESS
+Status: ✅ COMPLETE (§66)
 
-Create new module:
+Created module `feat_team_moveset.py` with:
 
-```
-feat_team_moveset.py
-```
+* `_MODES` constant mapping key letters to mode strings
+* `_empty_member_result(form_name)` defining the agreed result structure
+* `recommend_team_movesets(team_ctx, game_ctx, mode)` — stub returning shaped dicts
+* `_mode_prompt()` — interactive `(C)overage / co(U)nter / (S)TAB` selector
+* `run(team_ctx, game_ctx)` — entry point with empty-team guard
+* 14 offline tests; all pass
 
-Responsibilities when all steps are done:
+`feat_moveset.py` was not modified.
 
-* orchestrate team-level moveset recommendations
-* aggregate per-member results
-* compute team coverage
-* format team display
-
-Constraint:
-
-```
-feat_moveset.py must NOT be modified
-```
-
-Prompt user for a mode before computing movesets:
-
-```
-(C)overage
-co(U)nter
-(S)TAB
-```
-
-Mode applies to **all 6 team members**.
-
-
-After mode choice, the new module will **reuse the engine of feat_moveset.py**.
-But that is mainly foreseen to be done in the next tasks steps, for now a stub will do.
-
-
-### Tests
-
-Add `_run_tests()` to the module.
-
-Initial tests should verify:
-
-* module imports correctly
-* minimal team context can be processed
-* placeholder structures for member results work
-
-Tests must be **fully offline**.
-
-### Test runner integration
-
-Update:
-
-```
-run_tests.py
-```
-
-Add the new module test suite.
-
-Verify the global test count.
-
-### Documentation updates
-
-Update:
-
-* `ARCHITECTURE.md`
-  Add the new module and its role.
-
-* `HISTORY.md`
-  Record module creation.
-
-* `TASKS.md`
-  Mark 4.1 as completed when done.
-
-
+**Note:** `pokemain.py` wiring (import, menu key `S`, handler, context guards)
+was added ahead of schedule. This covers the integration work planned for step 4.5.
+Verify before closing 4.5.
 
 ---
 
 # 4.2 Implement team moveset recommendation
 
-Status: TO DO
+Status: ✅ COMPLETE (§67)
 
-Add function:
+Added to `feat_team_moveset.py`:
 
-```
-recommend_team_movesets(team_ctx, game_ctx, mode) in feat_team_moveset.py
-```
+* `_weakness_types(pkm_ctx, era_key) → list[str]`
+* `_se_types(combo, era_key) → list[str]`
+* `recommend_team_movesets` — real engine calling `build_candidate_pool` +
+  `select_combo` per slot; graceful degradation on empty pool
 
-Behavior:
-
-* iterate over all team slots
-* run the same scoring engine used in Option 4
-* compute the best moveset for each member
-* return all results
-
-Return type:
-
-```
-list[TeamMemberMoveset]
-```
-
-Each result must contain:
-
-* Pokémon identifier
-* recommended moves
-* weakness summary
-* super-effective coverage count
-
-Constraint:
-
-Team logic must **reuse the existing engine** from `feat_moveset.py`.
-It must **not duplicate scoring logic**.
-
-### Tests
-
-Add tests verifying:
-
-* moveset generation for a fake team
-* each member returns ≤4 moves
-* coverage modes behave consistently
-
-Use **fake move pools** to avoid network calls.
-
-Ensure test fixtures include **≥4 move types** to avoid coverage deduplication.
-
-### Test runner integration
-
-If necessary, update `run_tests.py` with new tests.
-
-Verify:
-
-```
-python run_tests.py --offline
-```
-
-All tests pass.
-
-### Documentation updates
-
-Update:
-
-* `ARCHITECTURE.md`
-  Document interaction between `feat_team_moveset` and `feat_moveset`.
-
-* `HISTORY.md`
-  Record implementation of team moveset engine.
-
-* `TASKS.md`
-  Mark step 4.2 complete.
+36 offline tests; all pass. `feat_moveset.py` was not modified.
 
 ---
 
 # 4.3 Implement compact team display
 
-Status: TO DO
+Status: ✅ COMPLETE (§68)
 
-Each member block must display:
+Added to `feat_team_moveset.py`:
 
-```
-[Pokemon Name]
-Weakness: Fire / Rock / Electric
-Move1      Move2
-Move3      Move4
-SE hits: X
-```
+* `_format_weak_line(weakness_types) → str`
+* `_format_move_pair(left, right) → str`  left col 22 chars; `"—"` for None
+* `_format_se_line(se_types, era_key) → str`
+* `_display_member_block(result, era_key)`  5-line block per member
+* `display_team_movesets(results, game_ctx, mode)`  full screen
+* `run()` updated to call `display_team_movesets`
+* `"types"` field added to member result dict
 
-Rules:
-
-* Maximum **4 moves**
-* **2-per-line layout**
-* show weakness line
-* show individual SE coverage count
-
-### Tests
-
-Add tests verifying:
-
-* formatting helpers
-* move layout structure
-* weakness summary formatting
-
-Tests should verify **data structure and formatting logic**, not exact print spacing.
-
-### Test runner integration
-
-Update `run_tests.py` if necessary
-
-Verify the full test suite passes.
-
-### Documentation updates
-
-Update:
-
-* `README.md`
-  Describe the new team display feature.
-
-* `HISTORY.md`
-  Record display implementation.
-
-* `TASKS.md`
-  Mark step 4.3 complete.
+45 offline tests; all pass.
 
 ---
 
 # 4.4 Implement team offensive coverage analysis
 
-Status: TO DO
+Status: ✅ COMPLETE (§70)
 
-Add function:
+Added to `feat_team_moveset.py`:
 
-```
-build_offensive_coverage(team_ctx, game_ctx)
-```
-Input:
-  result list returned by recommend_team_movesets() as performed in step 4.2
+* `build_offensive_coverage(member_results, era_key) → dict`
+  Aggregates `se_types` from each member result. Returns `covered`, `gaps`,
+  `overlap` (≥3 members), `counts`, `total_types`. Does not recompute movesets.
+* `_display_coverage_summary(coverage)` — Covered / Gaps / Overlap block
+* `display_team_movesets` updated to call both; stub footer removed
 
-Must NOT recompute movesets.
-Must only aggregate coverage from member_results.
-
-Responsibilities:
-
-* aggregate recommended moves from all members
-* compute super-effective coverage across all types
-
-Track:
-
-* types hit SE by >1 member
-* coverage gaps (0–1 coverage)
-* overlap (≥3 members coverage)
-
-Coverage score:
-
-```
-coverage_percent = covered_types / total_types
-```
-
-Example output:
-
-```
-Team coverage: 14 / 18 types hit SE
-Gaps: Dragon, Electric
-Overlap: Water (4), Ground (3)
-```
-
-### Tests
-
-Add tests verifying:
-
-* coverage aggregation
-* correct gap detection
-* overlap detection
-
-Edge cases:
-
-* empty team
-* single-type coverage
-
-### Test runner integration
-
-Update `run_tests.py`.
-
-Run full offline suite.
-
-### Documentation updates
-
-Update:
-
-* `ARCHITECTURE.md`
-  Document team coverage analysis logic.
-
-* `HISTORY.md`
-  Record coverage analysis feature.
-
-* `TASKS.md`
-  Mark step 4.4 complete.
+61 offline tests; all pass.
 
 ---
 
 # 4.5 Add menu integration
 
-Status: TO DO
+Status: ✅ COMPLETE (§71)
 
-Modify:
+`pokemain.py` wiring was added ahead of schedule in §65 and verified complete
+during the 4.5 closure pass (§71). All four checkpoints confirmed:
 
-```
-pokemain.py
-```
+1. `feat_team_moveset` import inside the `try/except ModuleNotFoundError` block
+2. Menu line `S. Team moveset synergy` gated behind `team_size > 0` (same
+   condition as V and O)
+3. Handler guards: `game_ctx is None` → "Select a game first";
+   empty team → "Load a team first"
+4. `feat_team_moveset.run(team_ctx, game_ctx)` called in the happy path
 
-Add menu key:
-
-```
-S — Team moveset synergy
-```
-
-Conditions:
-
-* team loaded
-* game loaded
-
-Handler must:
-
-1. prompt for mode
-
-```
-(C)overage
-co(U)nter
-(S)TAB
-```
-
-2. run team recommendation
-3. display results
-4. show team coverage summary
-
-### Tests
-
-Add minimal integration tests verifying:
-
-* module imports correctly
-* menu key is registered
-* handler executes without crash
-
-### Test runner integration
-
-Update `run_tests.py`.
-
-Run full suite.
-
-### Documentation updates
-
-Update:
-
-* `README.md`
-  Document new menu key.
-
-* `ROADMAP.md`
-  Mark Step 4 completed.
-
-* `HISTORY.md`
-  Record final integration.
-
-* `TASKS.md`
-  Replace this file with **Step 5** after completion.
+No code changes required.
 
 ---
 
@@ -403,11 +145,6 @@ Step 4 is complete when:
 * menu key `S` works
 * all offline tests pass
 * documentation is fully updated
-
-
-
-
-
 
 ---
 
@@ -423,6 +160,12 @@ Step 4 is complete when:
 
 | Task                                        | Outcome                                                                 | History |
 | ------------------------------------------- | ----------------------------------------------------------------------- | ------- |
+| Step 4.5: menu integration verified + docs  | `pokemain.py` confirmed; `README/ROADMAP/TASKS/HISTORY` closed          | §71     |
+| Step 4.4: team offensive coverage summary   | `feat_team_moveset.py` extended, 61 tests                               | §70     |
+| Step 4.3: compact team display              | `feat_team_moveset.py` extended, 45 tests                               | §68     |
+| Step 4.2: team moveset engine               | `feat_team_moveset.py` extended, 36 tests                               | §67     |
+| Step 4.1: module stub created               | `feat_team_moveset.py` created, 14 tests                                | §66     |
+| Bugfix: move cache key mismatch             | `feat_moveset_data.py` fixed, 2 regression tests                        | §69     |
 | Step 3b: best scored move inline in O table | `feat_team_offense.py` extended, 50 tests                               | §63     |
 | Step 3a: team offensive coverage by type    | `feat_team_offense.py`, O key, 38 tests                                 | §62     |
 | Step 2: team defensive analysis             | `feat_team_analysis.py`, V key, 58 tests                                | §60–§61 |

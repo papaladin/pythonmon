@@ -25,6 +25,7 @@
 | Quick view (option 1) | Base stats bar chart + abilities + type chart in one screen | §58 |
 | Team loader | Session-only team of up to 6 Pokemon; T key; add/remove/clear | §59 |
 | Team defensive analysis | Unified type table: weak/resist/immune per type, gap labels | §60–§61 |
+| Team moveset synergy | Per-member recommended movesets + team coverage summary; S key | §66–§71 |
 
 ---
 
@@ -49,7 +50,7 @@ Extend step 3a: instead of only using member types, check actual learnable moves
 - Progress indicator shown before learnset fetch (up to 6 × PokeAPI calls on first run)
 - Approach chosen: option C — extra move column embedded inline in the existing hitter cell
 
-### Step 4 — Team moveset synergy (⬜ Planned)
+### Step 4 — Team moveset synergy (✅ Done §66–§71)
 
 Run moveset recommendation for each member, then aggregate:
 - Show per-slot recommended moveset (Coverage / Counter / STAB, one mode per slot)

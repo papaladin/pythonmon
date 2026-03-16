@@ -278,45 +278,52 @@ A summary line at the bottom shows overall coverage count and lists gap types.
 
 ### S — Team moveset synergy
 
-Needs: team (at least 1 member) + game
+**Needs:** team (at least 1 member) + game
 
-Generates recommended 4-move movesets for every Pokémon in the team simultaneously, then evaluates the team’s overall offensive coverage.
-This feature extends the single-Pokémon moveset recommender (option 4) to operate at the team level.
-The recommendation engine runs automatically for all team members using the same scoring model used for individual movesets.
+Generates recommended 4-move movesets for every Pokémon in the team simultaneously,
+then evaluates the team's combined offensive coverage.
 
-Before running, you select one optimisation mode (Coverage, Counter, STAB) for the whole team. The same mode is applied to all team members to produce a coherent team strategy.
+Before running, you choose one optimisation mode applied to all members:
 
-**Output : **
-Results are shown in a compact block per team member, allowing a full 6-Pokémon team to fit on one screen.
+| Mode | Optimises for |
+|---|---|
+| Coverage | Maximum type diversity — hits the most types SE across the team |
+| Counter | Each member covers as many of its own weaknesses as possible |
+| STAB | Maximises same-type moves for each member |
 
-Example layout:
-Charizard
-Weakness: Rock / Electric / Water
-Flamethrower   Air Slash
-Solar Beam     Dragon Pulse
-SE hits: 6
+**Per-member block:**
 
-Each block shows: Pokémon name, defensive weaknesses, recommended 4-move moveset, number of opponent types the moveset hits super-effectively.
-Moves are displayed two per line for compact readability.
+```
+  Charizard  [Fire / Flying]
+  Weak:  Rock  Water  Electric  Ice
+  Flamethrower          Air Slash
+  Earthquake            Dragon Claw
+  SE: 6 / 18 types
+```
 
-**Team coverage summary**
+Each block shows: name and types, defensive weaknesses, the 4 recommended moves
+(2 per line), and how many types that moveset hits SE. `—` fills any empty slot
+when fewer than 4 scoreable moves exist in the pool.
 
-Below the member blocks, the toolkit prints a team-level offensive coverage summary:
--Team coverage: 14 / 18 types hit super-effectively
--Gaps: Dragon, Electric
--Overlap: Water (4), Ground (3)
+**Team coverage summary** (below all member blocks):
 
-Where:
--Coverage = number of opponent types hit SE by at least one team member
--Gaps = types with little or no SE coverage
--Overlap = types covered by several members (potential redundancy)
-This helps identify whether the team covers the full type chart, has major coverage gaps or has excessive overlap in attack types.
+```
+  ── Team coverage ────────────────────────────────────────────
+  Covered:  14 / 18 types hit SE
+  Gaps:     Dragon  Ghost  Normal
+  Overlap:  Water (5)  Ground (3)
+```
 
-Assumptions / limitations
--The engine uses recommended movesets, not the Pokémon’s current in-game moves.
--Coverage is calculated from the recommended moves, not the Pokémon’s types.
--Status moves may appear in recommendations based on the STATUS_MOVE_TIERS ranking used by the moveset engine.
--The system optimises team offensive potential, not defensive synergy.
+- **Covered** — types hit SE by at least one team member
+- **Gaps** — types with no SE coverage across the whole team
+- **Overlap** — types covered by 3 or more members (potential redundancy)
+
+**Assumptions / limitations:**
+- Uses recommended movesets, not the Pokémon's actual in-game moves.
+- Status moves may appear based on the `STATUS_MOVE_TIERS` ranking used by the engine.
+- Coverage is computed from the recommended combo, not from the Pokémon's types.
+- The engine optimises each member independently — it does not jointly optimise
+  the team as a unit.
 
 ---
 
@@ -374,14 +381,14 @@ Every module with testable logic has an `--autotest` flag (offline unless noted)
 | `python matchup_calculator.py --autotest` | 79 — type chart, all 3 eras, all multipliers |
 | `python pkm_cache.py` | 33 — read/write/invalidate/upsert/index/machines |
 | `python pkm_session.py --autotest` | 14 — cache upgrade, form selection, era/gen blocking |
-| `python feat_moveset_data.py --autotest` | 152 — scoring formula, combo selection, status ranking |
+| `python feat_moveset_data.py --autotest` | 154 — scoring formula, combo selection, status ranking |
 | `python feat_type_browser.py --autotest` | 41 (+8 cache) — gen derivation, name resolution |
 | `python feat_nature_browser.py --autotest` | 27 (+11 cache) — role inference, nature scoring |
 | `python feat_ability_browser.py --autotest` | 14 (+8 cache) — display helpers |
 | `python feat_team_loader.py --autotest` | 28 — team ops, summary line |
 | `python feat_team_analysis.py --autotest` | 58 — defense aggregation, gap labels, display |
 | `python feat_team_offense.py --autotest`  | 38 — offensive coverage, type-letter tags, gap detection |
-| `python feat_team_moveset.py --autotest`  | 11 — XXX (description missing, to update) |
+| `python feat_team_moveset.py --autotest`  | 61 — moveset engine, formatting helpers, coverage aggregation |
 | `python feat_moveset.py --autotest` | 28 (+1 cache) — breakdown, coverage, locked moves |
 | `python feat_move_lookup.py --autotest` | 12 (+2 cache) — formatting, coverage all eras |
 | `python feat_movepool.py --autotest` | 9 (+2 cache) — row formatting, section headers |
