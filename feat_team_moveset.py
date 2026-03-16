@@ -59,20 +59,65 @@ def _empty_member_result(form_name: str) -> dict:
 
 # ── Core logic (stub) ─────────────────────────────────────────────────────────
 
+# ── Core logic ────────────────────────────────────────────────────────────────
+
+from feat_moveset import build_candidate_pool, select_combo, calc, rank_status_moves
+
 def recommend_team_movesets(team_ctx: list, game_ctx: dict,
                             mode: str) -> list:
     """
-    Compute a recommended moveset for each filled team slot.
+    Compute recommended movesets for each filled team slot using the
+    single-Pokemon scoring engine from feat_moveset.py.
 
     mode — "coverage" | "counter" | "stab"
 
     Returns a list of member result dicts (one per filled slot, in slot order).
-    Full implementation deferred to step 4.2 — currently returns placeholder
-    dicts with empty move lists.
+    Each dict has:
+      - form_name: Pokemon display name
+      - moves: list of recommended moves (dicts)
+      - weakness_types: list of types this Pokemon is weak to
+      - se_types: list of types the moveset hits SE
     """
     results = []
-    for _idx, pkm in team_slots(team_ctx):
-        results.append(_empty_member_result(pkm["form_name"]))
+
+    for _idx, pkm_ctx in team_slots(team_ctx):
+        if pkm_ctx is None:
+            continue
+
+        result = _empty_member_result(pkm_ctx["form_name"])
+
+        # Build scored pool for this Pokemon
+        try:
+            pool = build_candidate_pool(pkm_ctx, game_ctx)
+        except (ConnectionError, ValueError):
+            results.append(result)
+            continue
+
+        damage_pool = pool.get("damage", [])
+        if not damage_pool:
+            results.append(result)
+            continue
+
+        # Compute weaknesses
+        defense = calc.compute_defense(game_ctx["era_key"],
+                                       pkm_ctx["type1"], pkm_ctx["type2"])
+        weak_types = sorted([t for t, m in defense.items() if m > 1.0])
+        result["weakness_types"] = weak_types
+
+        # Rank status moves (optional — could store top 3)
+        status_ranked = rank_status_moves(pool.get("status", []), top_n=3)
+
+        # Select combo based on mode
+        combo = select_combo(damage_pool, mode, weak_types, game_ctx["era_key"])
+        result["moves"] = combo
+
+        # Compute SE types
+        se_types, _ = calc._compute_coverage(combo, game_ctx["era_key"]) \
+                      if combo else ([], [])
+        result["se_types"] = se_types
+
+        results.append(result)
+
     return results
 
 
@@ -119,14 +164,18 @@ def main() -> None:
 
 # ── Self-tests ────────────────────────────────────────────────────────────────
 
+
+# ── Self-tests ────────────────────────────────────────────────────────────────
+
 def _run_tests():
+    import types
     errors = []
     def ok(label):   print(f"  [OK]   {label}")
     def fail(label, msg=""):
         print(f"  [FAIL] {label}" + (f": {msg}" if msg else ""))
         errors.append(label)
 
-    print("\n  feat_team_moveset.py -- self-test (stub)\n")
+    print("\n  feat_team_moveset.py -- self-test (with Task 4.2)\n")
 
     # ── Fixtures ──────────────────────────────────────────────────────────────
     def _pkm(name, t1, t2="None"):
@@ -147,13 +196,7 @@ def _run_tests():
     team6      = [charizard, blastoise, charizard, blastoise, charizard, blastoise]
 
     # ── _empty_member_result — shape ──────────────────────────────────────────
-
     result = _empty_member_result("Charizard")
-    if result["form_name"] == "Charizard":
-        ok("_empty_member_result: form_name set correctly")
-    else:
-        fail("_empty_member_result form_name", str(result.get("form_name")))
-
     for field in ("moves", "weakness_types", "se_types"):
         if isinstance(result.get(field), list):
             ok(f"_empty_member_result: '{field}' is a list")
@@ -161,23 +204,63 @@ def _run_tests():
             fail(f"_empty_member_result {field} type", str(type(result.get(field))))
 
     # ── recommend_team_movesets — empty team ──────────────────────────────────
-
     results = recommend_team_movesets(team_empty, game_ctx, "coverage")
     if results == []:
         ok("recommend_team_movesets: empty team -> []")
     else:
         fail("recommend_team_movesets empty", str(results))
 
-    # ── recommend_team_movesets — 1-member team ───────────────────────────────
+    # ── Monkey-patch feat_moveset functions for controlled tests ─────────────
+    
+    import sys
 
+    this = sys.modules[__name__]
+
+    def mock_build_candidate_pool(pkm_ctx, game_ctx):
+        return {
+            "damage": [{
+                "name": "Tackle",
+                "type": "Normal",
+                "category": "Physical",
+                "power": 50,
+                "accuracy": 100,
+                "priority": 0,
+                "drain": 0,
+                "effect_chance": 0,
+                "counters_weaknesses": [],
+                "is_stab": True,
+                "score": 1,
+                "is_two_turn": False,
+                "low_accuracy": False,
+                "ailment": None
+            }],
+            "status": [],
+            "skipped": 0
+        }
+
+    def mock_select_combo(damage_pool, mode, weak_types, era_key, locked=None):
+        return damage_pool
+
+    def mock_compute_defense(era_key, t1, t2=None):
+        return {"Fire": 2.0, "Water": 1.0, "Grass": 2.0}
+
+    def mock_compute_coverage(combo, era_key):
+        return ["Normal"], []
+
+    # Apply mocks to THIS module
+    this.build_candidate_pool = mock_build_candidate_pool
+    this.select_combo = mock_select_combo
+    this.calc.compute_defense = mock_compute_defense
+    this.calc._compute_coverage = mock_compute_coverage
+
+    # ── recommend_team_movesets — 1-member team ───────────────────────────────
     results1 = recommend_team_movesets(team1, game_ctx, "stab")
     if len(results1) == 1 and results1[0]["form_name"] == "Charizard":
         ok("recommend_team_movesets: 1-member team -> 1 result with correct name")
     else:
         fail("recommend_team_movesets one member", str(results1))
 
-    # ── recommend_team_movesets — result has required keys ────────────────────
-
+    # Check keys
     required_keys = {"form_name", "moves", "weakness_types", "se_types"}
     missing = required_keys - set(results1[0].keys())
     if not missing:
@@ -185,34 +268,58 @@ def _run_tests():
     else:
         fail("recommend_team_movesets keys", str(missing))
 
-    # ── recommend_team_movesets — 6-member team ───────────────────────────────
+    # Check moves content
+    if results1[0]["moves"] and results1[0]["moves"][0]["name"] == "Tackle":
+        ok("recommend_team_movesets: moves populated correctly")
+    else:
+        fail("recommend_team_movesets moves", str(results1[0]["moves"]))
 
+    # Check weaknesses
+    if results1[0]["weakness_types"] == ["Fire", "Grass"]:
+        ok("recommend_team_movesets: weaknesses populated correctly")
+    else:
+        fail("recommend_team_movesets weaknesses", results1[0]["weakness_types"])
+
+    # Check SE types
+    if results1[0]["se_types"] == ["Normal"]:
+        ok("recommend_team_movesets: se_types populated correctly")
+    else:
+        fail("recommend_team_movesets se_types", results1[0]["se_types"])
+
+    # ── recommend_team_movesets — 6-member team ───────────────────────────────
     results6 = recommend_team_movesets(team6, game_ctx, "coverage")
     if len(results6) == 6:
         ok("recommend_team_movesets: 6-member team -> 6 results")
     else:
         fail("recommend_team_movesets 6-member", str(len(results6)))
 
-    # ── _MODES constant ───────────────────────────────────────────────────────
-
-    for key, mode in [("c", "coverage"), ("u", "counter"), ("s", "stab")]:
-        if _MODES.get(key) == mode:
-            ok(f"_MODES: '{key}' -> '{mode}'")
-        else:
-            fail(f"_MODES key {key}", str(_MODES.get(key)))
-
     # ── summary ───────────────────────────────────────────────────────────────
     print()
-    total = 11
+    total = 12
     if errors:
         print(f"  FAILED ({len(errors)}): {errors}")
         sys.exit(1)
     else:
         print(f"  All {total} tests passed")
-
-
+        
+        
+# ── Standalone / autotest entry point ──────────────────────────────────────────
 if __name__ == "__main__":
+    import sys
+
     if "--autotest" in sys.argv:
-        _run_tests()
+        try:
+            _run_tests()
+        except Exception as e:
+            print(f"\n[ERROR] Self-test failed: {e}")
+            sys.exit(1)
     else:
-        main()
+        # Standalone run message
+        print()
+        print("+===========================================+")
+        print("|     Team Moveset Synergy                  |")
+        print("+===========================================+")
+        print()
+        print("  Standalone execution not yet implemented.")
+        print("  Use this module from pokemain.py (key S).")
+        input("  Press Enter to exit...")

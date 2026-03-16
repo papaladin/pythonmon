@@ -261,6 +261,11 @@ Add function:
 ```
 build_offensive_coverage(team_ctx, game_ctx)
 ```
+Input:
+  result list returned by recommend_team_movesets() as performed in step 4.2
+
+Must NOT recompute movesets.
+Must only aggregate coverage from member_results.
 
 Responsibilities:
 
