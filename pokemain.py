@@ -134,16 +134,6 @@ def _print_menu(pkm_ctx, game_ctx, team_ctx=None):
                 print(_box_line(f"   {short:<{W-18}}  [coming soon]"))
         print(_box_line())
 
-    # Team analysis — shown when team has members and game is loaded
-    if has_game and team_ctx is not None and feat_team_loader.team_size(team_ctx) > 0:
-        print(_box_line("V. Team vulnerability analysis"))
-        print(_box_line())
-
-    # Team features — only shown when game + at least 1 team member loaded
-    if has_game and feat_team_loader.team_size(team_ctx) > 0:
-        print(_box_line("V. Team vulnerability analysis"))
-        print(_box_line())
-
     # Move lookup — only shown when game is loaded
     if has_game:
         print(_box_line("M. Look up a move"))
@@ -263,14 +253,6 @@ def main():
             else:
                 feat_team_analysis.run(team_ctx, game_ctx)
 
-        elif choice == "v":
-            if game_ctx is None:
-                print("\n  Select a game first (press G).")
-            elif feat_team_loader.team_size(team_ctx) == 0:
-                print("\n  Load a team first (press T).")
-            else:
-                feat_team_analysis.run(team_ctx, game_ctx)
-
         elif choice == "o":
             if game_ctx is None:
                 print("\n  Select a game first (press G).")
@@ -335,14 +317,6 @@ def main():
 
         elif choice == "a":
             feat_ability_browser.run(game_ctx=game_ctx, pkm_ctx=pkm_ctx)
-
-        elif choice == "v":
-            if game_ctx is None:
-                print("\n  Select a game first (press G).")
-            elif feat_team_loader.team_size(team_ctx) == 0:
-                print("\n  Load a team first (press T).")
-            else:
-                feat_team_analysis.run(team_ctx, game_ctx)
 
         # ── Pokemon-dependent features ────────────────────────────────────────
 

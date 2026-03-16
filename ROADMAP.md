@@ -40,13 +40,14 @@ For each attacking type in the era, show how many team members can hit SE.
 - New file: `feat_team_offense.py`
 - New key: `O` in pokemain (visible when team loaded + game selected)
 
-### Step 3b — Team offensive coverage by learnable moves (⬜ Next)
+### Step 3b — Team offensive coverage by learnable moves (✅ Done §63)
 
 Extend step 3a: instead of only using member types, check actual learnable moves in cache.
-- For each member: fetch learnset, find moves that hit SE against each type
-- Richer gap detection: "can hit Electric SE, but only Blastoise with Thunderbolt"
-- Requires all 6 members to have learnsets cached
-- Potentially slow on first run (6 × PokeAPI calls) — show progress indicator
+- For each member: fetch learnset, score all learnable moves via `score_move()`
+- Display the best-scored move of the hitting type inline in the O table
+- Richer output: `Char(F,F):Flamethrower  Geng(P):Sludge Bomb`
+- Progress indicator shown before learnset fetch (up to 6 × PokeAPI calls on first run)
+- Approach chosen: option C — extra move column embedded inline in the existing hitter cell
 
 ### Step 4 — Team moveset synergy (⬜ Planned)
 
@@ -98,7 +99,7 @@ Given a partial team (1–5 members), suggest types / roles that would fill cove
 
 ## Out of scope (deliberate)
 
-- **GUI / web interface** — CLI by design; Thonny compatibility required
+- **GUI / web interface** — CLI by design; runs from any terminal
 - **Online multiplayer meta analysis** — this tool is for in-game teams, not competitive
 - **Database migration** — JSON cache is sufficient; SQLite documented as future option only
 - **Pip packages beyond requests** — hard constraint

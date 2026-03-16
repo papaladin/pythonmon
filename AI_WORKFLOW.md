@@ -18,6 +18,7 @@ At the start of every session, or when picking up an unfinished task:
 4. If the task is architecturally significant, read `ARCHITECTURE.md`.
 5. Verify the working environment: `python run_tests.py --offline`
    All tests must pass before starting. If they do not, fix the environment first.
+6. Session Resume Protocol (AI handoff safety). If the assistant is continuing work started in a previous session, it must verify that the **documentation state matches the implementation state** before writing any code : TASKS.md & ROADMAP.md aligns with codebase. If inconsistencies are detected: Produce a **reconstruction summary** describing how to repair documentation. Once the user confirms and the project state is clarified, you can proceed to next step.
 
 ---
 
@@ -65,6 +66,80 @@ For any change that touches more than one function or adds a new file:
 For small changes (single function, display tweak, rename): skip the proposal
 and go directly to implementation, but still narrate what you are doing.
 
+
+---
+
+## 3.5 Design Freeze (mandatory for architectural or roadmap work)
+
+If the task involves **any of the following**, implementation MUST NOT begin immediately:
+
+* architectural decisions
+* feature design choices
+* breaking work into tasks or substeps
+* proposing a new module
+* proposing a new menu screen or feature
+* suggesting changes to the project roadmap
+* identifying future work during exploration
+
+Instead, the assistant must **produce a Design Freeze output first**.
+
+### Design Freeze output must contain
+
+1. **Design decisions**
+
+   * Chosen approach
+   * Alternatives considered
+   * Rationale
+
+2. **Architecture changes (if any)**
+
+   * New modules
+   * New data structures
+   * New dependencies between modules
+
+3. **Feature breakdown**
+
+   * List of tasks or subtasks required for implementation
+   * Any follow-up tasks discovered
+
+4. **Documentation updates required**
+
+   * `TASKS.md`
+   * `ROADMAP.md`
+   * `ARCHITECTURE.md`
+   * `README.md` (if relevant)
+
+5. **Implementation scope**
+
+   * Files that will be created
+   * Files that will be modified
+   * Test suites that will be added or updated
+
+### Important rule
+
+The assistant must **stop after presenting the Design Freeze output** and wait for the user to approve or modify it.
+
+No code should be written at this stage.
+
+### After approval
+
+Once the user confirms the plan:
+
+1. Update the relevant documentation files **before implementation begins**:
+
+   * `TASKS.md` — reflect the detailed task list
+   * `ROADMAP.md` — update progress or next step
+   * `ARCHITECTURE.md` — record architectural changes
+   * `README.md` if the user-visible feature set changes
+
+2. Only after documentation is updated may the assistant proceed to implementation.
+
+### Reason for this rule
+
+AI sessions can terminate unexpectedly.
+Capturing decisions and future work **before implementation** ensures that another AI can resume work without losing design context.
+
+
 ---
 
 ## 4. Write tests first (or alongside implementation)
@@ -99,7 +174,7 @@ Implementation order:
 During implementation:
 - Reuse existing helpers rather than reimplementing them.
   Key shared utilities: `_abbrev()`, `_names_cell()`, `calc.compute_defense()`,
-  `team_slots()`, `team_size()`, `select_pokemon()`, `select_game()`.
+  `team_slots()`, `team_size()`, `select_pokemon()`, `select_game()`. If an existing function performs ≥70% of the required behavior, reuse or extend it instead of writing a new one.
 - Match the style of surrounding code (indentation, comment style, docstring format).
 - Do not add new pip dependencies without explicit user approval.
 - If a function grows beyond ~50 lines, consider splitting it. The exception is
@@ -184,13 +259,20 @@ Update all of the following. None are optional.
 
 ## Quick reference — full workflow
 
-    0. Restore context     read TASKS.md, run tests --offline, verify all pass
-    1. Understand          clarify if ambiguous; propose breakdown if large
-    2. Explore             grep/sed/probe the relevant code — never assume
-    3. Plan                list files, functions, tests (skip for tiny changes)
-    4. Tests               inline fixtures, offline only, specific labels
-    5. Implement           logic first, display second, entry point last
-    6. Wire pokemain       import, menu line, handler, context guard
-    7. Full suite          run_tests.py --offline — zero failures
-    8. Docs                README + ROADMAP + TASKS + HISTORY (all four, always)
-    9. Deliver             copy outputs, present files, short summary
+## Quick reference — full workflow
+
+```
+0. Restore context     read TASKS.md, run tests --offline, verify all pass
+1. Understand          clarify if ambiguous; propose breakdown if large
+2. Explore             grep/sed/probe the relevant code — never assume
+3. Plan                list files, functions, tests
+3.5 Design Freeze      document decisions, architecture, tasks — WAIT for approval
+4. Update docs         TASKS / ROADMAP / ARCHITECTURE updated before coding
+5. Tests               inline fixtures, offline only, specific labels
+6. Implement           logic first, display second, entry point last
+7. Wire pokemain       import, menu line, handler, context guard
+8. Full suite          run_tests.py --offline — zero failures
+9. Final docs          README + ROADMAP + TASKS + HISTORY
+10. Deliver            copy outputs, present files, short summary
+```
+

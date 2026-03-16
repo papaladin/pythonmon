@@ -329,3 +329,77 @@ can hit super-effectively using their own types (STAB-based, no learnset lookup)
 
 ### Tests
 38 offline tests. Full suite: 538 tests, 0 failures.
+
+---
+
+## §63 — Step 3b: best scored move inline in offensive coverage table
+
+### What changed
+- Modified: `feat_team_offense.py` — extended O screen table with best-move enrichment
+
+### Why
+User requested option C: add the name of the best attacking move directly into
+the existing O table, next to each hitter's type-letter tag. The move scorer
+(`feat_moveset_data.score_move`) is used to pick the highest-scored STAB move of
+the hitting type from each member's learnset.
+
+### Key decisions
+- **Inline format** `Char(F,F):Flamethrower` — move name appended to the existing
+  hitter tag with `:` separator. Truncated to `_MOVE_NAME_LEN = 12` characters.
+  Keeps the table on a single row per type without a new column.
+- **`build_candidate_pool` reuse** — instead of re-implementing learnset scoring,
+  `_build_member_pools` calls `feat_moveset_data.build_candidate_pool` for each
+  hitter. The damage pool is already sorted by score descending; the first match
+  for the target type is the best move. Zero code duplication of the scoring formula.
+- **Best across hitting types** — when a dual-type member hits via multiple types
+  (e.g. Charizard vs Grass via Fire and Flying), both types are checked and the
+  single highest-scored move across all is shown.
+- **Graceful degradation** — if learnset or moves cache is unavailable, `best_move`
+  is None and the tag falls back to the original `Char(F,F)` format with no error.
+- **`hitting_types` field added** to `build_team_offense` hitter dicts alongside
+  the existing `hitting_letters`. Full type names are needed for move-type matching;
+  letters are kept for display. Backward compatible — new field only, no removals.
+- **Column width** widened: `_COL_HITTERS` 50 → 70, sized for ~3 hitters with names.
+- **Progress message** printed before learnset fetch: "Loading move data for N member(s)..."
+- **Only hitters fetched** — `_build_member_pools` skips members with no SE coverage,
+  avoiding unnecessary network calls.
+
+### Bugs found during testing
+None. All 50 tests passed on first run.
+
+### Test count
+50 tests in this module (38 original + 12 new).
+New tests cover: `_best_move_for_type` (4), `build_team_offense` hitting_types (3),
+`_hitter_tag` with/without best_move and truncation (3), `_hitters_cell` with moves (1),
+`_print_offense_table` move names in output (1).
+Full suite: 550 offline tests, 0 failures.
+
+---
+
+## §64 — Refine O screen: one move per hitting type, drop type letters
+
+### What changed
+- Modified: `feat_team_offense.py` — updated tag format and enrichment logic
+
+### Why
+Type letters inside parentheses became redundant once move names were shown.
+User requested: drop the letters and instead show one recommended move per
+hitting type, comma-separated after the member abbreviation.
+
+### Key decisions
+- **New format** `Char:Fire Blast, Wing Attack` — one move entry per hitting type
+  in the order they appear in `hitting_types`. Old format was `Char(F,F):Fire Blast`
+  (single best move across all hitting types). New format is more informative.
+- **Type-letter fallback per slot** — if no move is found for a specific hitting type
+  (e.g. no Flying-type damaging move in the learnset), that slot falls back to the
+  type's first letter: `Char:Fire Blast, F`. This preserves information.
+- **Full fallback** — if no move data at all (`best_moves` absent or all-None),
+  the original `Char(F,F)` bracket format is shown unchanged. Graceful degradation.
+- **`_hitter_tag` signature change** — takes `hitting_types` (full names) instead of
+  `hitting_letters`. Letters are derived as `type[0]` internally when needed for fallback.
+- **`_enrich_rows_with_moves`** — now populates `h["best_moves"]` (list, one entry per
+  hitting type) instead of `h["best_move"]` (single string). Aligned with `hitting_types`.
+- **`_hitters_cell`** — passes `h["hitting_types"]` and `h.get("best_moves")` to `_hitter_tag`.
+
+### Tests
+44 tests in this module. Full suite: 544 offline tests, 0 failures.
