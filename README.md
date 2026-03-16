@@ -46,6 +46,7 @@ machine tables in bulk — recommended before first moveset run.
   T   Manage team
   V   Team analysis        (needs team + game)
   O   Offensive coverage   (needs team + game)
+  S   Team moveset synergy (needs team + game)
   ─────────────────────────────────────────────
   MOVE  Pre-load move table
   W     Pre-load TM/HM table
@@ -275,6 +276,50 @@ A summary line at the bottom shows overall coverage count and lists gap types.
 
 ---
 
+### S — Team moveset synergy
+
+Needs: team (at least 1 member) + game
+
+Generates recommended 4-move movesets for every Pokémon in the team simultaneously, then evaluates the team’s overall offensive coverage.
+This feature extends the single-Pokémon moveset recommender (option 4) to operate at the team level.
+The recommendation engine runs automatically for all team members using the same scoring model used for individual movesets.
+
+Before running, you select one optimisation mode (Coverage, Counter, STAB) for the whole team. The same mode is applied to all team members to produce a coherent team strategy.
+
+**Output : **
+Results are shown in a compact block per team member, allowing a full 6-Pokémon team to fit on one screen.
+
+Example layout:
+Charizard
+Weakness: Rock / Electric / Water
+Flamethrower   Air Slash
+Solar Beam     Dragon Pulse
+SE hits: 6
+
+Each block shows: Pokémon name, defensive weaknesses, recommended 4-move moveset, number of opponent types the moveset hits super-effectively.
+Moves are displayed two per line for compact readability.
+
+**Team coverage summary**
+
+Below the member blocks, the toolkit prints a team-level offensive coverage summary:
+-Team coverage: 14 / 18 types hit super-effectively
+-Gaps: Dragon, Electric
+-Overlap: Water (4), Ground (3)
+
+Where:
+-Coverage = number of opponent types hit SE by at least one team member
+-Gaps = types with little or no SE coverage
+-Overlap = types covered by several members (potential redundancy)
+This helps identify whether the team covers the full type chart, has major coverage gaps or has excessive overlap in attack types.
+
+Assumptions / limitations
+-The engine uses recommended movesets, not the Pokémon’s current in-game moves.
+-Coverage is calculated from the recommended moves, not the Pokémon’s types.
+-Status moves may appear in recommendations based on the STATUS_MOVE_TIERS ranking used by the moveset engine.
+-The system optimises team offensive potential, not defensive synergy.
+
+---
+
 ## Supported games
 
 17 games across 3 type chart eras:
@@ -336,6 +381,7 @@ Every module with testable logic has an `--autotest` flag (offline unless noted)
 | `python feat_team_loader.py --autotest` | 28 — team ops, summary line |
 | `python feat_team_analysis.py --autotest` | 58 — defense aggregation, gap labels, display |
 | `python feat_team_offense.py --autotest`  | 38 — offensive coverage, type-letter tags, gap detection |
+| `python feat_team_moveset.py --autotest`  | 11 — XXX (description missing, to update) |
 | `python feat_moveset.py --autotest` | 28 (+1 cache) — breakdown, coverage, locked moves |
 | `python feat_move_lookup.py --autotest` | 12 (+2 cache) — formatting, coverage all eras |
 | `python feat_movepool.py --autotest` | 9 (+2 cache) — row formatting, section headers |
@@ -370,6 +416,7 @@ python run_tests.py --quiet   # summary table only
 | `feat_team_loader.py` | Key T: team context management |
 | `feat_team_analysis.py` | Key V: team defensive vulnerability table |
 | `feat_team_offense.py`  | Key O: team offensive type coverage |
+| `feat_team_moveset.py` | Key S: team-level moveset recommendations + coverage summary |
 | `run_tests.py` | Test runner for all suites |
 
 **Obsolete files** (safe to delete):
