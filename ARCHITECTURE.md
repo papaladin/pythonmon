@@ -81,12 +81,10 @@ in module-level globals.
 ```python
 {
     "pokemon"      : str,        # Species slug / search key  e.g. "sandslash"
-    "variety_slug" : str,        # PokeAPI variety slug  e.g. "sandslash-alola"
-                                 # PokeAPI form slug used to key the learnset
-                                 # cache and fetch the correct move list.
-                                 # Equals the variety slug in most cases
-                                 # (e.g. "sandslash-alola") but uses the form
-                                 # slug when the two differ (§80).
+    "variety_slug" : str,        # PokeAPI form slug used to key the learnset cache
+                                 # and fetch the correct move list. Equals the variety
+                                 # slug in most cases (e.g. "sandslash-alola") but uses
+                                 # the form slug when the two differ (§80).
     "form_name"    : str,        # Display name  e.g. "Alolan Sandslash"
     "types"        : list[str],  # e.g. ["Ice", "Steel"]
     "type1"        : str,        # e.g. "Ice"
@@ -95,6 +93,7 @@ in module-level globals.
     "form_gen"     : int,        # Generation this form was introduced
     "base_stats"   : dict,       # keys: hp, attack, defense,
                                  #       special-attack, special-defense, speed
+    "abilities"    : list[dict], # [{"slug": str, "is_hidden": bool}, ...]
 }
 ```
 
@@ -174,27 +173,30 @@ Key functions:
 
 This module is a pure library. It has no imports from this project.
 `matchup_calculator.py` is imported by: `pkm_session.py`, `pokemain.py`,
-`feat_type_matchup.py`, `feat_team_analysis.py`.
+`feat_type_matchup.py`, `feat_team_analysis.py`, `feat_team_offense.py`,
+`feat_team_moveset.py`, `feat_moveset_data.py`.
 
 ---
 
 ## 6. Move versioning schema
 
-Each entry in `moves.json` has a list of versioned sub-entries:
+Each entry in `moves.json` is a list of versioned sub-entries keyed directly
+by the move's display name:
 
 ```python
 {
-  "tackle": {
-    "category": "physical",
-    "versions": [
-      {"from_gen": 1, "to_gen": 5, "power": 35, "accuracy": 95, "pp": 35},
-      {"from_gen": 6, "to_gen": null, "power": 40, "accuracy": 100, "pp": 35}
-    ]
-  }
+  "Tackle": [
+    {"from_gen": 1, "to_gen": 5, "type": "Normal", "category": "Physical",
+     "power": 35, "accuracy": 95, "pp": 35, "priority": 0,
+     "drain": 0, "effect_chance": 0, "ailment": "none"},
+    {"from_gen": 6, "to_gen": None, "type": "Normal", "category": "Physical",
+     "power": 40, "accuracy": 100, "pp": 35, "priority": 0,
+     "drain": 0, "effect_chance": 0, "ailment": "none"}
+  ]
 }
 ```
 
-`to_gen: null` means "current generation". `from_gen` and `to_gen` are inclusive.
+`to_gen: None` means "current generation". `from_gen` and `to_gen` are inclusive.
 Resolution: find the entry where `from_gen <= game_gen <= to_gen`.
 
 ---
@@ -222,13 +224,16 @@ Called by feature standalone `main()` functions and by pokemain.
 Single gateway to all cached data. Feature files never open cache files directly.
 
 Key functions:
-- `get_move(name) → dict | None`
+- `get_move(name) → list | None`
+- `upsert_move(name, entries) → None`
+- `upsert_move_batch(batch) → None`
+- `check_integrity() → list[str]`  (empty list = clean cache)
 - `get_pokemon(slug) → dict | None`
 - `get_learnset(variety_slug, game_slug) → dict | None`
 - `get_type_roster(type_name) → list | None`
-- `get_natures() → list | None`
+- `get_natures() → dict | None`
 - `get_ability(slug) → dict | None`
-- `get_abilities_index() → list | None`
+- `get_abilities_index() → dict | None`
 - `save_*` counterparts for each
 
 ### pkm_pokeapi.py
@@ -278,8 +283,8 @@ Team offensive coverage table (key O).
 - `build_team_offense(team_ctx, era_key) → dict`  Per-type hitter list
 - `build_offense_rows(team_offense, era_key) → list`  One row per era type, sorted
 - `coverage_gaps(rows) → list`  Types with zero SE coverage across the team
-- `display_team_offense(team_ctx, game_ctx)`  Full table to stdout (fetches learnsets)
-- `run(team_ctx, game_ctx)`  Called from pokemain; key O
+- `display_team_offense(team_ctx, game_ctx, pool_cache=None)`  Full table to stdout (fetches learnsets)
+- `run(team_ctx, game_ctx, pool_cache=None)`  Called from pokemain; key O
 
 ### feat_team_moveset.py
 Team moveset synergy (key S).
@@ -293,13 +298,13 @@ Team moveset synergy (key S).
   Aggregates `se_types` from all member result dicts. Returns `covered`,
   `gaps`, `overlap` (≥3 members, sorted desc), `counts`, `total_types`.
   Pure — does not recompute movesets or call the scoring engine.
-- `recommend_team_movesets(team_ctx, game_ctx, mode) → list[dict]`
+- `recommend_team_movesets(team_ctx, game_ctx, mode, pool_cache=None) → list[dict]`
   One member result dict per filled slot. Calls `build_candidate_pool` +
   `select_combo` from `feat_moveset_data`; no scoring logic duplicated.
   Graceful degradation: empty pool → shaped result with empty lists.
 - `display_team_movesets(results, game_ctx, mode)`  Full screen to stdout;
   member blocks + coverage summary
-- `run(team_ctx, game_ctx)`  Called from pokemain; key S
+- `run(team_ctx, game_ctx, pool_cache=None)`  Called from pokemain; key S
 
 Member result dict keys: `form_name`, `types` (list[str]), `moves` (list[dict]),
 `weakness_types` (list[str]), `se_types` (list[str]).

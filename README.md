@@ -18,8 +18,11 @@ python pokemain.py
 
 Optional startup flags:
 ```
-python pokemain.py --refresh-moves     # force-refresh the full move table
-python pokemain.py --refresh-machines  # force-refresh the TM/HM table
+python pokemain.py --check-cache              # scan all cache files and report issues
+python pokemain.py --refresh-moves            # force-refresh the full move table
+python pokemain.py --refresh-pokemon <name>   # force-refresh one Pokemon's cached data
+python pokemain.py --refresh-learnset <name> <game>  # force-refresh one learnset
+python pokemain.py --refresh-all <name>       # force-refresh all data for a Pokemon
 ```
 
 First run requires a network connection to populate the cache. After that, all
@@ -263,16 +266,17 @@ A summary block below the table lists any gap types grouped by severity.
 
 **Needs:** team (at least 1 member) + game
 
-For each attacking type in the era, shows which team members can hit it super-effectively using their own types (STAB-based).
+For each attacking type in the era, shows which team members can hit it
+super-effectively — both by type and by best learnable move.
 
-Each member is shown with a type-letter tag indicating which of their types hits SE: `Char(F,F)` = Fire and Flying both hit SE against this target; `Geng(P)` = only Poison hits SE (not Ghost).
+Each member is shown with a type-letter tag and their best scored move of
+that type: `Char:Flamethrower(F)` = Charizard can hit SE with Fire via
+Flamethrower. When no scoreable move is available the type letter alone is
+shown as a fallback.
 
-All types in the era are always shown. Types with no SE coverage are labelled `GAP`.
-A summary line at the bottom shows overall coverage count and lists gap types.
-
-**Assumptions / limitations:**
-- Coverage is based on member *types only* — not actual learnable moves. A member is counted as a hitter if their type hits the target at ×2 or ×4, regardless of whether they have a move of that type in their pool.
-- Step 3b (planned) will extend this to actual learnable moves.
+All types in the era are always shown. Types with no SE coverage are labelled
+`GAP`. A summary line at the bottom shows overall coverage count and lists
+gap types.
 
 ---
 
@@ -341,9 +345,12 @@ when fewer than 4 scoreable moves exist in the pool.
 
 ## Known limitations
 
-1. **Regional / alternate forms** — most forms (Alolan, Galarian, Hisuian) are fully
-   supported via `variety_slug`. A small number of forms where PokeAPI uses the same
-   variety slug as the base form (e.g. most Mega Evolutions) share the base learnset.
+1. **Regional / alternate forms** — most forms (Alolan, Galarian, Hisuian,
+   Paldean, Shaymin Sky Forme, etc.) are fully supported via their distinct
+   `variety_slug`. The `variety_slug` field now stores the form slug where it
+   differs from the variety slug (§80), ensuring correct learnsets for those
+   forms. Mega Evolutions share the base learnset by design — PokeAPI models
+   them as separate varieties but with identical move pools.
 
 2. **Legends: Z-A cooldown system** — PokeAPI does not yet model Z-A's cooldown mechanic.
    Move stats are shown as standard PP values.
@@ -364,12 +371,13 @@ when fewer than 4 scoreable moves exist in the pool.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Wrong moves shown for a regional form | Pokemon cached before §42 (no variety_slug field) | Delete `cache/pokemon/<name>.json` and reload |
-| Move table shows `?` for all stats | Move cache is empty | Press **T** at startup to pre-warm the move table |
+| Wrong moves shown for a regional form | Pokemon cached before §42 (no variety_slug field) | Delete `cache/pokemon/<n>.json` and reload |
+| Wrong or missing learnset for a Pokemon form | Pokemon cached before §80 (old variety_slug value) | Run `python pokemain.py --refresh-pokemon <n>` |
+| Cache files corrupt or stale | JSON write interrupted / old schema | Run `python pokemain.py --check-cache` for a full report |
+| Move table shows `?` for all stats | Move cache is empty | Press **MOVE** then **F** (fetch missing) or **R** (fetch all) |
 | Missing move in learnable list | PokeAPI incomplete for this game | Check PokeAPI directly; this is a data gap, not a bug |
 | Connection error on first load | PokeAPI unreachable | Check network; cached data is used on all subsequent runs |
 | `TypeError: too many values to unpack` | Stale `pkm_cache.py` from before §38 | Replace with latest version |
-
 ---
 
 ## Running the tests
@@ -379,20 +387,20 @@ Every module with testable logic has an `--autotest` flag (offline unless noted)
 | Command | Tests |
 |---|---|
 | `python matchup_calculator.py --autotest` | 79 — type chart, all 3 eras, all multipliers |
-| `python pkm_cache.py` | 33 — read/write/invalidate/upsert/index/machines |
-| `python pkm_session.py --autotest` | 14 — cache upgrade, form selection, era/gen blocking |
-| `python feat_moveset_data.py --autotest` | 154 — scoring formula, combo selection, status ranking |
+| `python pkm_cache.py` | 41 — read/write/invalidate/upsert/batch/index/integrity |
+| `python pkm_session.py --autotest` | 28 — cache upgrade, form selection, era/gen blocking, fuzzy search, form_gen fix |
+| `python feat_moveset_data.py --autotest` | 156 — scoring formula, combo selection, status ranking, batch cache regression |
 | `python feat_type_browser.py --autotest` | 41 (+8 cache) — gen derivation, name resolution |
 | `python feat_nature_browser.py --autotest` | 27 (+11 cache) — role inference, nature scoring |
 | `python feat_ability_browser.py --autotest` | 14 (+8 cache) — display helpers |
 | `python feat_team_loader.py --autotest` | 28 — team ops, summary line |
 | `python feat_team_analysis.py --autotest` | 58 — defense aggregation, gap labels, display |
-| `python feat_team_offense.py --autotest`  | 38 — offensive coverage, type-letter tags, gap detection |
-| `python feat_team_moveset.py --autotest`  | 61 — moveset engine, formatting helpers, coverage aggregation |
+| `python feat_team_offense.py --autotest`  | 50 — offensive coverage, type-letter tags, gap detection, pool cache |
+| `python feat_team_moveset.py --autotest`  | 70 — moveset engine, formatting helpers, coverage aggregation, pool cache |
 | `python feat_moveset.py --autotest` | 28 (+1 cache) — breakdown, coverage, locked moves |
 | `python feat_move_lookup.py --autotest` | 12 (+2 cache) — formatting, coverage all eras |
 | `python feat_movepool.py --autotest` | 9 (+2 cache) — row formatting, section headers |
-| `python pkm_pokeapi.py --autotest` | ~10 — versioned entry builder, mapping tables |
+| `python pkm_pokeapi.py --autotest` | ~22 — versioned entry builder, mapping tables, fetch_pokemon offline |
 
 Run all suites at once:
 ```

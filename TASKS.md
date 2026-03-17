@@ -33,7 +33,7 @@ Proposed flow:
 
   Filter move list? (Enter to skip)
     Type     (e.g. Fire, Water — blank = all)
-    Category (P)hysical / (S)pecial / (T)hm / (Enter = all)
+    Category (P)hysical / (S)pecial / (T) Status / (Enter = all)
     Min power (e.g. 80 — blank = all)
 
   Type: fire

@@ -433,6 +433,50 @@ before implementing the full scoring logic (step 4.2).
 
 ---
 
+## §66–§71 — Step 4.2–4.5: feat_team_moveset.py full implementation
+
+### What changed
+- Modified: `feat_team_moveset.py` — full engine (`recommend_team_movesets`,
+  `_weakness_types`, `_se_types`), display (`display_team_movesets`,
+  `_display_member_block`, `_display_coverage_summary`, formatters),
+  coverage aggregation (`build_offensive_coverage`), and menu wiring
+- Modified: `pokemain.py` — S key handler added; guards for empty team and
+  missing game context
+- Modified: `feat_moveset_data.py` — cache key bug fixed (§69): moves were
+  being saved under the API canonical name instead of the learnset display
+  name, causing perpetual re-fetching; 2 regression tests added
+- Modified: `run_tests.py` — feat_team_moveset suite registered
+
+### Why
+Steps 4.2–4.5 completing the team moveset synergy feature:
+- **4.2** — scoring engine: calls `build_candidate_pool` + `select_combo`
+  per slot; graceful degradation on empty pool
+- **4.3** — display: per-member blocks (weaknesses, 4 moves, SE count)
+- **4.4** — coverage summary: `build_offensive_coverage` aggregates `se_types`
+  across all member results; shows Covered / Gaps / Overlap
+- **4.5** — menu wiring: S key in `pokemain.py`
+
+### Key decisions
+- **`build_offensive_coverage` is pure**: reads `se_types` from result dicts
+  already computed by `recommend_team_movesets`; does not re-run the engine.
+- **Overlap threshold = 3**: types covered by 3+ members flagged as potential
+  redundancy, sorted descending by count.
+- **`_empty_member_result` shape preserved**: graceful degradation path keeps
+  the same dict structure with empty lists so display code never branches on
+  missing keys.
+- **§69 cache key fix**: `build_candidate_pool` was calling
+  `cache.upsert_move(canonical, entries)` where `canonical` came from a
+  second PokeAPI call to get the English display name. This caused a key
+  mismatch: the learnset uses `_slug_to_display` names (e.g. "Double Edge"),
+  the cache stored the API canonical name ("Double-Edge"). Fixed by saving
+  under `name` (the learnset display name) and removing the redundant API call.
+
+### Test count
+61 tests in `feat_team_moveset.py`. Full suite: 610 offline tests, 0 failures.
+
+
+---
+
 ## §72 — Pythonmon-1: S screen loading indicator
 
 ### What changed
@@ -577,177 +621,3 @@ single-form data from PokeAPI.
 
 ### Test count
 28 tests in `pkm_session.py`. Full suite: 628 offline tests, 0 failures.
-
-
-
----
-
-## §76 — Pythonmon-4: session pool caching for O and S screens
-
-### What changed
-- Modified: `feat_team_offense.py` — `_build_member_pools`, `display_team_offense`, `run()` gain `pool_cache=None`; 5 new tests (45 → 50)
-- Modified: `feat_team_moveset.py` — `recommend_team_movesets`, `run()` gain `pool_cache=None`; 9 new tests (61 → 70)
-- Modified: `pokemain.py` — `_pool_cache = {}` added to `main()`; passed to O and S `run()` calls
-
-### Why
-Both O and S called `build_candidate_pool` for every team member on every visit. With a 6-member team on a warm cache this is 6× file I/O + scoring per keypress. The session dict makes every repeat visit instant with no additional network or disk activity.
-
-### Key decisions
-- **Shared cache between O and S**: pressing O first populates the dict; pressing S reuses those pools without recomputing. The two screens share work naturally.
-- **Key is `(variety_slug, game_slug)`**: game changes produce new keys automatically — no explicit flush needed when `G` is pressed.
-- **`pool_cache=None` default**: all existing call sites (tests, standalone `main()`) continue to work unchanged. The caching is strictly opt-in.
-- **Loading indicator still shown correctly**: `display_team_offense` checks whether any member needs computing before printing "Loading move data...". On a fully-cached visit the line is suppressed.
-- **No architecture changes**: no new files, no new cache schema, no new imports.
-
-### Test count
-`feat_team_offense.py`: 50 tests. `feat_team_moveset.py`: 70 tests.
-Full suite: 637 offline tests, 0 failures.
-
----
- 
-## §77 — Pythonmon-13: cache integrity check
- 
-### What changed
-- Modified: `pkm_cache.py` — new `check_integrity() → list[str]`; 4 new tests
-  (37 → 41)
-- Modified: `pokemain.py` — new `_run_cache_check()` display function;
-  `--check-cache` flag dispatched first in `_handle_refresh_flags`
- 
-### Why
-No way to diagnose corrupted or stale cache entries without hunting manually.
-`python pokemain.py --check-cache` now scans all cache files and reports any
-issues in one pass.
- 
-### Key decisions
-- **`check_integrity()` is pure**: returns a list of issue strings, no printing.
-  The display (`_run_cache_check`) lives in `pokemain.py`. Keeps the cache
-  layer free of display logic.
-- **Missing files are not issues**: absence is normal — data is fetched on
-  demand. Only present files that fail validation are reported.
-- **`.tmp` files ignored**: filtered by `.json` extension only.
-- **`--check-cache` dispatched before other flags**: `_run_cache_check` calls
-  `sys.exit(0)`, so it cleanly exits without entering the menu loop. Placing
-  it first in `_handle_refresh_flags` ensures it never runs alongside a
-  `--refresh-*` flag.
-- **Four validators**: `_valid_moves` / `_valid_pokemon` / `_valid_learnset`
-  already existed; type, ability, machines, index, natures get lightweight
-  inline validators (isinstance + key presence checks).
- 
-### Test count
-41 tests in `pkm_cache.py`. Full suite: 641 offline tests, 0 failures.
-
----
- 
-## §78 — Pythonmon-5: add-to-team prompt after P
- 
-### What changed
-- Modified: `pokemain.py` — 10-line addition to the P handler
- 
-### Why
-Loading a Pokemon and then pressing T to add it to the team was the most
-common two-step pattern. A single prompt after a successful P load eliminates
-the extra keypress for the common case.
- 
-### Key decisions
-- **Suppressed when no game loaded**: team features aren't available without
-  a game, so the prompt would be confusing.
-- **Suppressed when team is full** (`team_size < 6`): avoids a prompt that
-  would immediately fail.
-- **`TeamFullError` guard kept anyway**: defensive catch in case of a race
-  between the size check and the add call.
-- **`pkm_ctx` always set first**: the Pokemon is loaded regardless of the
-  team answer, so pressing N leaves the Pokemon available for single-Pokemon
-  features as expected.
-- **No new tests**: interactive prompt — verified manually.
- 
-### Test count
-No new tests. Full suite unchanged.
-
----
- 
-## §79 — Pythonmon-12: stale moves partial refresh
- 
-### What changed
-- Modified: `pkm_pokeapi.py` — new `fetch_missing_moves(known_names) → dict`;
-  module docstring updated
-- Modified: `pokemain.py` — MOVE handler replaced with F / R / Enter menu
- 
-### Why
-The only way to add moves introduced in a new game (e.g. new Scarlet/Violet
-moves) was `--refresh-moves`, which wipes and re-fetches all ~920 moves.
-The `F` option now fetches only slugs not already represented in the cache,
-typically 5–20 moves for a new game.
- 
-### Key decisions
-- **`fetch_missing_moves` is pure (no cache write)**: returns the batch dict;
-  caller (`pokemain`) calls `upsert_move_batch`. Keeps the API layer free of
-  cache logic, consistent with the rest of `pkm_pokeapi.py`.
-- **Candidate-name fast path**: `slug.replace("-", " ").title()` is checked
-  against `known_names` before making an API call. This skips ~98% of slugs
-  with a cheap string operation. Edge cases (e.g. "King's Shield") are caught
-  by the second check after the true display name is fetched — no data
-  corruption risk, just a slightly over-eager fetch in rare cases.
-- **Double-check after fetch**: even if the slug passed the fast path, if the
-  true API display name turns out to already be in `known_names`, the move is
-  skipped. Prevents duplicate entries from name-format mismatches.
-- **Empty-cache path**: if the cache is empty the handler falls through to a
-  full fetch (treats first-time setup as `R`), so the UX is unchanged for new
-  users.
-- **`R` path unchanged**: `fetch_all_moves` + `save_moves` — identical to the
-  old behaviour, just under a new key.
-- **No automated tests for `fetch_missing_moves`**: network-dependent. The
-  function logic is simple enough to verify manually; the offline test suite
-  for `pkm_pokeapi.py` remains unchanged.
- 
-### Test count
-No new offline tests. Full suite unchanged.
-
----
-
-## §80 — Pythonmon-10: per-form learnset via form_slug
-
-### What changed
-- Modified: `pkm_pokeapi.py` — one-line fix in `fetch_pokemon`: store
-  `form_slug` as `variety_slug` instead of the outer variety slug;
-  new `_test_fetch_pokemon_offline()` with 12 tests
-
-### Why
-Some Pokemon families have `pkm["forms"][0]["name"]` (the form slug) differing
-from the outer `variety["pokemon"]["name"]` (the variety slug). Storing the
-variety slug in that case means the learnset is fetched from the wrong
-pokemon endpoint. The fix stores the form slug, ensuring the correct
-endpoint is used.
-
-### Key finding during investigation
-The original ticket assumed Rotom appliances would be the primary beneficiary —
-that they shared a variety slug and needed separate form slugs to get distinct
-learnsets. The mock tests revealed this was incorrect: PokeAPI models each
-Rotom appliance as a **separate variety** (`rotom-wash`, `rotom-heat`, etc.).
-The existing variety loop already fetches them separately and the current
-code was already correct for Rotom. The fix is a narrower correctness
-improvement covering the subset of cases where form slug ≠ variety slug.
-
-### Key decisions
-- **One line changed** in `fetch_pokemon`: `"variety_slug": form_slug` instead
-  of `"variety_slug": variety_slug`. All consumers (`pkm_session`,
-  `build_candidate_pool`) already read `variety_slug` from the form entry —
-  zero downstream changes.
-- **No changes to `pkm_cache.py`, `pkm_session.py`, or any feature file.**
-- **Test E** specifically asserts the corrected behaviour: when form slug
-  differs from variety slug, the stored value is the form slug.
-- **Test B** was rewritten during development after the mock revealed the
-  wrong PokeAPI structure assumption — it now correctly uses two separate
-  varieties rather than one variety with two form entries.
-
-### Cache migration
-Existing cached `cache/pokemon/*.json` files store the old `variety_slug`
-values. If any were affected by the form_slug≠variety_slug case, they should
-be refreshed:
-```
-python pokemain.py --refresh-pokemon <name>
-```
-
-### Test count
-12 new offline tests in `_test_fetch_pokemon_offline()`.
-Full suite: unchanged offline count (pkm_pokeapi offline tests are not
-counted by run_tests.py --offline).
