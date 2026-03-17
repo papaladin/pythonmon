@@ -1,172 +1,303 @@
 # TASKS.md
 
-# STEP 4 — Team moveset synergy
+# Current work — quick wins batch
 
-**Roadmap item:** Team features / Step 4
-**Status:** ✅ COMPLETE — all steps done (§66–§71)
+**Status:** NOT STARTED
 
-Goal:
+Four tickets selected from the roadmap for their low complexity and high
+daily-use impact. All are self-contained: no new PokeAPI endpoints, no schema
+changes, no new context objects.
 
-Reuse the **single-Pokémon moveset recommendation engine (Option 4)** so it can compute
-recommended movesets for all team members and produce a **team-level offensive coverage summary**.
-
----
-
-# Design decisions (already approved)
-
-These decisions must **not be revisited during implementation**.
-
-* The **user selects one mode** for the entire team.
-* Modes available:
-
-  * Coverage
-  * Counter
-  * STAB
-* The engine runs **fully automatically** (no locked moves prompting).
-* Output is **compact**, allowing all 6 members to fit on one screen.
-* The screen includes a **team coverage summary**.
-* Coverage summary must report:
-
-  * types hit SE by ≥1 member
-  * coverage gaps
-  * overlap (types covered by ≥3 members)
-* Feature is accessible via **menu key `S`**.
+Ticket IDs reference ROADMAP.md identifiers. Each step must include:
+1. Implementation
+2. `_run_tests()` additions (where testable logic exists)
+3. Documentation updates (`HISTORY.md`, `ROADMAP.md` if needed)
 
 ---
 
-# Implementation tasks
+# Pythonmon-1 — S screen loading indicator
 
-Each implementation step must include:
+**Status:** ✅ COMPLETE (§72)
+**File:** `feat_team_moveset.py`
 
-1. implementation
-2. local `_run_tests()` additions in the module
-3. integration into `run_tests.py`
-4. documentation updates (`TASKS`, `HISTORY`, `ARCHITECTURE`, `README` if needed)
+## What
+Print a progress line before `recommend_team_movesets` runs so the user
+knows the tool is working during a cold-cache run with a full 6-member team.
 
-No step is considered complete until **tests pass and documentation is updated**.
+Proposed output (before the member blocks appear):
+```
+  Computing movesets for 6 member(s)…
+```
 
----
+## Where
+In `run()` in `feat_team_moveset.py`, between the mode prompt and the
+`recommend_team_movesets` call.
 
-# 4.1 Create team moveset module
+## Tests
+No pure logic to test. Verify manually: press S with a cold cache and confirm
+the line appears before the learnset fetch messages.
 
-Status: ✅ COMPLETE (§66)
-
-Created module `feat_team_moveset.py` with:
-
-* `_MODES` constant mapping key letters to mode strings
-* `_empty_member_result(form_name)` defining the agreed result structure
-* `recommend_team_movesets(team_ctx, game_ctx, mode)` — stub returning shaped dicts
-* `_mode_prompt()` — interactive `(C)overage / co(U)nter / (S)TAB` selector
-* `run(team_ctx, game_ctx)` — entry point with empty-team guard
-* 14 offline tests; all pass
-
-`feat_moveset.py` was not modified.
-
-**Note:** `pokemain.py` wiring (import, menu key `S`, handler, context guards)
-was added ahead of schedule. This covers the integration work planned for step 4.5.
-Verify before closing 4.5.
+## Notes
+- The O screen already has a similar pattern ("Loading move data for N member(s)...").
+  Match that style exactly.
+- Do not add the line inside `display_team_movesets` — keep display functions
+  side-effect-free with respect to loading state.
 
 ---
 
-# 4.2 Implement team moveset recommendation
+# Pythonmon-2 — Fuzzy name matching
 
-Status: ✅ COMPLETE (§67)
+**Status:** ✅ COMPLETE (§73)
+**File:** `pkm_session.py`
+**Complexity:** 🟢 Low
 
-Added to `feat_team_moveset.py`:
+## What
+When the user types a partial Pokemon name (e.g. "char"), search
+`pokemon_index.json` for all keys that start with or contain the input,
+and offer ranked suggestions before falling back to a PokeAPI lookup.
 
-* `_weakness_types(pkm_ctx, era_key) → list[str]`
-* `_se_types(combo, era_key) → list[str]`
-* `recommend_team_movesets` — real engine calling `build_candidate_pool` +
-  `select_combo` per slot; graceful degradation on empty pool
+Proposed flow:
+```
+  Enter Pokemon name: char
+  Multiple matches — did you mean:
+    1. Charizard
+    2. Charmander
+    3. Charmeleon
+    4. Sawk     (contains "har" — ranked lower)
+  Enter number (or 0 to type a different name):
+```
 
-36 offline tests; all pass. `feat_moveset.py` was not modified.
+## Design decisions to make before implementation
+- **Prefix-only vs. substring**: prefix matches ranked first, substring
+  matches shown below (same as `match_move` in `feat_moveset.py`).
+- **Only cached Pokemon**: the index only contains Pokemon the user has
+  previously looked up. Display a note: "(showing cached Pokemon only —
+  enter full name to search PokeAPI)".
+- **Exact slug match still tried first**: if "charizard" is in the index,
+  load it directly without showing the picker.
+- **Max suggestions shown**: cap at 8 to avoid flooding the screen.
 
----
+## Where
+In `_lookup_pokemon_name()` in `pkm_session.py`. After the name is entered
+but before calling `_fetch_or_cache`, run the index search. If one exact
+match: proceed as today. If multiple: show picker. If none in index: proceed
+to PokeAPI as today.
 
-# 4.3 Implement compact team display
-
-Status: ✅ COMPLETE (§68)
-
-Added to `feat_team_moveset.py`:
-
-* `_format_weak_line(weakness_types) → str`
-* `_format_move_pair(left, right) → str`  left col 22 chars; `"—"` for None
-* `_format_se_line(se_types, era_key) → str`
-* `_display_member_block(result, era_key)`  5-line block per member
-* `display_team_movesets(results, game_ctx, mode)`  full screen
-* `run()` updated to call `display_team_movesets`
-* `"types"` field added to member result dict
-
-45 offline tests; all pass.
-
----
-
-# 4.4 Implement team offensive coverage analysis
-
-Status: ✅ COMPLETE (§70)
-
-Added to `feat_team_moveset.py`:
-
-* `build_offensive_coverage(member_results, era_key) → dict`
-  Aggregates `se_types` from each member result. Returns `covered`, `gaps`,
-  `overlap` (≥3 members), `counts`, `total_types`. Does not recompute movesets.
-* `_display_coverage_summary(coverage)` — Covered / Gaps / Overlap block
-* `display_team_movesets` updated to call both; stub footer removed
-
-61 offline tests; all pass.
+## Tests
+Add to `pkm_session.py _run_tests()`:
+- prefix search returns correct candidates from a fake index
+- exact match skips the picker
+- empty index falls through to PokeAPI path
+- result is capped at 8
 
 ---
 
-# 4.5 Add menu integration
+# Pythonmon-3 — Batch move upserts in build_candidate_pool
 
-Status: ✅ COMPLETE (§71)
+**Status:** ✅ COMPLETE (§74)
+**File:** `feat_moveset_data.py`
+**Complexity:** 🟡 Medium
 
-`pokemain.py` wiring was added ahead of schedule in §65 and verified complete
-during the 4.5 closure pass (§71). All four checkpoints confirmed:
+## What
+`build_candidate_pool` currently writes `moves.json` once per missing move.
+With 20 uncached moves, that is 20 full reads + 20 full writes of a file
+that may already contain ~900 entries. Replace with a single write at the
+end of the fetch loop.
 
-1. `feat_team_moveset` import inside the `try/except ModuleNotFoundError` block
-2. Menu line `S. Team moveset synergy` gated behind `team_size > 0` (same
-   condition as V and O)
-3. Handler guards: `game_ctx is None` → "Select a game first";
-   empty team → "Load a team first"
-4. `feat_team_moveset.run(team_ctx, game_ctx)` called in the happy path
+## Current code (simplified)
+```python
+for name in missing:
+    entries = pokeapi.fetch_move(name)
+    cache.upsert_move(name, entries)       # read + write per iteration
+```
 
-No code changes required.
+## Target behaviour
+```python
+batch = {}
+for name in missing:
+    entries = pokeapi.fetch_move(name)
+    batch[name] = entries
+if batch:
+    cache.upsert_move_batch(batch)         # single read + write
+```
+
+## Where
+- `feat_moveset_data.py` — update the fetch loop in `build_candidate_pool`
+- `pkm_cache.py` — add `upsert_move_batch(entries_dict)` function
+
+## Implementation notes
+- `upsert_move_batch` follows the same pattern as `upsert_move` but merges
+  a whole dict in one operation:
+  ```python
+  def upsert_move_batch(batch: dict) -> None:
+      existing = get_moves() or {}
+      existing.update(batch)
+      existing["_scraped_at"] = _now()
+      existing["_version"]    = MOVES_CACHE_VERSION
+      _write(_MOVES_FILE, existing)
+  ```
+- Keep `upsert_move` for single-move callers (it is used in `run_tests.py`
+  cache warm-up and elsewhere).
+- If any individual fetch fails, skip that move and continue — same
+  behaviour as today.
+
+## Tests
+- `pkm_cache.py`: add tests for `upsert_move_batch` — multiple keys written
+  in one call, existing keys preserved, version set correctly.
+- `feat_moveset_data.py`: extend the existing cache-key regression test to
+  verify that the batch path also saves under the learnset name (not canonical).
+
+---
+
+# Pythonmon-4 — Session pool caching for O and S screens
+
+**Status:** TO DO
+**Files:** `pokemain.py`, `feat_team_offense.py`, `feat_team_moveset.py`
+**Complexity:** 🟢 Low
+
+## What
+Both the O and S screens rebuild member move pools on every visit. With a
+6-member team this is up to 6 × learnset lookups + scoring passes each time.
+A session-level cache makes every repeat visit instant.
+
+## Design
+A plain dict in `pokemain.py`, passed into the relevant `run()` calls:
+```python
+_pool_cache = {}   # key: (variety_slug, game_slug) → damage_pool list
+```
+
+Lifetime: session only — cleared on exit, never written to disk.
+
+## Interface change
+`feat_team_offense.run(team_ctx, game_ctx)` and
+`feat_team_moveset.run(team_ctx, game_ctx)` gain an optional parameter:
+```python
+def run(team_ctx, game_ctx, pool_cache=None):
+```
+When `pool_cache` is provided, `build_candidate_pool` is called only for
+members whose `(variety_slug, game_slug)` key is absent. Results are stored
+back into the dict before returning.
+
+`pokemain.py` passes `_pool_cache` on every S and O call. The dict persists
+across menu selections for the duration of the session.
+
+## Invalidation
+The cache must be cleared when:
+- The game changes (`G` key) — `game_slug` in the key handles this
+  naturally (different key), so no explicit invalidation needed.
+- A team member is replaced (`T` key) — old slots' pools remain in the
+  dict but will never be looked up again (different `variety_slug`). No
+  harm in keeping them; they are small.
+
+## Tests
+Add to `feat_team_offense.py` and `feat_team_moveset.py`:
+- When `pool_cache` is provided and key is present, `build_candidate_pool`
+  is NOT called (mock it to assert call count = 0).
+- When key is absent, pool is computed and stored in the dict.
+- `pool_cache=None` falls back to current behaviour (no regression).
+
+
+---
+
+# Pythonmon-16 — `get_form_gen` false-positive on "mega" substring
+
+**Status:** ✅ COMPLETE (§75)
+**File:** `pkm_session.py`
+
+## Root cause
+
+`get_form_gen` uses `if keyword in name_lower` — a plain substring check.
+
+```python
+"mega" in "meganium".lower()   # → True  ← BUG
+"mega" in "mega charizard x".lower()   # → True  ← correct
+```
+
+`"mega"` appears at positions 0–3 inside `"meganium"`, so any Pokémon
+whose name contains those four letters in sequence will be incorrectly
+assigned `form_gen = 6` regardless of its actual generation.
+
+Only `"mega"` is affected — the other keywords (`alolan`, `galarian`,
+`hisuian`, `paldean`) are long enough that no real Pokémon name contains
+them as embedded substrings.
+
+## Observed symptom
+
+```
+Loaded: Meganium — Grass type
+Meganium was introduced in Generation 6 and did not exist in Gold / Silver / Crystal.
+```
+
+Meganium is a Gen 2 Pokémon. `get_form_gen("Meganium", species_gen=2)`
+incorrectly returns 6 because `"mega" in "meganium"` is True.
+
+## Secondary symptom
+
+The picker also showed a fabricated "Mega Meganium (Grass / Fairy)" form.
+Meganium has no Mega Evolution. This is stale/corrupted data in the local
+`cache/pokemon/meganium.json`. After the code fix, deleting that cache file
+and re-fetching Meganium will return only the base form from PokeAPI, which
+the deduplication logic will collapse to a single entry.
+
+## Fix
+
+Replace the substring check with a word-split check in `get_form_gen`:
+
+```python
+# Before
+if keyword in name_lower:
+
+# After
+if keyword in name_lower.split():
+```
+
+The special-case check for `"Mega ... Z"` forms at the top of the function
+also uses `"mega" in name_lower` — update it consistently to
+`"mega" in name_lower.split()`.
+
+```python
+# Before
+if "mega" in name_lower and name_lower.rstrip().endswith(" z"):
+
+# After
+if "mega" in name_lower.split() and name_lower.rstrip().endswith(" z"):
+```
+
+Word-split examples:
+- `"Mega Charizard X".lower().split()` → `["mega", "charizard", "x"]` → hit ✓
+- `"Meganium".lower().split()`         → `["meganium"]`                → miss ✓
+- `"Mega Meganium".lower().split()`    → `["mega", "meganium"]`        → hit ✓ (correct)
+
+## Tests to add
+
+In `pkm_session.py _run_tests()`:
+- `get_form_gen("Meganium", 2)` returns `2` (not `6`)
+- `get_form_gen("Mega Charizard X", 1)` returns `6`
+- `get_form_gen("Mega Garchomp Z", 1)` returns `9` (special case still works)
+- `get_form_gen("Alolan Sandslash", 8)` returns `7`
+- `get_form_gen("Sandslash", 1)` returns `1` (base form, no keyword)
+
+## Cache cleanup note
+
+After applying the fix, users with a corrupted `cache/pokemon/meganium.json`
+(or any Pokémon with a fabricated Mega form) should delete the file and let
+it re-fetch. The fix itself does not repair existing cache files.
+
+Consider documenting in README troubleshooting: "Wrong or extra forms shown
+for a Pokémon → delete `cache/pokemon/<name>.json` and reload."
+
 
 ---
 
 # Completion criteria
 
-Step 4 is complete when:
+This batch is complete when:
 
-* team movesets compute for all 6 members
-* compact display works
-* coverage summary works
-* menu key `S` works
-* all offline tests pass
-* documentation is fully updated
+* Pythonmon-1: loading line appears before engine runs on S screen
+* Pythonmon-2: partial name input offers ranked suggestions from index
+* Pythonmon-3: `upsert_move_batch` added; `build_candidate_pool` uses it
+* Pythonmon-4: repeat O and S visits do not re-fetch already-built pools
+* Pythonmon-16: `get_form_gen` false-positive on "mega" substring
 
----
-
-# Additional Notes
-
-* Implementation must remain **fast and overview-focused**.
-* Users can still run **Option 4** for detailed single-Pokémon moveset tuning.
-* Step 4 is meant to provide **team-level synergy insights**, not replace individual analysis.
-
----
-
-## Recently completed
-
-| Task                                        | Outcome                                                                 | History |
-| ------------------------------------------- | ----------------------------------------------------------------------- | ------- |
-| Step 4.5: menu integration verified + docs  | `pokemain.py` confirmed; `README/ROADMAP/TASKS/HISTORY` closed          | §71     |
-| Step 4.4: team offensive coverage summary   | `feat_team_moveset.py` extended, 61 tests                               | §70     |
-| Step 4.3: compact team display              | `feat_team_moveset.py` extended, 45 tests                               | §68     |
-| Step 4.2: team moveset engine               | `feat_team_moveset.py` extended, 36 tests                               | §67     |
-| Step 4.1: module stub created               | `feat_team_moveset.py` created, 14 tests                                | §66     |
-| Bugfix: move cache key mismatch             | `feat_moveset_data.py` fixed, 2 regression tests                        | §69     |
-| Step 3b: best scored move inline in O table | `feat_team_offense.py` extended, 50 tests                               | §63     |
-| Step 3a: team offensive coverage by type    | `feat_team_offense.py`, O key, 38 tests                                 | §62     |
-| Step 2: team defensive analysis             | `feat_team_analysis.py`, V key, 58 tests                                | §60–§61 |
-| Documentation restructure                   | README/ARCHITECTURE/ROADMAP/TASKS/HISTORY/AI_WORKFLOW/DEVELOPMENT_RULES | §62     |
+* All offline tests pass (`python run_tests.py --offline`)
+* `HISTORY.md` updated for each ticket

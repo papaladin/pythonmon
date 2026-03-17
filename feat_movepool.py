@@ -55,7 +55,7 @@ def _get_move_details(move_name: str, game_ctx: dict) -> dict | None:
 def _prefetch_missing(all_moves: list, game_ctx: dict) -> None:
     """
     For each move name in all_moves not yet in moves.json, fetch from PokeAPI.
-    Shows a progress line while fetching.
+    Shows a progress line while fetching. Writes in a single batch operation.
     """
     missing = [m for m in all_moves if cache.get_move(m) is None]
     if not missing:
@@ -63,16 +63,16 @@ def _prefetch_missing(all_moves: list, game_ctx: dict) -> None:
 
     total = len(missing)
     print(f"\n  Fetching details for {total} move(s) not yet in cache...")
+    batch = {}
     for i, name in enumerate(missing, start=1):
         print(f"  {i}/{total}  {name:<24}", end="\r", flush=True)
         try:
-            entries  = pokeapi.fetch_move(name)
-            slug     = pokeapi._name_to_slug(name)
-            data     = pokeapi._get(f"move/{slug}")
-            canonical = pokeapi._en_name(data.get("names", []), None) or name
-            cache.upsert_move(canonical, entries)
+            entries     = pokeapi.fetch_move(name)
+            batch[name] = entries
         except (ValueError, ConnectionError):
             pass
+    if batch:
+        cache.upsert_move_batch(batch)
     print(f"  Done — move details cached.             ")
 
 

@@ -2,6 +2,8 @@
 # Long-term feature goals for the Pokemon Toolkit
 
 > Items marked ✅ are complete. Items marked ⬜ are planned.
+> Each planned item carries a **Pythonmon-N** identifier used in TASKS.md and HISTORY.md
+> to prevent ambiguity during implementation and AI handoffs.
 > For granular steps of the item currently in progress, see TASKS.md.
 > For completed item details, see HISTORY.md.
 
@@ -25,82 +27,70 @@
 | Quick view (option 1) | Base stats bar chart + abilities + type chart in one screen | §58 |
 | Team loader | Session-only team of up to 6 Pokemon; T key; add/remove/clear | §59 |
 | Team defensive analysis | Unified type table: weak/resist/immune per type, gap labels | §60–§61 |
+| Team offensive coverage | Per-type hitter table with best scored move; O key | §62–§64 |
 | Team moveset synergy | Per-member recommended movesets + team coverage summary; S key | §66–§71 |
 
 ---
 
-## Team features roadmap (active area)
+## Planned improvements
 
-### Step 3a — Team offensive coverage by type (✅ Done §62)
+### 🔧 Backend / robustness
 
-For each attacking type in the era, show how many team members can hit SE.
-- Input: team_ctx + game_ctx
-- Output: table of types the team covers offensively (STAB or not), types with no SE coverage
-- Approach: for each member, find types they hit SE based on their own types (STAB only first pass)
-- Gap detection: types with zero SE coverage across the whole team
-- New file: `feat_team_offense.py`
-- New key: `O` in pokemain (visible when team loaded + game selected)
-
-### Step 3b — Team offensive coverage by learnable moves (✅ Done §63)
-
-Extend step 3a: instead of only using member types, check actual learnable moves in cache.
-- For each member: fetch learnset, score all learnable moves via `score_move()`
-- Display the best-scored move of the hitting type inline in the O table
-- Richer output: `Char(F,F):Flamethrower  Geng(P):Sludge Bomb`
-- Progress indicator shown before learnset fetch (up to 6 × PokeAPI calls on first run)
-- Approach chosen: option C — extra move column embedded inline in the existing hitter cell
-
-### Step 4 — Team moveset synergy (✅ Done §66–§71)
-
-Run moveset recommendation for each member, then aggregate:
-- Show per-slot recommended moveset (Coverage / Counter / STAB, one mode per slot)
-- Team-level coverage summary: types the combined movesets cover SE
-- Identify remaining gaps: types no moveset covers
-- Option to re-run one slot with a different mode and see impact on team coverage
-- New file: `feat_team_moveset.py`
-
-### Step 5 — Team builder / slot suggestion (⬜ Planned)
-
-Given a partial team (1–5 members), suggest types / roles that would fill coverage gaps.
-- Analyse current team's defensive gaps and offensive gaps
-- Suggest: "You need something that resists Rock and can hit Electric SE"
-- Optional: suggest specific Pokemon from the type roster (requires types cache)
-- This is the highest-complexity feature — depends on steps 3 and 4 being solid first
+| ID | Feature | Description | Complexity |
+|---|---|---|---|
+| Pythonmon-1 | S screen loading indicator | ✅ Done §72 — `print()` before engine call in `run()`, matching O screen style. | 🟢 Low |
+| Pythonmon-3 | Batch move upserts | ✅ Done §74 - `build_candidate_pool` currently writes `moves.json` once per missing move. Collect all missing entries then write once at the end. Meaningful speedup on first-run with large learnsets. | 🟡 Medium |
+| Pythonmon-4 | Session pool caching for O and S | Both screens rebuild member move pools on every visit. A session-level dict keyed by `(variety_slug, game_slug)` makes repeat visits instant. No persistence — cleared on exit. | 🟢 Low |
+| Pythonmon-12 | Stale moves partial refresh | `--refresh-moves` wipes the whole `moves.json`. Surface a "fetch only missing moves" option in the menu (`MOVE` key) so new-game moves can be added without discarding everything. | 🟡 Medium |
+| Pythonmon-13 | Cache integrity check | A `--check-cache` startup flag that iterates all JSON files, runs the existing `_valid_*` checks, and prints a report. No menu integration needed — standalone diagnostic. | 🟢 Low |
 
 ---
 
-## Other planned improvements
+### 🖥️ UX improvements
 
-### Pokemon features
+| ID | Feature | Description | Complexity |
+|---|---|---|---|
+| Pythonmon-2 | Fuzzy name matching | ✅ Done §73 -  Accept partial Pokemon names in `pkm_session`. Search against `pokemon_index.json` keys; show ranked suggestions (same pattern as `match_move`). Only finds previously cached Pokemon — document this clearly. | 🟢 Low |
+| Pythonmon-5 | Add-to-team prompt after P | After a successful `P` load, offer "Add to team? (y/n)". Single `input()` + `feat_team_loader.add_to_team()`. Natural flow improvement; no new context needed. | 🟢 Low |
+| Pythonmon-6 | Move filter in pool | Filter option 2 / 3 output by type, category, or minimum power before display. `feat_movepool.py` already builds a structured row list — add a pre-display filter prompt. | 🟢 Low |
+| Pythonmon-7 | History within session | `H` key navigates back through recently viewed Pokemon. A `deque(maxlen=10)` in `pokemain.py` holding past `pkm_ctx` values. No persistence. | 🟢 Low |
+| Pythonmon-14 | STATUS_MOVE_TIERS auto-update | Detect status moves that fall back to tier 4 / quality 0 (unknown). Prompt user to classify and persist additions alongside the built-in table. Requires a design decision on where user overrides live. | 🟡 Medium |
 
-| Feature | Description | Priority |
+---
+
+### 🧬 Pokemon features
+
+| ID | Feature | Description | Complexity |
+|---|---|---|---|
+| Pythonmon-8 | Stat comparison | New `feat_stat_compare.py` with side-by-side base stat bars for two Pokemon. No new API data — reuses cached `base_stats`. New menu key (e.g. `C`) when Pokemon loaded. | 🟢 Low |
+| Pythonmon-9 | Evolution chain | Show evolution conditions and stat changes per stage. Requires new `/evolution-chain` PokeAPI endpoint + cache layer + recursive tree parsing. Complex evolution conditions (trade, item, friendship). | 🔴 High |
+| Pythonmon-10 | Per-form learnset | Cosmetic forms sharing a `variety_slug` (Rotom appliances, Wormadam cloaks, most Megas) get the base-form learnset. Fixing requires per-family slug mapping research and careful cache extension. | 🟡 Medium |
+| Pythonmon-11 | Team builder / slot suggestion | Given a partial team (1–5 members), suggest types / roles that fill defensive and offensive gaps. Highest-complexity team feature; depends on the type roster cache being populated. | 🔴 High |
+
+---
+
+### ⛔ Blocked
+
+| ID | Feature | Blocker |
 |---|---|---|
-| Stat comparison | Compare base stats of two Pokemon side by side | Low |
-| Evolution chain | Show evolution conditions and stat changes | Low |
-| Per-form learnset | Fetch actual per-form move list for forms where it differs (Rotom, Wormadam, Megas) | Low |
+| Pythonmon-15 | Legends: Z-A cooldown system | PokeAPI does not yet model the Z-A cooldown mechanic. Revisit once PokeAPI adds support. |
 
-### UX improvements
+---
 
-| Feature | Description | Priority |
-|---|---|---|
-| Team persistence | Save/load team to a named JSON file | Medium |
-| Fuzzy name matching | Accept partial names with ranked suggestions (e.g. "char" → Charizard / Charmander / Charmeleon) | Medium |
-| Move filter in pool | Filter learnable move list by type, category, or power range | Low |
-| History within session | Navigate back through recently viewed Pokemon | Low |
+## Bugs / hotfixes
 
-### Data / infrastructure
-
-| Feature | Description | Priority |
-|---|---|---|
-| STATUS_MOVE_TIERS auto-update | Detect moves with no tier and prompt user to classify | Low |
-| Cache integrity check | Scan all cache files and report corrupt / outdated entries | Low |
-| Legends: Z-A cooldown | Model cooldown system once PokeAPI supports it | Blocked (PokeAPI) |
+| ID | Bug | Root cause | Complexity |
+|---|---|---|---|
+| Pythonmon-16 | `get_form_gen` false-positive on "mega" substring | ✅ Done §75 — word-split check replaces substring check; Meganium and any similar name now handled correctly. | 🟢 Low |
 
 ---
 
 ## Out of scope (deliberate)
 
+- **Team persistence** — the session is short (1 game + up to 6 Pokemon); re-entering is acceptable. May revisit if usage patterns change.
 - **GUI / web interface** — CLI by design; runs from any terminal
 - **Online multiplayer meta analysis** — this tool is for in-game teams, not competitive
 - **Database migration** — JSON cache is sufficient; SQLite documented as future option only
 - **Pip packages beyond requests** — hard constraint
+
+---

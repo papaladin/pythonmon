@@ -297,7 +297,9 @@ def run(team_ctx: list, game_ctx: dict) -> None:
         print("\n  Team is empty — load some Pokémon first (press T).")
         return
 
-    mode    = _mode_prompt()
+    mode = _mode_prompt()
+    n    = team_size(team_ctx)
+    print(f"\n  Computing movesets for {n} member(s)...")
     results = recommend_team_movesets(team_ctx, game_ctx, mode)
     display_team_movesets(results, game_ctx, mode)
 

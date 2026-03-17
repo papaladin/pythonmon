@@ -40,12 +40,16 @@ def get_form_gen(form_name: str, species_gen) -> int | None:
     Return the generation a specific form was introduced in.
     Keyword-based: first match wins. Falls back to species_gen for base forms.
     Special case: 'Mega ... Z' forms (e.g. Mega Garchomp Z) → Gen 9.
+
+    Uses word-split matching (not substring) to avoid false positives on
+    Pokémon names that contain a keyword as an embedded sequence — e.g.
+    "Meganium" contains "mega" as a substring but is NOT a Mega Evolution.
     """
-    name_lower = form_name.lower()
-    if "mega" in name_lower and name_lower.rstrip().endswith(" z"):
+    words = form_name.lower().split()
+    if "mega" in words and form_name.lower().rstrip().endswith(" z"):
         return 9
     for keyword, gen in _FORM_GEN_KEYWORDS:
-        if keyword in name_lower:
+        if keyword in words:
             return gen
     return species_gen
 
@@ -174,19 +178,93 @@ def select_game(pkm_ctx=None):
 
 # ── Pokemon selection ─────────────────────────────────────────────────────────
 
+_MAX_SUGGESTIONS = 8   # cap shown in the picker to avoid flooding the screen
+
+
+def _index_search(needle: str, index: dict) -> list:
+    """
+    Search the pokemon_index for slugs matching needle (case-insensitive).
+
+    Priority order:
+      1. Exact slug match  →  returned alone (caller skips the picker)
+      2. Prefix matches    →  slugs whose key starts with needle
+      3. Substring matches →  slugs that contain needle but don't start with it
+
+    Returns a list of slugs, prefix matches first then substring matches,
+    each group sorted alphabetically.  Capped at _MAX_SUGGESTIONS total.
+    The list is empty when the index has no match at all.
+    """
+    needle_lo = needle.strip().lower()
+    if not needle_lo:
+        return []
+
+    # 1. Exact
+    if needle_lo in index:
+        return [needle_lo]
+
+    # 2. Prefix
+    prefix = sorted(k for k in index if k.startswith(needle_lo))
+    # 3. Substring (not already captured by prefix)
+    substr = sorted(k for k in index
+                    if needle_lo in k and not k.startswith(needle_lo))
+
+    return (prefix + substr)[:_MAX_SUGGESTIONS]
+
 def _lookup_pokemon_name(force_refresh=False):
     """Prompt for name, fetch, return (name, forms, species_gen) or (None,None,None)."""
     while True:
-        name = input("\n  Enter Pokemon name (e.g. Charizard, Garchomp, Rotom): ").strip()
+        name = input("\n  Enter Pokemon name (e.g. Charizard, char, rotom): ").strip()
         if not name:
             print("  Please enter a name.")
             continue
         if name.isdigit():
             print("  Please enter a name, not a Pokedex number.")
             continue
+
+        # ── Index search: offer suggestions before hitting PokeAPI ────────────
+        index   = cache.get_index()
+        matches = _index_search(name, index)
+
+        if len(matches) == 1 and matches[0] == name.strip().lower():
+            # Exact slug hit — proceed directly, no picker needed
+            resolved = matches[0]
+        elif len(matches) > 1:
+            # Multiple candidates — show picker
+            print(f"\n  {len(matches)} cached matches"
+                  f"{' (showing top ' + str(_MAX_SUGGESTIONS) + ')' if len(matches) == _MAX_SUGGESTIONS else ''}:")
+            for i, slug in enumerate(matches, start=1):
+                # Show form names from the index for context
+                forms_preview = index[slug].get("forms", [])
+                if len(forms_preview) == 1:
+                    label = forms_preview[0]["name"]
+                else:
+                    label = slug.replace("-", " ").title()
+                print(f"  {i:2d}. {label}")
+            print(f"   0. None — search PokeAPI for '{name}' instead")
+            while True:
+                raw = input("  Enter number: ").strip()
+                if raw == "0":
+                    resolved = name   # fall through to PokeAPI
+                    break
+                try:
+                    idx = int(raw)
+                    if 1 <= idx <= len(matches):
+                        resolved = matches[idx - 1]
+                        break
+                    print("  Invalid choice, try again.")
+                except ValueError:
+                    print("  Please enter a number.")
+        elif len(matches) == 0 and index:
+            # Index populated but no match — go straight to PokeAPI; print hint
+            print(f"  (not in local cache — searching PokeAPI...)")
+            resolved = name
+        else:
+            # Index empty or exact slug hit path
+            resolved = name
+
         try:
-            forms, species_gen = _fetch_or_cache(name, force_refresh=force_refresh)
-            return name, forms, species_gen
+            forms, species_gen = _fetch_or_cache(resolved, force_refresh=force_refresh)
+            return resolved, forms, species_gen
         except ValueError as e:
             print(f"\n  {e}")
             if input("  Try another name? (y/n): ").strip().lower() != "y":
@@ -490,9 +568,104 @@ if __name__ == "__main__":
         else: fail("T14", f"got {result}")
 
         builtins.input = real_input
+
+        # ── _index_search ─────────────────────────────────────────────────────
+
+        fake_index = {
+            "charizard":   {"forms": [{"name": "Charizard",   "types": ["Fire","Flying"]}]},
+            "charmander":  {"forms": [{"name": "Charmander",  "types": ["Fire"]}]},
+            "charmeleon":  {"forms": [{"name": "Charmeleon",  "types": ["Fire"]}]},
+            "blastoise":   {"forms": [{"name": "Blastoise",   "types": ["Water"]}]},
+            "garchomp":    {"forms": [{"name": "Garchomp",    "types": ["Dragon","Ground"]}]},
+            "rotom-wash":  {"forms": [{"name": "Rotom-Wash",  "types": ["Water","Electric"]}]},
+            "rotom-heat":  {"forms": [{"name": "Rotom-Heat",  "types": ["Fire","Electric"]}]},
+            "rotom-frost": {"forms": [{"name": "Rotom-Frost", "types": ["Ice","Electric"]}]},
+        }
+
+        # Exact slug match → returns that slug alone
+        r = _index_search("charizard", fake_index)
+        if r == ["charizard"]: ok("T15 _index_search exact slug → single result")
+        else: fail("T15", f"got {r}")
+
+        # Prefix match → all three char* entries, alphabetical
+        r = _index_search("char", fake_index)
+        if r == ["charizard", "charmander", "charmeleon"]:
+            ok("T16 _index_search prefix → correct candidates")
+        else: fail("T16", f"got {r}")
+
+        # Case-insensitive
+        r = _index_search("CHAR", fake_index)
+        if set(r) == {"charizard", "charmander", "charmeleon"}:
+            ok("T17 _index_search case-insensitive")
+        else: fail("T17", f"got {r}")
+
+        # Substring match (rotom contains "oto") — no prefix matches
+        r = _index_search("oto", fake_index)
+        if all("rotom" in s for s in r) and len(r) == 3:
+            ok("T18 _index_search substring fallback → rotom variants")
+        else: fail("T18", f"got {r}")
+
+        # Prefix matches ranked before substring matches
+        # "cha" prefixes char*, and "rotom-wash" contains "cha" — prefix first
+        r = _index_search("cha", fake_index)
+        prefix_names = {"charizard", "charmander", "charmeleon"}
+        first_three  = set(r[:3])
+        if first_three == prefix_names:
+            ok("T19 _index_search prefix ranked before substring")
+        else: fail("T19", f"first three: {first_three}")
+
+        # No match → empty list
+        r = _index_search("pikachu", fake_index)
+        if r == []: ok("T20 _index_search no match → []")
+        else: fail("T20", f"got {r}")
+
+        # Empty needle → empty list
+        r = _index_search("", fake_index)
+        if r == []: ok("T21 _index_search empty needle → []")
+        else: fail("T21", f"got {r}")
+
+        # Empty index → empty list
+        r = _index_search("char", {})
+        if r == []: ok("T22 _index_search empty index → []")
+        else: fail("T22", f"got {r}")
+
+        # Cap at _MAX_SUGGESTIONS
+        big_index = {f"rotom-{i}": {"forms": []} for i in range(20)}
+        r = _index_search("rotom", big_index)
+        if len(r) == _MAX_SUGGESTIONS:
+            ok(f"T23 _index_search capped at _MAX_SUGGESTIONS ({_MAX_SUGGESTIONS})")
+        else: fail("T23", f"got len={len(r)}")
+
+        # ── get_form_gen: word-split fix (Pythonmon-16) ───────────────────────
+
+        # Meganium: species_gen=2, "mega" is embedded in name — must NOT match
+        g = get_form_gen("Meganium", 2)
+        if g == 2: ok("T24 get_form_gen: Meganium → species_gen 2 (not 6)")
+        else: fail("T24", f"got {g}")
+
+        # Real Mega form: "Mega" is first word — must match → gen 6
+        g = get_form_gen("Mega Charizard X", 1)
+        if g == 6: ok("T25 get_form_gen: Mega Charizard X → 6")
+        else: fail("T25", f"got {g}")
+
+        # Mega...Z special case: still returns 9
+        g = get_form_gen("Mega Garchomp Z", 1)
+        if g == 9: ok("T26 get_form_gen: Mega Garchomp Z → 9 (special case)")
+        else: fail("T26", f"got {g}")
+
+        # Other keywords unaffected
+        g = get_form_gen("Alolan Sandslash", 8)
+        if g == 7: ok("T27 get_form_gen: Alolan Sandslash → 7")
+        else: fail("T27", f"got {g}")
+
+        # Base form with no keyword: returns species_gen
+        g = get_form_gen("Sandslash", 1)
+        if g == 1: ok("T28 get_form_gen: Sandslash → species_gen 1")
+        else: fail("T28", f"got {g}")
+
     print()
     if errors:
         print(f"  FAILED ({len(errors)}): {errors}")
         sys.exit(1)
     else:
-        print(f"  All {14} tests passed\n")
+        print(f"  All {28} tests passed\n")

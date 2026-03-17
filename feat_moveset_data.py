@@ -747,24 +747,28 @@ def build_candidate_pool(pkm_ctx: dict, game_ctx: dict) -> dict:
     # This means the user never needs to manually run "Full learnable move list"
     # before requesting a moveset recommendation.
     #
-    # KEY RULE: always save under `name` (the learnset display name), NOT under
-    # the API canonical name.  Learnset entries use _slug_to_display() which
-    # produces e.g. "Double Edge" (no hyphen).  The API canonical name is
-    # "Double-Edge" (hyphen).  Saving under the canonical name creates a key
-    # mismatch: the next get_move("Double Edge") call still returns None, so the
-    # move is re-fetched on every single session.
+    # KEY RULE: save under `name` (the learnset display name, e.g. "Double Edge"),
+    # NOT the API canonical name (e.g. "Double-Edge").  A mismatch causes
+    # perpetual re-fetching on every session (see §69).
+    #
+    # Batch write: collect all fetched entries then write moves.json once.
+    # A single write is significantly faster than N individual writes when the
+    # learnset has many uncached moves and moves.json is already large.
     missing = [n for n in all_names if cache.get_move(n) is None]
     if missing:
         import pkm_pokeapi as pokeapi
         total = len(missing)
         print(f"  Fetching details for {total} move(s) not yet in cache...")
+        batch = {}
         for i, name in enumerate(missing, start=1):
             print(f"  {i}/{total}  {name:<28}", end="\r", flush=True)
             try:
-                entries = pokeapi.fetch_move(name)
-                cache.upsert_move(name, entries)
+                entries     = pokeapi.fetch_move(name)
+                batch[name] = entries
             except (ValueError, ConnectionError):
                 pass   # leave as skipped — scored as missing
+        if batch:
+            cache.upsert_move_batch(batch)
         print(f"  Done.                                   ")
 
     # ── Count truly skipped (failed fetch or still missing) ───────────────────
@@ -2097,49 +2101,42 @@ def _run_tests():
     check("Charizard: Dragon Dance ranked 1st", charzi_ranked[0]["name"] == "Dragon Dance")
     check("Charizard: Swords Dance ranked 2nd", charzi_ranked[1]["name"] == "Swords Dance")
 
-    # ── build_candidate_pool: cache-key bug regression ────────────────────────
+    # ── build_candidate_pool: batch cache-key regression ─────────────────────
     #
-    # Moves whose learnset display name differs from the API canonical name
-    # (e.g. "Double Edge" vs "Double-Edge") were previously saved under the
-    # canonical name, causing get_move("Double Edge") to return None on every
-    # subsequent call and triggering an infinite re-fetch loop.
-    #
-    # Fix: upsert_move(name, entries) — always save under the learnset key.
-    #
-    # We verify this with a minimal fake cache + fake pokeapi that records
-    # which key was passed to upsert_move.
-    import tempfile, os, json
+    # Verifies:
+    #   (a) moves are saved via upsert_move_batch (single write), not
+    #       upsert_move per-move
+    #   (b) each key is the learnset display name ("Double Edge"), not the
+    #       API canonical name ("Double-Edge")
 
-    _saved_keys = []
+    _batch_calls = []
+    _single_calls = []
 
-    class _FakeCache:
+    class _FakeCacheBatch:
         def get_learnset_or_fetch(self, *a, **kw):
-            return {"forms": {"TestMon": {"level-up": [{"move": "Double Edge"}]}}}
+            return {"forms": {"TestMon": {"level-up": [
+                {"move": "Double Edge"},
+                {"move": "Tackle"},
+            ]}}}
         def get_move(self, name):
-            # Simulate: "Double Edge" not cached, "Double-Edge" also not cached
-            return None
+            return None   # everything uncached
         def upsert_move(self, name, entries):
-            _saved_keys.append(name)
+            _single_calls.append(name)
+        def upsert_move_batch(self, batch):
+            _batch_calls.append(dict(batch))
 
-    class _FakePokeapi:
+    class _FakePokeapiBatch:
         def fetch_move(self, name):
             return [{"from_gen": 1, "to_gen": None, "type": "Normal",
-                     "category": "Physical", "power": 120, "accuracy": 100,
-                     "pp": 15, "priority": 0, "drain": 0,
+                     "category": "Physical", "power": 40, "accuracy": 100,
+                     "pp": 35, "priority": 0, "drain": 0,
                      "effect_chance": 0, "ailment": "none"}]
 
-    # Patch module-level names used inside build_candidate_pool
     import sys as _sys
-    _mod = _sys.modules[__name__]
-    _orig_cache_mod   = None
-    _orig_pokeapi_mod = None
-
-    # build_candidate_pool does `import pkm_cache as cache` and
-    # `import pkm_pokeapi as pokeapi` locally — we inject via sys.modules
-    _real_pkm_cache   = _sys.modules.get("pkm_cache")
-    _real_pkm_pokeapi = _sys.modules.get("pkm_pokeapi")
-    _sys.modules["pkm_cache"]   = _FakeCache()
-    _sys.modules["pkm_pokeapi"] = _FakePokeapi()
+    _real_cache   = _sys.modules.get("pkm_cache")
+    _real_pokeapi = _sys.modules.get("pkm_pokeapi")
+    _sys.modules["pkm_cache"]   = _FakeCacheBatch()
+    _sys.modules["pkm_pokeapi"] = _FakePokeapiBatch()
 
     _fake_pkm_ctx = {
         "form_name": "TestMon", "type1": "Normal", "type2": "None",
@@ -2154,18 +2151,21 @@ def _run_tests():
     try:
         build_candidate_pool(_fake_pkm_ctx, _fake_game_ctx)
     except Exception:
-        pass  # pool may be empty — we only care about the saved key
+        pass
     finally:
-        # Restore
-        if _real_pkm_cache   is not None: _sys.modules["pkm_cache"]   = _real_pkm_cache
-        else:                              del _sys.modules["pkm_cache"]
-        if _real_pkm_pokeapi is not None: _sys.modules["pkm_pokeapi"] = _real_pkm_pokeapi
-        else:                              del _sys.modules["pkm_pokeapi"]
+        if _real_cache   is not None: _sys.modules["pkm_cache"]   = _real_cache
+        else:                          del _sys.modules["pkm_cache"]
+        if _real_pokeapi is not None: _sys.modules["pkm_pokeapi"] = _real_pokeapi
+        else:                          del _sys.modules["pkm_pokeapi"]
 
-    check("build_candidate_pool: move saved under learnset name, not canonical",
-          "Double Edge" in _saved_keys)
-    check("build_candidate_pool: hyphenated canonical name NOT used as cache key",
-          "Double-Edge" not in _saved_keys)
+    check("build_candidate_pool: batch used (not per-move upsert)",
+          len(_batch_calls) == 1 and len(_single_calls) == 0)
+    check("build_candidate_pool: batch contains learnset key 'Double Edge'",
+          _batch_calls and "Double Edge" in _batch_calls[0])
+    check("build_candidate_pool: batch contains learnset key 'Tackle'",
+          _batch_calls and "Tackle" in _batch_calls[0])
+    check("build_candidate_pool: hyphenated canonical key not used",
+          not _batch_calls or "Double-Edge" not in _batch_calls[0])
 
     # ── Summary ───────────────────────────────────────────────────────────────
 

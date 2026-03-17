@@ -29,6 +29,7 @@ Public API:
   get_moves()                              → dict or None
   save_moves(data)                         → None
   upsert_move(name, entries)               → None
+  upsert_move_batch(batch)                 → None
   get_move(name)                           → list or None
   invalidate_moves()                       → None
 
@@ -335,6 +336,25 @@ def upsert_move(name: str, entries: list) -> None:
     """
     existing = get_moves() or {}
     existing[name] = entries
+    existing["_scraped_at"] = _now()
+    existing["_version"]    = MOVES_CACHE_VERSION
+    _write(_MOVES_FILE, existing)
+
+
+def upsert_move_batch(batch: dict) -> None:
+    """
+    Insert or replace multiple move entries in a single read+write operation.
+
+    batch — {display_name: versioned_entries_list, ...}
+
+    Prefer this over calling upsert_move() in a loop when fetching several
+    moves at once (e.g. build_candidate_pool).  A single write is
+    meaningfully faster once moves.json grows large (~900+ entries).
+    """
+    if not batch:
+        return
+    existing = get_moves() or {}
+    existing.update(batch)
     existing["_scraped_at"] = _now()
     existing["_version"]    = MOVES_CACHE_VERSION
     _write(_MOVES_FILE, existing)
@@ -1059,7 +1079,37 @@ if __name__ == "__main__":
         assert _self.get_moves() is None, "invalidate_moves did not clear"
         _ok("  invalidate_moves   OK")
 
-        # ── invalidate_learnset ───────────────────────────────────────────────
+        # ── upsert_move_batch ─────────────────────────────────────────────────
+        fake_entries_a = [{"from_gen": 1, "to_gen": None, "type": "Fire",   "power": 90}]
+        fake_entries_b = [{"from_gen": 1, "to_gen": None, "type": "Water",  "power": 95}]
+        fake_entries_c = [{"from_gen": 1, "to_gen": None, "type": "Normal", "power": 40}]
+
+        upsert_move_batch({
+            "Flamethrower": fake_entries_a,
+            "Surf":         fake_entries_b,
+        })
+        assert get_move("Flamethrower") == fake_entries_a, "batch: Flamethrower missing"
+        assert get_move("Surf")         == fake_entries_b, "batch: Surf missing"
+        _ok("  upsert_move_batch  two keys written")
+
+        # Existing key preserved when batch does not include it
+        upsert_move_batch({"Tackle": fake_entries_c})
+        assert get_move("Flamethrower") == fake_entries_a, "batch: existing key overwritten"
+        assert get_move("Tackle")       == fake_entries_c, "batch: new key missing"
+        _ok("  upsert_move_batch  existing keys preserved")
+
+        # Version and scraped_at set correctly
+        data = get_moves()
+        assert data.get("_version") == MOVES_CACHE_VERSION, "batch: version not set"
+        assert "_scraped_at" in data,                       "batch: scraped_at missing"
+        _ok("  upsert_move_batch  version + scraped_at set")
+
+        # Empty batch is a no-op (no crash, file state unchanged)
+        before = get_moves()
+        upsert_move_batch({})
+        after  = get_moves()
+        assert before == after, "batch: empty batch mutated moves.json"
+        _ok("  upsert_move_batch  empty batch no-op")
         _self.save_learnset("pikachu", "Scarlet / Violet",
                             {"forms": {"Pikachu": {"level_up": [{"move": "Thunderbolt"}]}}})
         assert _self.get_learnset("pikachu", "Scarlet / Violet") is not None

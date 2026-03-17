@@ -430,73 +430,150 @@ before implementing the full scoring logic (step 4.2).
 ### Test count
 11 tests in this module. Full suite: 555 offline tests, 0 failures.
 
+
 ---
 
-## §70 — Step 4.4: team offensive coverage summary implemented
+## §72 — Pythonmon-1: S screen loading indicator
 
 ### What changed
-- Modified: `feat_team_moveset.py` — `build_offensive_coverage`,
-  `_display_coverage_summary`, updated `display_team_movesets`; tests 45 → 61
-- Modified: `TASKS.md` — all steps 4.1–4.4 marked complete; history table updated
-- Modified: `ARCHITECTURE.md` — added §7 Public API entries for
-  `feat_team_offense` and `feat_team_moveset` (both had been missing since §65)
-- Modified: `ROADMAP.md` — Step 4 progress updated
+- Modified: `feat_team_moveset.py` — added one `print()` line in `run()`
+  between the mode prompt and `recommend_team_movesets` call
 
 ### Why
-Step 4.4 per TASKS.md: aggregate the `se_types` already computed per member
-into a team-level coverage summary, and replace the 4.3 stub footer with it.
+On a cold cache with a 6-member team, the S screen was silent for several
+seconds while learnsets and moves were being fetched. The O screen already
+shows "Loading move data for N member(s)..." — the S screen now matches
+that pattern with "Computing movesets for N member(s)...".
 
 ### Key decisions
-- **Input is `member_results`, not `team_ctx`**: `build_offensive_coverage`
-  takes the list already returned by `recommend_team_movesets`. The spec
-  says "must NOT recompute movesets" — passing `team_ctx` would invite
-  accidental re-computation. Receiving the result list makes the constraint
-  structurally enforced.
-- **`era_key` explicit parameter**: the function needs `CHARTS[era_key]`
-  for the valid-type list. Passing it separately keeps the function pure and
-  avoids threading a full `game_ctx` into what is otherwise a data-only
-  aggregator.
-- **Overlap threshold ≥3**: matches the spec exactly.
-- **Overlap sorted descending by count, then alphabetically**: deterministic
-  output regardless of insertion order.
-- **`_display_coverage_summary` is a display-only function**: it prints and
-  returns nothing. Tested via stdout capture.
-- **Gaps line / Overlap line conditional**: only printed when non-empty.
-  Full-coverage case shows `Full coverage!` instead of an empty gaps line.
-- **§7 ARCHITECTURE catch-up**: `feat_team_offense` and `feat_team_moveset`
-  both lacked Public API entries since they were added. Fixed here alongside
-  4.4 rather than creating separate history entries for documentation-only
-  changes.
-
-### Bugs found during testing
-None. All 61 tests passed on first run.
+- Line goes in `run()`, not in `display_team_movesets` or
+  `recommend_team_movesets` — display functions stay side-effect-free with
+  respect to loading state.
+- `team_size()` already called earlier (empty-team guard); called again here
+  to get the count for the message rather than threading it through.
 
 ### Test count
-61 tests in this module. Full suite: 605 offline tests, 0 failures.
+No new tests (display-only change). 61 tests in module; full suite unchanged.
+
 
 ---
 
-## §71 — Step 4.5: menu integration verified; Step 4 closed
+## §73 — Pythonmon-2: fuzzy Pokemon name matching
 
 ### What changed
-- Modified: `README.md` — S feature section rewritten with proper markdown;
-  test counts updated (feat_moveset_data 152→154, feat_team_moveset 11→61)
-- Modified: `ROADMAP.md` — Step 4 marked ✅ Done; added to completed features table
-- Modified: `TASKS.md` — 4.5 marked complete; overall Step 4 status set to ✅ COMPLETE;
-  recently-completed table updated
-- Modified: `ARCHITECTURE.md` — no further changes needed (updated in §70)
-- No code changes
+- Modified: `pkm_session.py` — new `_index_search()` helper and updated
+  `_lookup_pokemon_name()` to offer suggestions; 9 new tests (14 → 23)
 
 ### Why
-Step 4.5 closure pass. The pokemain.py wiring (import, menu line, handler,
-context guards) was already added in §65 and required no changes.
+Typing exact Pokemon names is error-prone, especially for hyphenated or
+compound names ("Mr. Mime", "Ho-Oh", "Tapu Koko"). The index already exists
+and is populated on every cache hit — searching it before going to PokeAPI
+is a natural improvement with no new API calls.
 
-### Verification
-All four 4.5 checkpoints confirmed against the live pokemain.py:
-1. `feat_team_moveset` import is inside the `try/except ModuleNotFoundError` block (line 40)
-2. `S. Team moveset synergy` gated behind `team_size > 0` — same condition as V and O (line 167–170)
-3. Handler guards present: `game_ctx is None` and empty-team check (lines 298–304)
-4. `feat_team_moveset.run(team_ctx, game_ctx)` called correctly in the happy path
+### Key decisions
+- **Pure helper `_index_search(needle, index) → list`**: takes a slug dict
+  and returns ranked matches. Tested independently of I/O. Same design as
+  `match_move` in `feat_moveset.py`.
+- **Priority order**: exact slug first (skips the picker entirely); prefix
+  matches before substring matches within each group; both groups sorted
+  alphabetically; capped at `_MAX_SUGGESTIONS = 8`.
+- **Escape hatch**: option `0` in the picker always falls through to PokeAPI
+  with the original typed string — covers Pokemon not yet in the local cache.
+- **Hint on no-match**: when the index is populated but yields nothing, a
+  `(not in local cache — searching PokeAPI...)` note is shown before the
+  network call.
+- **Single-form display name**: when the index entry has exactly one form,
+  the form's display name (e.g. "Charizard") is shown rather than the raw
+  slug. For multi-form entries, fall back to title-cased slug.
+- **`_lookup_pokemon_name` prompt updated**: example names changed to hint
+  that partial input is accepted.
 
 ### Test count
-No new tests. Full suite: 605 offline tests, 0 failures.
+23 tests in `pkm_session.py`. Full suite: 614 offline tests, 0 failures.
+
+---
+
+## §74 — Pythonmon-3: batch move upserts
+
+### What changed
+- Modified: `pkm_cache.py` — new `upsert_move_batch(batch: dict)` function;
+  docstring updated; 4 new tests (33 → 37)
+- Modified: `feat_moveset_data.py` — `build_candidate_pool` fetch loop
+  converted to batch write; §69 key fix re-applied; 4 regression tests added
+  (152 → 156)
+- Modified: `feat_movepool.py` — `_prefetch_missing` loop converted to batch
+  write; §69 key fix applied (was still using canonical name in this file)
+
+### Why
+`build_candidate_pool` was calling `upsert_move()` once per missing move —
+one full read + write of `moves.json` per iteration. With 20 uncached moves
+and a ~900-entry `moves.json`, that is 20 × (read 900 entries + write 920
+entries). The batch approach reads once and writes once regardless of how
+many moves are missing.
+
+### Key decisions
+- **`upsert_move` kept unchanged**: it is used by `run_tests.py` cache
+  warm-up, `feat_move_lookup.py`, and other single-miss paths. No callers
+  were removed — only the loop callers upgraded.
+- **`feat_movepool._prefetch_missing` also fixed**: it had the same two bugs
+  (per-move writes + canonical key) independently. Fixed in the same pass
+  since touching the same area.
+- **`feat_move_lookup.py` not changed**: its single-miss `upsert_move` call
+  is correct as-is — it only ever fetches one move at a time.
+- **Empty batch is a no-op**: `upsert_move_batch({})` returns immediately
+  without touching disk.
+- **§69 key fix consolidated**: the per-move canonical-name bug (§69) was
+  still present in `feat_movepool.py` and in the pre-§69 state of
+  `feat_moveset_data.py`. Both are corrected here under the same pass.
+
+### Test count
+`pkm_cache.py`: 37 tests. `feat_moveset_data.py`: 156 tests.
+Full suite: 623 offline tests, 0 failures.
+
+---
+
+## §75 — Pythonmon-16: fix get_form_gen substring false-positive
+
+### What changed
+- Modified: `pkm_session.py` — `get_form_gen` uses word-split instead of
+  substring check; 5 new tests (23 → 28)
+
+### Why
+`get_form_gen("Meganium", 2)` was returning 6 because `"mega" in "meganium"`
+is True. This caused Meganium to be rejected in any game before Gen 6, with
+the error "Meganium was introduced in Generation 6".
+
+### Root cause
+The keyword loop used `if keyword in name_lower` (substring). The word
+`"mega"` is embedded in `"meganium"` at positions 0–3. The other keywords
+(`alolan`, `galarian`, `hisuian`, `paldean`) are long enough that no real
+Pokémon name contains them as embedded substrings, so only `"mega"` was
+affected in practice.
+
+### Fix
+```python
+# Before
+name_lower = form_name.lower()
+if "mega" in name_lower and ...:
+for keyword, gen in _FORM_GEN_KEYWORDS:
+    if keyword in name_lower:
+
+# After
+words = form_name.lower().split()
+if "mega" in words and ...:
+for keyword, gen in _FORM_GEN_KEYWORDS:
+    if keyword in words:
+```
+
+Word-split means `"Meganium".lower().split()` → `["meganium"]`, which
+does not contain `"mega"` as an element. `"Mega Charizard X"` →
+`["mega", "charizard", "x"]`, which does.
+
+### Cache cleanup note
+Users who previously loaded Meganium may have a corrupted
+`cache/pokemon/meganium.json` containing a fabricated "Mega Meganium"
+form. Deleting that file and reloading Meganium will fetch the correct
+single-form data from PokeAPI.
+
+### Test count
+28 tests in `pkm_session.py`. Full suite: 628 offline tests, 0 failures.
