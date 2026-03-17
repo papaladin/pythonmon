@@ -31,6 +31,7 @@ Public API:
   upsert_move(name, entries)               → None
   upsert_move_batch(batch)                 → None
   get_move(name)                           → list or None
+  check_integrity()                        → list[str]  (empty = clean)
   invalidate_moves()                       → None
 
   get_machines()                           → dict or None
@@ -864,6 +865,109 @@ def save_ability_detail(slug: str, data: dict) -> None:
             os.remove(tmp)
 
 
+def check_integrity() -> list:
+    """
+    Scan every cache file and return a list of issue strings.
+    An empty list means the cache is clean.
+
+    Does NOT raise — all OS / JSON errors are caught and reported as issues.
+    Ignores missing files (absence is normal; data is fetched on demand).
+    Ignores .tmp files left by interrupted writes.
+
+    Issue format: "<filename>: <reason>"
+    """
+    issues = []
+
+    def _check_file(path: str, label: str, validator) -> None:
+        """Read one file and run validator(data) → (ok: bool, note: str)."""
+        if not os.path.exists(path):
+            return   # absent is fine
+        data = _read(path)
+        if data is None:
+            issues.append(f"{label}: corrupt or unreadable")
+            return
+        ok, note = validator(data)
+        if not ok:
+            issues.append(f"{label}: {note}")
+
+    def _scan_dir(dirpath: str, validator) -> None:
+        """Scan every .json file in dirpath through validator."""
+        if not os.path.isdir(dirpath):
+            return
+        for fname in sorted(os.listdir(dirpath)):
+            if not fname.endswith(".json"):
+                continue
+            _check_file(os.path.join(dirpath, fname), fname, validator)
+
+    # ── Top-level files ───────────────────────────────────────────────────────
+
+    def _check_moves(data):
+        if not _valid_moves(data):
+            return False, "failed schema check"
+        if data.get("_version") != MOVES_CACHE_VERSION:
+            found = data.get("_version")
+            return False, f"schema version mismatch (found {found!r}, need {MOVES_CACHE_VERSION})"
+        n = sum(1 for k in data if not k.startswith("_"))
+        return True, f"ok ({n} entries)"
+
+    def _check_machines(data):
+        if not isinstance(data, dict) or not data:
+            return False, "empty or wrong type"
+        return True, "ok"
+
+    def _check_index(data):
+        if not isinstance(data, dict):
+            return False, "wrong type"
+        return True, "ok"
+
+    def _check_natures(data):
+        if not isinstance(data, dict) or not data:
+            return False, "empty or wrong type"
+        return True, "ok"
+
+    def _check_abilities_index(data):
+        if not isinstance(data, dict) or not data:
+            return False, "empty or wrong type"
+        return True, "ok"
+
+    _check_file(_MOVES_FILE,    "moves.json",           _check_moves)
+    _check_file(_MACHINES_FILE, "machines.json",        _check_machines)
+    _check_file(_INDEX_FILE,    "pokemon_index.json",   _check_index)
+    _check_file(_NATURES_FILE,  "natures.json",         _check_natures)
+    _check_file(_ABILITIES_FILE,"abilities_index.json", _check_abilities_index)
+
+    # ── Per-entry directories ─────────────────────────────────────────────────
+
+    def _check_pokemon_file(data):
+        if not _valid_pokemon(data):
+            return False, "failed schema check"
+        return True, "ok"
+
+    def _check_learnset_file(data):
+        if not _valid_learnset(data):
+            return False, "failed schema check"
+        return True, "ok"
+
+    def _check_type_file(data):
+        if not isinstance(data, dict) or "pokemon" not in data:
+            return False, "missing 'pokemon' key"
+        if not isinstance(data["pokemon"], list):
+            return False, "'pokemon' is not a list"
+        return True, "ok"
+
+    def _check_ability_file(data):
+        if not isinstance(data, dict) or "slug" not in data:
+            return False, "missing 'slug' key"
+        return True, "ok"
+
+    _scan_dir(_POKEMON_DIR,   _check_pokemon_file)
+    _scan_dir(_LEARNSET_DIR,  _check_learnset_file)
+    _scan_dir(_TYPES_DIR,     _check_type_file)
+    _scan_dir(_ABILITIES_DIR, _check_ability_file)
+
+    return issues
+
+
 if __name__ == "__main__":
     import tempfile, sys
 
@@ -1168,6 +1272,61 @@ if __name__ == "__main__":
         _self.get_pokemon("mewtwo")
         assert "mewtwo" in _self.get_index(), "index not repaired by get_pokemon"
         _ok("  index repair       OK")
+
+        # ── check_integrity ───────────────────────────────────────────────────
+        # check_integrity() uses module-level path globals from the running
+        # module (__main__ = pkm_cache_p13), not from _self (pkm_cache).
+        # We must redirect those globals to the temp dir as well.
+        _g = globals()
+        _orig_g = {k: _g[k] for k in
+                   ("_BASE","_POKEMON_DIR","_LEARNSET_DIR","_MOVES_FILE",
+                    "_MACHINES_FILE","_INDEX_FILE","_TYPES_DIR",
+                    "_NATURES_FILE","_ABILITIES_FILE","_ABILITIES_DIR")}
+        _g["_BASE"]          = tmp
+        _g["_POKEMON_DIR"]   = _self._POKEMON_DIR
+        _g["_LEARNSET_DIR"]  = _self._LEARNSET_DIR
+        _g["_MOVES_FILE"]    = _self._MOVES_FILE
+        _g["_MACHINES_FILE"] = _self._MACHINES_FILE
+        _g["_INDEX_FILE"]    = _self._INDEX_FILE
+        _g["_TYPES_DIR"]     = _self._TYPES_DIR
+        _g["_NATURES_FILE"]  = _self._NATURES_FILE
+        _g["_ABILITIES_FILE"]= _self._ABILITIES_FILE
+        _g["_ABILITIES_DIR"] = _self._ABILITIES_DIR
+
+        # Clean state: no issues expected
+        issues = check_integrity()
+        assert issues == [], f"expected clean cache, got: {issues}"
+        _ok("  check_integrity    clean cache → no issues")
+
+        # Corrupt moves.json → issue reported
+        with open(_g["_MOVES_FILE"], "w") as f:
+            f.write("{bad json")
+        issues = check_integrity()
+        assert any("moves.json" in i for i in issues), f"corrupt moves not flagged: {issues}"
+        _ok("  check_integrity    corrupt moves.json → issue reported")
+        _self.invalidate_moves()  # clean up
+
+        # Invalid pokemon file (parses but fails _valid_pokemon)
+        bad_pkm_path = os.path.join(_g["_POKEMON_DIR"], "badmon.json")
+        with open(bad_pkm_path, "w") as f:
+            import json as _json
+            _json.dump({"not_a_pokemon": True}, f)
+        issues = check_integrity()
+        assert any("badmon.json" in i for i in issues), f"bad pokemon not flagged: {issues}"
+        _ok("  check_integrity    invalid pokemon file → issue reported")
+        os.remove(bad_pkm_path)
+
+        # Valid pokemon file → no new issues
+        _self.save_pokemon("charizard", {"pokemon": "charizard", "forms": [
+            {"name": "Charizard", "types": ["Fire","Flying"], "base_stats": []},
+        ]})
+        issues = check_integrity()
+        assert not any("charizard.json" in i for i in issues), \
+            f"valid pokemon flagged: {issues}"
+        _ok("  check_integrity    valid pokemon file → no issue")
+
+        # Restore globals
+        _g.update(_orig_g)
 
     print()
     if errors:

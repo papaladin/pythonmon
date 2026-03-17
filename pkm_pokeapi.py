@@ -223,7 +223,12 @@ def fetch_pokemon(name: str) -> dict:
 
         forms.append({
             "name"        : display_name,
-            "variety_slug": variety_slug,
+            "variety_slug": form_slug,    # use form slug so each cosmetic form
+                                          # (Rotom-Wash, Wormadam-Sandy, …) gets
+                                          # its own learnset.  For single-form
+                                          # varieties form_slug == variety_slug,
+                                          # so there is no change for regional
+                                          # forms, Megas, or Gigantamax.
             "types"       : types,
             "base_stats"  : base_stats,
             "abilities"   : abilities,
@@ -1069,6 +1074,193 @@ def _test_fetch_moves_live():
     print("  [PASS] All GAMES entries have at least one version-group slug")
 
 
+def _test_fetch_pokemon_offline():
+    """
+    Offline unit tests for fetch_pokemon() using a mocked _get().
+
+    Covers:
+      - Single-form variety: form_slug == variety_slug → variety_slug unchanged
+      - Multi-form variety (Rotom-style): each form gets its own form_slug
+      - Deduplication: identical types → collapsed to default form
+      - Regional form (Alolan-style): separate variety, single form entry
+    """
+    import sys as _sys
+    errors = []
+
+    def _chk(label, cond, detail=""):
+        if cond:
+            print(f"  [PASS] {label}")
+        else:
+            print(f"  [FAIL] {label}" + (f": {detail}" if detail else ""))
+            errors.append(label)
+
+    # ── Fake API responses ────────────────────────────────────────────────────
+
+    def _make_pkm(variety_slug, types, form_slugs):
+        return {
+            "types"    : [{"type": {"name": t.lower()}, "slot": i+1}
+                          for i, t in enumerate(types)],
+            "stats"    : [{"stat": {"name": "hp"}, "base_stat": 50}],
+            "abilities": [],
+            "forms"    : [{"name": s} for s in form_slugs],
+        }
+
+    def _make_species(varieties):
+        # varieties: list of (slug, is_default)
+        return {
+            "generation": {"name": "generation-i"},
+            "names"     : [{"language": {"name": "en"}, "name": "TestMon"}],
+            "varieties" : [
+                {"pokemon": {"name": slug}, "is_default": is_def}
+                for slug, is_def in varieties
+            ],
+        }
+
+    def _make_form(en_name):
+        return {"names": [{"language": {"name": "en"}, "name": en_name}]}
+
+    # ── Test A: single-form variety — form_slug == variety_slug ──────────────
+    # Simulates Charizard base: variety_slug="charizard", forms=["charizard"]
+    _responses_a = {
+        "pokemon-species/testmon": _make_species([("testmon", True)]),
+        "pokemon/testmon"        : _make_pkm("testmon", ["Fire"], ["testmon"]),
+        "pokemon-form/testmon"   : _make_form("Testmon"),
+    }
+    orig_get = globals()["_get"]
+    globals()["_get"] = lambda path: _responses_a[path]
+
+    try:
+        result_a = fetch_pokemon("testmon")
+        _chk("single-form: exactly 1 form returned",
+             len(result_a["forms"]) == 1)
+        _chk("single-form: variety_slug == form_slug (no change)",
+             result_a["forms"][0]["variety_slug"] == "testmon",
+             result_a["forms"][0]["variety_slug"])
+    finally:
+        globals()["_get"] = orig_get
+
+    # ── Test B: two separate varieties, each with one form ───────────────────
+    # This matches how Rotom appliances actually appear in PokeAPI:
+    # pokemon-species/rotom lists rotom AND rotom-wash as separate varieties.
+    # Each variety fetches its own pokemon/{slug} with different types.
+    # form_slug comes from pkm["forms"][0]["name"] which equals the variety slug.
+    # The fix stores form_slug → same as variety_slug → no regression.
+    # Types differ (Electric/Ghost vs Water/Electric) → dedup does NOT fire.
+    _responses_b = {
+        "pokemon-species/rotom": _make_species([
+            ("rotom",      True),
+            ("rotom-wash", False),
+        ]),
+        "pokemon/rotom"      : _make_pkm("rotom",      ["Electric", "Ghost"],
+                                          ["rotom"]),
+        "pokemon/rotom-wash" : _make_pkm("rotom-wash", ["Water", "Electric"],
+                                          ["rotom-wash"]),
+        "pokemon-form/rotom"     : _make_form("Rotom"),
+        "pokemon-form/rotom-wash": _make_form("Rotom-Wash"),
+    }
+    globals()["_get"] = lambda path: _responses_b[path]
+
+    try:
+        result_b = fetch_pokemon("rotom")
+        _chk("separate-varieties: 2 forms returned (types differ, no dedup)",
+             len(result_b["forms"]) == 2,
+             str([f["variety_slug"] for f in result_b["forms"]]))
+        slugs_b = [f["variety_slug"] for f in result_b["forms"]]
+        _chk("separate-varieties: base form stored under 'rotom'",
+             "rotom" in slugs_b, str(slugs_b))
+        _chk("separate-varieties: wash form stored under 'rotom-wash'",
+             "rotom-wash" in slugs_b, str(slugs_b))
+    finally:
+        globals()["_get"] = orig_get
+
+    # ── Test C: identical types → deduplication fires ─────────────────────────
+    # One variety, two form slugs, but both Psychic → collapse to default.
+    _responses_c = {
+        "pokemon-species/deoxys": _make_species([("deoxys", True)]),
+        "pokemon/deoxys"        : _make_pkm("deoxys", ["Psychic"],
+                                             ["deoxys", "deoxys-attack"]),
+        "pokemon-form/deoxys"         : _make_form("Deoxys"),
+        "pokemon-form/deoxys-attack"  : _make_form("Deoxys Attack"),
+    }
+    globals()["_get"] = lambda path: _responses_c[path]
+
+    try:
+        result_c = fetch_pokemon("deoxys")
+        _chk("dedup: identical types → 1 form kept",
+             len(result_c["forms"]) == 1,
+             str([f["variety_slug"] for f in result_c["forms"]]))
+        _chk("dedup: kept form is the default (deoxys)",
+             result_c["forms"][0]["variety_slug"] == "deoxys",
+             result_c["forms"][0]["variety_slug"])
+    finally:
+        globals()["_get"] = orig_get
+
+    # ── Test D: regional form — separate variety, single form entry ───────────
+    # Simulates Alolan Sandslash: variety_slug="sandslash-alola",
+    # pkm["forms"]=["sandslash-alola"].  form_slug == variety_slug.
+    _responses_d = {
+        "pokemon-species/sandslash": _make_species([
+            ("sandslash",       True),
+            ("sandslash-alola", False),
+        ]),
+        "pokemon/sandslash"      : _make_pkm("sandslash",       ["Ground"],
+                                              ["sandslash"]),
+        "pokemon/sandslash-alola": _make_pkm("sandslash-alola", ["Ice","Steel"],
+                                              ["sandslash-alola"]),
+        "pokemon-form/sandslash"      : _make_form("Sandslash"),
+        "pokemon-form/sandslash-alola": _make_form("Alolan Sandslash"),
+    }
+    globals()["_get"] = lambda path: _responses_d[path]
+
+    try:
+        result_d = fetch_pokemon("sandslash")
+        # Types differ (Ground vs Ice/Steel) → no dedup → 2 forms
+        _chk("regional: 2 forms returned",
+             len(result_d["forms"]) == 2,
+             str([f["variety_slug"] for f in result_d["forms"]]))
+        slugs_d = [f["variety_slug"] for f in result_d["forms"]]
+        _chk("regional: base form stored under 'sandslash'",
+             "sandslash" in slugs_d, str(slugs_d))
+        _chk("regional: alolan form stored under 'sandslash-alola'",
+             "sandslash-alola" in slugs_d, str(slugs_d))
+    finally:
+        globals()["_get"] = orig_get
+
+    # ── Test E: form_slug differs from variety_slug ───────────────────────────
+    # The fix: store form_slug as variety_slug instead of the outer variety_slug.
+    # This matters when pkm["forms"][0]["name"] differs from the variety slug —
+    # e.g. if PokeAPI returns form slug "rotom-appliance" for variety "rotom-wash".
+    # With the old code: variety_slug stored = "rotom-wash"
+    # With the fix:      variety_slug stored = "rotom-appliance" (the form slug)
+    # This ensures build_candidate_pool fetches the learnset from the correct
+    # pokemon endpoint.
+    _responses_e = {
+        "pokemon-species/testmon-alt": _make_species([("testmon-alt", True)]),
+        "pokemon/testmon-alt": _make_pkm("testmon-alt", ["Water"],
+                                          ["testmon-form"]),   # form slug differs!
+        "pokemon-form/testmon-form": _make_form("Testmon Form"),
+    }
+    globals()["_get"] = lambda path: _responses_e[path]
+
+    try:
+        result_e = fetch_pokemon("testmon-alt")
+        _chk("form_slug≠variety_slug: stored variety_slug == form_slug",
+             result_e["forms"][0]["variety_slug"] == "testmon-form",
+             result_e["forms"][0]["variety_slug"])
+        _chk("form_slug≠variety_slug: outer variety_slug NOT stored",
+             result_e["forms"][0]["variety_slug"] != "testmon-alt",
+             result_e["forms"][0]["variety_slug"])
+    finally:
+        globals()["_get"] = orig_get
+
+    print()
+    if errors:
+        print(f"  FAILED ({len(errors)}): {errors}")
+        return False
+    print(f"  [PASS] All 12 offline fetch_pokemon tests passed")
+    return True
+
+
 def _test_mapping_completeness():
     """Assert every GAMES entry has at least one slug in the mapping."""
     missing = []
@@ -1173,6 +1365,9 @@ def main():
 
     print("\nRunning Step 3 offline unit tests...")
     _test_build_versioned_entries()
+
+    print("\nRunning fetch_pokemon offline unit tests...")
+    _test_fetch_pokemon_offline()
 
     if verify:
         print()

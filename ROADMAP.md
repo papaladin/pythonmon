@@ -29,20 +29,13 @@
 | Team defensive analysis | Unified type table: weak/resist/immune per type, gap labels | §60–§61 |
 | Team offensive coverage | Per-type hitter table with best scored move; O key | §62–§64 |
 | Team moveset synergy | Per-member recommended movesets + team coverage summary; S key | §66–§71 |
+| Quick wins batch (Pythonmon 1–4, 16) | Loading indicator (S screen), fuzzy name search, batch move upserts, session pool cache, get_form_gen bug fix | §72–§76 |
+| Quick wins batch 2 (Pythonmon 5, 12, 13) | Cache integrity check (`--check-cache`), add-to-team prompt after P, partial move refresh (F option in MOVE) | §77–§79 |
 
 ---
 
 ## Planned improvements
 
-### 🔧 Backend / robustness
-
-| ID | Feature | Description | Complexity |
-|---|---|---|---|
-| Pythonmon-1 | S screen loading indicator | ✅ Done §72 — `print()` before engine call in `run()`, matching O screen style. | 🟢 Low |
-| Pythonmon-3 | Batch move upserts | ✅ Done §74 - `build_candidate_pool` currently writes `moves.json` once per missing move. Collect all missing entries then write once at the end. Meaningful speedup on first-run with large learnsets. | 🟡 Medium |
-| Pythonmon-4 | Session pool caching for O and S | Both screens rebuild member move pools on every visit. A session-level dict keyed by `(variety_slug, game_slug)` makes repeat visits instant. No persistence — cleared on exit. | 🟢 Low |
-| Pythonmon-12 | Stale moves partial refresh | `--refresh-moves` wipes the whole `moves.json`. Surface a "fetch only missing moves" option in the menu (`MOVE` key) so new-game moves can be added without discarding everything. | 🟡 Medium |
-| Pythonmon-13 | Cache integrity check | A `--check-cache` startup flag that iterates all JSON files, runs the existing `_valid_*` checks, and prints a report. No menu integration needed — standalone diagnostic. | 🟢 Low |
 
 ---
 
@@ -51,8 +44,7 @@
 | ID | Feature | Description | Complexity |
 |---|---|---|---|
 | Pythonmon-2 | Fuzzy name matching | ✅ Done §73 -  Accept partial Pokemon names in `pkm_session`. Search against `pokemon_index.json` keys; show ranked suggestions (same pattern as `match_move`). Only finds previously cached Pokemon — document this clearly. | 🟢 Low |
-| Pythonmon-5 | Add-to-team prompt after P | After a successful `P` load, offer "Add to team? (y/n)". Single `input()` + `feat_team_loader.add_to_team()`. Natural flow improvement; no new context needed. | 🟢 Low |
-| Pythonmon-6 | Move filter in pool | Filter option 2 / 3 output by type, category, or minimum power before display. `feat_movepool.py` already builds a structured row list — add a pre-display filter prompt. | 🟢 Low |
+| Pythonmon-5 | Add-to-team prompt after P | ✅ Done §78 — 10-line addition to the P handler in `pokemain.py`; suppressed when no game loaded or team full. | 🟢 Low || Pythonmon-6 | Move filter in pool | Filter option 2 / 3 output by type, category, or minimum power before display. `feat_movepool.py` already builds a structured row list — add a pre-display filter prompt. | 🟢 Low |
 | Pythonmon-7 | History within session | `H` key navigates back through recently viewed Pokemon. A `deque(maxlen=10)` in `pokemain.py` holding past `pkm_ctx` values. No persistence. | 🟢 Low |
 | Pythonmon-14 | STATUS_MOVE_TIERS auto-update | Detect status moves that fall back to tier 4 / quality 0 (unknown). Prompt user to classify and persist additions alongside the built-in table. Requires a design decision on where user overrides live. | 🟡 Medium |
 
@@ -64,7 +56,7 @@
 |---|---|---|---|
 | Pythonmon-8 | Stat comparison | New `feat_stat_compare.py` with side-by-side base stat bars for two Pokemon. No new API data — reuses cached `base_stats`. New menu key (e.g. `C`) when Pokemon loaded. | 🟢 Low |
 | Pythonmon-9 | Evolution chain | Show evolution conditions and stat changes per stage. Requires new `/evolution-chain` PokeAPI endpoint + cache layer + recursive tree parsing. Complex evolution conditions (trade, item, friendship). | 🔴 High |
-| Pythonmon-10 | Per-form learnset | Cosmetic forms sharing a `variety_slug` (Rotom appliances, Wormadam cloaks, most Megas) get the base-form learnset. Fixing requires per-family slug mapping research and careful cache extension. | 🟡 Medium |
+| Pythonmon-10 | Per-form learnset | ✅ Done §80 — `fetch_pokemon` stores `form_slug` as `variety_slug`; 12 new offline tests. Investigation found Rotom appliances are already separate varieties in PokeAPI; fix covers the narrower case where form slug ≠ variety slug. | 🟡 Medium |
 | Pythonmon-11 | Team builder / slot suggestion | Given a partial team (1–5 members), suggest types / roles that fill defensive and offensive gaps. Highest-complexity team feature; depends on the type roster cache being populated. | 🔴 High |
 
 ---
@@ -77,11 +69,16 @@
 
 ---
 
-## Bugs / hotfixes
+## Parked — considered but not planned
 
-| ID | Bug | Root cause | Complexity |
-|---|---|---|---|
-| Pythonmon-16 | `get_form_gen` false-positive on "mega" substring | ✅ Done §75 — word-split check replaces substring check; Meganium and any similar name now handled correctly. | 🟢 Low |
+Items we have thought through and deliberately set aside. Kept here so the
+reasoning is not lost. Revisit if priorities change.
+
+| ID | Feature | Why parked |
+|---|---|---|
+| Pythonmon-7 | History within session | Low daily impact — pressing P again is fast enough, especially with fuzzy matching (Pythonmon-2) now in place. |
+| Pythonmon-14 | STATUS_MOVE_TIERS auto-update | Requires a design decision on where user overrides live, and the current hand-curated list covers all common moves. Revisit if new games introduce many unrecognised status moves. |
+
 
 ---
 

@@ -82,6 +82,11 @@ in module-level globals.
 {
     "pokemon"      : str,        # Species slug / search key  e.g. "sandslash"
     "variety_slug" : str,        # PokeAPI variety slug  e.g. "sandslash-alola"
+                                 # PokeAPI form slug used to key the learnset
+                                 # cache and fetch the correct move list.
+                                 # Equals the variety slug in most cases
+                                 # (e.g. "sandslash-alola") but uses the form
+                                 # slug when the two differ (§80).
     "form_name"    : str,        # Display name  e.g. "Alolan Sandslash"
     "types"        : list[str],  # e.g. ["Ice", "Steel"]
     "type1"        : str,        # e.g. "Ice"

@@ -1,303 +1,255 @@
 # TASKS.md
 
-# Current work — quick wins batch
+# Current work — batch 3: UX + Pokemon features
 
 **Status:** NOT STARTED
 
-Four tickets selected from the roadmap for their low complexity and high
-daily-use impact. All are self-contained: no new PokeAPI endpoints, no schema
-changes, no new context objects.
+Two tickets. Pythonmon-6 is additive to an existing feature with no new files.
+Pythonmon-8 is a new standalone feature file with a new menu key.
 
 Ticket IDs reference ROADMAP.md identifiers. Each step must include:
 1. Implementation
 2. `_run_tests()` additions (where testable logic exists)
-3. Documentation updates (`HISTORY.md`, `ROADMAP.md` if needed)
+3. Documentation updates (`HISTORY.md`, `ROADMAP.md`, `TASKS.md`)
 
 ---
 
-# Pythonmon-1 — S screen loading indicator
+# Pythonmon-6 — Move filter in pool
 
-**Status:** ✅ COMPLETE (§72)
-**File:** `feat_team_moveset.py`
-
-## What
-Print a progress line before `recommend_team_movesets` runs so the user
-knows the tool is working during a cold-cache run with a full 6-member team.
-
-Proposed output (before the member blocks appear):
-```
-  Computing movesets for 6 member(s)…
-```
-
-## Where
-In `run()` in `feat_team_moveset.py`, between the mode prompt and the
-`recommend_team_movesets` call.
-
-## Tests
-No pure logic to test. Verify manually: press S with a cold cache and confirm
-the line appears before the learnset fetch messages.
-
-## Notes
-- The O screen already has a similar pattern ("Loading move data for N member(s)...").
-  Match that style exactly.
-- Do not add the line inside `display_team_movesets` — keep display functions
-  side-effect-free with respect to loading state.
-
----
-
-# Pythonmon-2 — Fuzzy name matching
-
-**Status:** ✅ COMPLETE (§73)
-**File:** `pkm_session.py`
+**Status:** TO DO
+**File:** `feat_movepool.py`
 **Complexity:** 🟢 Low
 
 ## What
-When the user types a partial Pokemon name (e.g. "char"), search
-`pokemon_index.json` for all keys that start with or contain the input,
-and offer ranked suggestions before falling back to a PokeAPI lookup.
+
+When the user presses `2` (learnable move list), offer an optional filter
+before the list is displayed. The user can narrow the output by type,
+category, or minimum power — or skip filtering entirely to see everything.
 
 Proposed flow:
 ```
-  Enter Pokemon name: char
-  Multiple matches — did you mean:
-    1. Charizard
-    2. Charmander
-    3. Charmeleon
-    4. Sawk     (contains "har" — ranked lower)
-  Enter number (or 0 to type a different name):
+  Enter Pokemon name: charizard
+  (loaded from cache)
+
+  Filter move list? (Enter to skip)
+    Type     (e.g. Fire, Water — blank = all)
+    Category (P)hysical / (S)pecial / (T)hm / (Enter = all)
+    Min power (e.g. 80 — blank = all)
+
+  Type: fire
+  Category: s
+  Min power: 80
+
+  [ Charizard  •  Fire / Flying  •  Scarlet / Violet ]
+
+  ── LEVEL-UP ─────────────────────────
+  Lv  1    Flamethrower   Fire   Special   90  100%   15pp
+  Lv 76    Fire Blast     Fire   Special  110   85%    5pp
+  ...
 ```
 
-## Design decisions to make before implementation
-- **Prefix-only vs. substring**: prefix matches ranked first, substring
-  matches shown below (same as `match_move` in `feat_moveset.py`).
-- **Only cached Pokemon**: the index only contains Pokemon the user has
-  previously looked up. Display a note: "(showing cached Pokemon only —
-  enter full name to search PokeAPI)".
-- **Exact slug match still tried first**: if "charizard" is in the index,
-  load it directly without showing the picker.
-- **Max suggestions shown**: cap at 8 to avoid flooding the screen.
+## Design
 
-## Where
-In `_lookup_pokemon_name()` in `pkm_session.py`. After the name is entered
-but before calling `_fetch_or_cache`, run the index search. If one exact
-match: proceed as today. If multiple: show picker. If none in index: proceed
-to PokeAPI as today.
+### New pure logic function: `_apply_filter(entries, game_ctx, f) → list`
+
+```python
+f = {
+    "type"    : str | None,   # e.g. "Fire" — case-insensitive match
+    "category": str | None,   # "Physical" | "Special" | "Status"
+    "min_power": int | None,  # inclusive lower bound on power
+}
+```
+
+Takes a flat list of `(label, move_name, details_or_None)` tuples (one per
+move across all sections) and returns the filtered subset. Pure — no I/O.
+
+### New interactive function: `_prompt_filter() → dict`
+
+Asks the three questions. Returns a filter dict. All fields optional — pressing
+Enter on any question sets that field to `None` (no constraint).
+
+Category input normalised: `"p"` → `"Physical"`, `"s"` → `"Special"`,
+`"t"` or `"sta"` → `"Status"`. Anything else → `None` (no filter).
+
+### Integration point in `_display_learnset`
+
+After `_prefetch_missing` and before rendering:
+
+```python
+filter_spec = _prompt_filter()
+```
+
+Pass `filter_spec` through to the section renderers. Each section skips moves
+that don't match. If all moves in a section are filtered out, the section
+header is also suppressed.
+
+Show a count at the top: `Showing 12 of 54 moves (filtered)` when a filter
+is active. Show nothing extra when no filter is applied.
+
+### Filter is per-visit
+
+Not persisted. Each press of `2` starts fresh.
+
+## Files
+
+Only `feat_movepool.py` changes. No new files, no pokemain changes.
 
 ## Tests
-Add to `pkm_session.py _run_tests()`:
-- prefix search returns correct candidates from a fake index
-- exact match skips the picker
-- empty index falls through to PokeAPI path
-- result is capped at 8
+
+Add to `feat_movepool.py _run_tests()`:
+
+- `_apply_filter` with type filter: only matching type returned
+- `_apply_filter` with category filter: only matching category returned
+- `_apply_filter` with min_power filter: only moves at or above threshold
+- `_apply_filter` with combined filters: intersection applied correctly
+- `_apply_filter` with no filter (all None): all moves returned unchanged
+- `_apply_filter` with filter that matches nothing: returns `[]`
+- Move with `power=None` (status move): excluded by min_power filter,
+  included when min_power is None
+
+## Notes
+
+- The filter is applied to the `details` dict returned by `_get_move_details`.
+  If `details` is None (move not in cache), the move is included regardless
+  of filter — same graceful behaviour as today.
+- The `_display_learnset` function receives the filter spec and passes it
+  down; `_prompt_filter` is called once before rendering begins.
+- Summary line at the bottom should reflect filtered counts:
+  `Showing 12 of 54 moves  (8 level-up  4 TM/HM  0 tutor  0 egg)`
+- `run()` does not change signature.
 
 ---
 
-# Pythonmon-3 — Batch move upserts in build_candidate_pool
-
-**Status:** ✅ COMPLETE (§74)
-**File:** `feat_moveset_data.py`
-**Complexity:** 🟡 Medium
-
-## What
-`build_candidate_pool` currently writes `moves.json` once per missing move.
-With 20 uncached moves, that is 20 full reads + 20 full writes of a file
-that may already contain ~900 entries. Replace with a single write at the
-end of the fetch loop.
-
-## Current code (simplified)
-```python
-for name in missing:
-    entries = pokeapi.fetch_move(name)
-    cache.upsert_move(name, entries)       # read + write per iteration
-```
-
-## Target behaviour
-```python
-batch = {}
-for name in missing:
-    entries = pokeapi.fetch_move(name)
-    batch[name] = entries
-if batch:
-    cache.upsert_move_batch(batch)         # single read + write
-```
-
-## Where
-- `feat_moveset_data.py` — update the fetch loop in `build_candidate_pool`
-- `pkm_cache.py` — add `upsert_move_batch(entries_dict)` function
-
-## Implementation notes
-- `upsert_move_batch` follows the same pattern as `upsert_move` but merges
-  a whole dict in one operation:
-  ```python
-  def upsert_move_batch(batch: dict) -> None:
-      existing = get_moves() or {}
-      existing.update(batch)
-      existing["_scraped_at"] = _now()
-      existing["_version"]    = MOVES_CACHE_VERSION
-      _write(_MOVES_FILE, existing)
-  ```
-- Keep `upsert_move` for single-move callers (it is used in `run_tests.py`
-  cache warm-up and elsewhere).
-- If any individual fetch fails, skip that move and continue — same
-  behaviour as today.
-
-## Tests
-- `pkm_cache.py`: add tests for `upsert_move_batch` — multiple keys written
-  in one call, existing keys preserved, version set correctly.
-- `feat_moveset_data.py`: extend the existing cache-key regression test to
-  verify that the batch path also saves under the learnset name (not canonical).
-
----
-
-# Pythonmon-4 — Session pool caching for O and S screens
+# Pythonmon-8 — Stat comparison
 
 **Status:** TO DO
-**Files:** `pokemain.py`, `feat_team_offense.py`, `feat_team_moveset.py`
+**Files:** `feat_stat_compare.py` (new), `pokemain.py`, `run_tests.py`
 **Complexity:** 🟢 Low
 
 ## What
-Both the O and S screens rebuild member move pools on every visit. With a
-6-member team this is up to 6 × learnset lookups + scoring passes each time.
-A session-level cache makes every repeat visit instant.
+
+A new screen (key `C`) that shows two Pokemon side by side with their base
+stats, so the user can directly compare them. No new API data — both
+`base_stats` dicts are already in the cache from prior `P` loads.
+
+Proposed output:
+
+```
+  Stat comparison  |  Scarlet / Violet
+  ════════════════════════════════════════════════════════
+  Charizard  [Fire / Flying]      vs   Garchomp  [Dragon / Ground]
+  ════════════════════════════════════════════════════════
+  HP     78  [████████·············]      108  [█████████████········]
+  Atk    84  [██████████·············]    130  [████████████████·····]
+  Def    78  [████████·············]       95  [████████████·········]
+  SpA   109  [█████████████········]       80  [█████████············]
+  SpD    85  [██████████·············]     85  [██████████·············]
+  Spe   100  [████████████·········]      102  [████████████·········]
+  ────────────────────────────────────────────────────────
+  Total 534                               600
+  ════════════════════════════════════════════════════════
+  ★ = higher   • = tied
+```
 
 ## Design
-A plain dict in `pokemain.py`, passed into the relevant `run()` calls:
+
+### New file: `feat_stat_compare.py`
+
+Module structure follows project conventions (docstring → imports → constants
+→ pure logic → display → entry points → tests → `__main__`).
+
+### Pure logic functions
+
+**`compare_stats(stats_a, stats_b) → list[dict]`**
+
+For each of the 6 stats, returns:
 ```python
-_pool_cache = {}   # key: (variety_slug, game_slug) → damage_pool list
+{
+    "key":    str,          # "hp", "attack", etc.
+    "label":  str,          # "HP", "Atk", etc.
+    "val_a":  int,
+    "val_b":  int,
+    "winner": "a" | "b" | "tie",
+}
+```
+Pure — takes two `base_stats` dicts, returns comparison rows.
+
+**`total_stats(base_stats) → int`**
+
+Sum of all 6 base stats. Pure helper.
+
+### Display function
+
+**`display_comparison(pkm_a, pkm_b, game_ctx)`**
+
+Reuses `_stat_bar` logic from `feat_type_matchup.py` — but does NOT import
+it (private function in another module). Define `_stat_bar` locally in
+`feat_stat_compare.py`. Same formula, same constants.
+
+Side-by-side layout: left Pokemon name + bar + value, right Pokemon name +
+bar + value. Fixed column widths defined as module-level constants.
+
+### Entry point
+
+**`run(pkm_ctx, game_ctx)`** — called from pokemain key `C`.
+
+Since `C` requires two Pokemon, `run()` prompts for the second one
+interactively:
+
+```
+  Comparing with: Garchomp
+  (loaded from cache or prompts for second Pokemon)
 ```
 
-Lifetime: session only — cleared on exit, never written to disk.
+The first Pokemon (`pkm_ctx`) is the currently loaded one. The second is
+selected via `pkm_session.select_pokemon(game_ctx=game_ctx)`.
 
-## Interface change
-`feat_team_offense.run(team_ctx, game_ctx)` and
-`feat_team_moveset.run(team_ctx, game_ctx)` gain an optional parameter:
-```python
-def run(team_ctx, game_ctx, pool_cache=None):
-```
-When `pool_cache` is provided, `build_candidate_pool` is called only for
-members whose `(variety_slug, game_slug)` key is absent. Results are stored
-back into the dict before returning.
+### pokemain.py changes
 
-`pokemain.py` passes `_pool_cache` on every S and O call. The dict persists
-across menu selections for the duration of the session.
+- Import `feat_stat_compare` in the try/except block
+- Add `C. Compare stats  (needs Pokemon + game)` to the menu, visible when
+  `both` (pkm + game loaded)
+- Handler: `elif choice == "c": feat_stat_compare.run(pkm_ctx, game_ctx)`
 
-## Invalidation
-The cache must be cleared when:
-- The game changes (`G` key) — `game_slug` in the key handles this
-  naturally (different key), so no explicit invalidation needed.
-- A team member is replaced (`T` key) — old slots' pools remain in the
-  dict but will never be looked up again (different `variety_slug`). No
-  harm in keeping them; they are small.
+### run_tests.py
+
+Add `feat_stat_compare` to SUITES (offline, no cache keys).
 
 ## Tests
-Add to `feat_team_offense.py` and `feat_team_moveset.py`:
-- When `pool_cache` is provided and key is present, `build_candidate_pool`
-  is NOT called (mock it to assert call count = 0).
-- When key is absent, pool is computed and stored in the dict.
-- `pool_cache=None` falls back to current behaviour (no regression).
 
+Add to `feat_stat_compare.py _run_tests()`:
 
----
+**`compare_stats`:**
+- All stats equal → all winners are "tie"
+- A strictly better → all winners are "a"
+- Mixed results → correct winner per stat
+- `total_stats` is sum of all 6 values
 
-# Pythonmon-16 — `get_form_gen` false-positive on "mega" substring
+**`display_comparison` (stdout capture):**
+- Both Pokemon names appear in output
+- All 6 stat labels appear
+- "Total" line appears
+- Output does not crash on missing stat keys (graceful fallback to 0)
 
-**Status:** ✅ COMPLETE (§75)
-**File:** `pkm_session.py`
+## Notes
 
-## Root cause
-
-`get_form_gen` uses `if keyword in name_lower` — a plain substring check.
-
-```python
-"mega" in "meganium".lower()   # → True  ← BUG
-"mega" in "mega charizard x".lower()   # → True  ← correct
-```
-
-`"mega"` appears at positions 0–3 inside `"meganium"`, so any Pokémon
-whose name contains those four letters in sequence will be incorrectly
-assigned `form_gen = 6` regardless of its actual generation.
-
-Only `"mega"` is affected — the other keywords (`alolan`, `galarian`,
-`hisuian`, `paldean`) are long enough that no real Pokémon name contains
-them as embedded substrings.
-
-## Observed symptom
-
-```
-Loaded: Meganium — Grass type
-Meganium was introduced in Generation 6 and did not exist in Gold / Silver / Crystal.
-```
-
-Meganium is a Gen 2 Pokémon. `get_form_gen("Meganium", species_gen=2)`
-incorrectly returns 6 because `"mega" in "meganium"` is True.
-
-## Secondary symptom
-
-The picker also showed a fabricated "Mega Meganium (Grass / Fairy)" form.
-Meganium has no Mega Evolution. This is stale/corrupted data in the local
-`cache/pokemon/meganium.json`. After the code fix, deleting that cache file
-and re-fetching Meganium will return only the base form from PokeAPI, which
-the deduplication logic will collapse to a single entry.
-
-## Fix
-
-Replace the substring check with a word-split check in `get_form_gen`:
-
-```python
-# Before
-if keyword in name_lower:
-
-# After
-if keyword in name_lower.split():
-```
-
-The special-case check for `"Mega ... Z"` forms at the top of the function
-also uses `"mega" in name_lower` — update it consistently to
-`"mega" in name_lower.split()`.
-
-```python
-# Before
-if "mega" in name_lower and name_lower.rstrip().endswith(" z"):
-
-# After
-if "mega" in name_lower.split() and name_lower.rstrip().endswith(" z"):
-```
-
-Word-split examples:
-- `"Mega Charizard X".lower().split()` → `["mega", "charizard", "x"]` → hit ✓
-- `"Meganium".lower().split()`         → `["meganium"]`                → miss ✓
-- `"Mega Meganium".lower().split()`    → `["mega", "meganium"]`        → hit ✓ (correct)
-
-## Tests to add
-
-In `pkm_session.py _run_tests()`:
-- `get_form_gen("Meganium", 2)` returns `2` (not `6`)
-- `get_form_gen("Mega Charizard X", 1)` returns `6`
-- `get_form_gen("Mega Garchomp Z", 1)` returns `9` (special case still works)
-- `get_form_gen("Alolan Sandslash", 8)` returns `7`
-- `get_form_gen("Sandslash", 1)` returns `1` (base form, no keyword)
-
-## Cache cleanup note
-
-After applying the fix, users with a corrupted `cache/pokemon/meganium.json`
-(or any Pokémon with a fabricated Mega form) should delete the file and let
-it re-fetch. The fix itself does not repair existing cache files.
-
-Consider documenting in README troubleshooting: "Wrong or extra forms shown
-for a Pokémon → delete `cache/pokemon/<name>.json` and reload."
-
+- `_stat_bar` is duplicated from `feat_type_matchup.py` by design — private
+  helpers are not shared across feature modules (project convention).
+- The second Pokemon selection uses the existing fuzzy picker from
+  `pkm_session.select_pokemon` — no new input handling needed.
+- If the second Pokemon load is aborted (returns None), `run()` prints a
+  message and returns without crashing.
+- Key `C` is safe — not currently used by any handler in pokemain.
 
 ---
 
 # Completion criteria
 
-This batch is complete when:
+Batch 3 is complete when:
 
-* Pythonmon-1: loading line appears before engine runs on S screen
-* Pythonmon-2: partial name input offers ranked suggestions from index
-* Pythonmon-3: `upsert_move_batch` added; `build_candidate_pool` uses it
-* Pythonmon-4: repeat O and S visits do not re-fetch already-built pools
-* Pythonmon-16: `get_form_gen` false-positive on "mega" substring
-
+* Pythonmon-6: filter prompt shown before option 2 output; all filter
+  combinations work; tests pass
+* Pythonmon-8: `C` key shows side-by-side stat comparison; `feat_stat_compare`
+  in `run_tests.py`; all tests pass
 * All offline tests pass (`python run_tests.py --offline`)
-* `HISTORY.md` updated for each ticket
+* `HISTORY.md`, `ROADMAP.md`, `TASKS.md` updated for each ticket

@@ -87,7 +87,8 @@ def _se_types(combo: list, era_key: str) -> list:
 
 # ── Core logic ─────────────────────────────────────────────────────────────
 
-def recommend_team_movesets(team_ctx: list, game_ctx: dict, mode: str) -> list:
+def recommend_team_movesets(team_ctx: list, game_ctx: dict, mode: str,
+                            pool_cache: dict | None = None) -> list:
     """
     Compute a recommended moveset for each filled team slot.
 
@@ -96,21 +97,33 @@ def recommend_team_movesets(team_ctx: list, game_ctx: dict, mode: str) -> list:
     (cache miss / network unavailable), the result is correctly shaped with
     empty lists rather than crashing.
 
+    pool_cache — optional session-level dict keyed by (variety_slug, game_slug).
+                 When provided, already-computed damage pools are reused.
+                 New pools are stored back into the dict.
+
     mode — "coverage" | "counter" | "stab"
 
     Returns list[dict], one entry per filled slot:
       { form_name, moves (list[dict]), weakness_types (list[str]),
         se_types (list[str]) }
     """
-    era_key = game_ctx["era_key"]
-    results = []
+    era_key   = game_ctx["era_key"]
+    game_slug = game_ctx.get("game_slug", game_ctx["game"])
+    results   = []
 
     for _idx, pkm in team_slots(team_ctx):
-        pool        = build_candidate_pool(pkm, game_ctx)
-        damage_pool = pool["damage"]
-        weak_types  = _weakness_types(pkm, era_key)
-        combo       = select_combo(damage_pool, mode, weak_types, era_key)
-        se          = _se_types(combo, era_key)
+        cache_key = (pkm["variety_slug"], game_slug)
+        if pool_cache is not None and cache_key in pool_cache:
+            damage_pool = pool_cache[cache_key]
+        else:
+            pool        = build_candidate_pool(pkm, game_ctx)
+            damage_pool = pool["damage"]
+            if pool_cache is not None:
+                pool_cache[cache_key] = damage_pool
+
+        weak_types = _weakness_types(pkm, era_key)
+        combo      = select_combo(damage_pool, mode, weak_types, era_key)
+        se         = _se_types(combo, era_key)
 
         results.append({
             "form_name":      pkm["form_name"],
@@ -291,7 +304,8 @@ def _mode_prompt() -> str:
 
 # ── Entry points ───────────────────────────────────────────────────────────
 
-def run(team_ctx: list, game_ctx: dict) -> None:
+def run(team_ctx: list, game_ctx: dict,
+        pool_cache: dict | None = None) -> None:
     """Menu entry point for key S — Team Moveset Synergy."""
     if team_size(team_ctx) == 0:
         print("\n  Team is empty — load some Pokémon first (press T).")
@@ -300,7 +314,8 @@ def run(team_ctx: list, game_ctx: dict) -> None:
     mode = _mode_prompt()
     n    = team_size(team_ctx)
     print(f"\n  Computing movesets for {n} member(s)...")
-    results = recommend_team_movesets(team_ctx, game_ctx, mode)
+    results = recommend_team_movesets(team_ctx, game_ctx, mode,
+                                      pool_cache=pool_cache)
     display_team_movesets(results, game_ctx, mode)
 
     print("\n  Press Enter to return to the main menu...")
@@ -842,12 +857,75 @@ def _run_tests():
     else:
         fail("_display_coverage_summary: overlap line shown when empty", _out3)
 
+    # ── ## recommend_team_movesets: pool_cache ────────────────────────────────
+
+    _this.build_candidate_pool = _mock_pool
+    _this.select_combo         = _mock_combo
+
+    _bcp_calls = [0]
+    _orig_bcp  = _this.build_candidate_pool
+
+    def _counting_pool(pkm_ctx, game_ctx):
+        _bcp_calls[0] += 1
+        return _orig_bcp(pkm_ctx, game_ctx)
+
+    _this.build_candidate_pool = _counting_pool
+
+    team_two = [
+        _pkm("Charizard", "Fire", "Flying"),
+        _pkm("Blastoise", "Water"),
+        None, None, None, None,
+    ]
+    # Add variety_slug since pool_cache keying uses it
+    team_two[0]["variety_slug"] = "charizard"
+    team_two[1]["variety_slug"] = "blastoise"
+
+    # pool_cache=None → no caching, build_candidate_pool called per member
+    _bcp_calls[0] = 0
+    recommend_team_movesets(team_two, game_ctx, "coverage", pool_cache=None)
+    if _bcp_calls[0] == 2:
+        ok("recommend_team_movesets: pool_cache=None → bcp called per member")
+    else:
+        fail("recommend_team_movesets pool_cache=None call count", str(_bcp_calls[0]))
+
+    # pool_cache provided, empty → pools computed and stored
+    _bcp_calls[0] = 0
+    cache_s = {}
+    recommend_team_movesets(team_two, game_ctx, "coverage", pool_cache=cache_s)
+    if _bcp_calls[0] == 2:
+        ok("recommend_team_movesets: empty pool_cache → both pools computed")
+    else:
+        fail("recommend_team_movesets empty cache call count", str(_bcp_calls[0]))
+
+    if ("charizard", "test-game") in cache_s and ("blastoise", "test-game") in cache_s:
+        ok("recommend_team_movesets: pools stored in pool_cache")
+    else:
+        fail("recommend_team_movesets cache keys", str(list(cache_s.keys())))
+
+    # pool_cache populated → no recomputation
+    _bcp_calls[0] = 0
+    recommend_team_movesets(team_two, game_ctx, "stab", pool_cache=cache_s)
+    if _bcp_calls[0] == 0:
+        ok("recommend_team_movesets: populated pool_cache → bcp NOT called")
+    else:
+        fail("recommend_team_movesets: should reuse cache, got bcp calls",
+             str(_bcp_calls[0]))
+
+    # Shared cache between modes: result still valid (same pool, different combo)
+    r_cov = recommend_team_movesets(team_two, game_ctx, "coverage", pool_cache=cache_s)
+    r_stab = recommend_team_movesets(team_two, game_ctx, "stab",    pool_cache=cache_s)
+    if len(r_cov) == 2 and len(r_stab) == 2:
+        ok("recommend_team_movesets: pool_cache shared across modes → correct result size")
+    else:
+        fail("recommend_team_movesets shared cache result size",
+             f"cov={len(r_cov)} stab={len(r_stab)}")
+
     # ── Restore originals ─────────────────────────────────────────────────
     _this.build_candidate_pool = _orig_build
     _this.select_combo         = _orig_combo
 
     print()
-    total = 61
+    total = 70
     if errors:
         print(f"  FAILED ({len(errors)}): {errors}")
         sys.exit(1)

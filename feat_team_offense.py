@@ -124,22 +124,36 @@ def _best_move_for_type(damage_pool: list, target_type: str):
 
 
 def _build_member_pools(team_ctx: list, game_ctx: dict,
-                        hitter_names: set) -> dict:
+                        hitter_names: set,
+                        pool_cache: dict | None = None) -> dict:
     """
     For each team member whose form_name is in hitter_names, build the scored
     damage pool via feat_moveset_data.build_candidate_pool().
+
+    pool_cache — optional session-level dict keyed by (variety_slug, game_slug).
+                 When provided, pools already in the cache are reused without
+                 re-scoring.  New pools are stored back into the dict.
+                 Pass None (default) for the original single-call behaviour.
 
     May trigger learnset and move-detail fetches from PokeAPI (shows progress).
     Returns {form_name: damage_pool_list}.
     """
     import feat_moveset_data as msd
 
+    game_slug = game_ctx.get("game_slug", game_ctx["game"])
     pools = {}
     for _idx, pkm in team_slots(team_ctx):
         if pkm["form_name"] not in hitter_names:
             continue
-        pool = msd.build_candidate_pool(pkm, game_ctx)
-        pools[pkm["form_name"]] = pool["damage"]
+        cache_key = (pkm["variety_slug"], game_slug)
+        if pool_cache is not None and cache_key in pool_cache:
+            pools[pkm["form_name"]] = pool_cache[cache_key]
+        else:
+            pool = msd.build_candidate_pool(pkm, game_ctx)
+            damage = pool["damage"]
+            if pool_cache is not None:
+                pool_cache[cache_key] = damage
+            pools[pkm["form_name"]] = damage
     return pools
 
 
@@ -232,7 +246,8 @@ def _print_offense_table(rows: list) -> None:
               f" | {comment}")
 
 
-def display_team_offense(team_ctx: list, game_ctx: dict) -> None:
+def display_team_offense(team_ctx: list, game_ctx: dict,
+                         pool_cache: dict | None = None) -> None:
     era_key = game_ctx["era_key"]
     game    = game_ctx["game"]
     filled  = team_size(team_ctx)
@@ -261,8 +276,18 @@ def display_team_offense(team_ctx: list, game_ctx: dict) -> None:
         for h in hlist
     }
     if hitter_names:
-        print(f"\n  Loading move data for {len(hitter_names)} member(s)...")
-        member_pools = _build_member_pools(team_ctx, game_ctx, hitter_names)
+        # Show loading message only when at least one pool will be computed
+        game_slug = game_ctx.get("game_slug", game_ctx["game"])
+        slug_by_name = {pkm["form_name"]: pkm["variety_slug"]
+                        for _, pkm in team_slots(team_ctx)}
+        needs_fetch = pool_cache is None or any(
+            (slug_by_name.get(h), game_slug) not in pool_cache
+            for h in hitter_names
+        )
+        if needs_fetch:
+            print(f"\n  Loading move data for {len(hitter_names)} member(s)...")
+        member_pools = _build_member_pools(team_ctx, game_ctx, hitter_names,
+                                           pool_cache=pool_cache)
         _enrich_rows_with_moves(rows, member_pools)
 
     # ── Table ─────────────────────────────────────────────────────────────────
@@ -285,9 +310,10 @@ def display_team_offense(team_ctx: list, game_ctx: dict) -> None:
 
 # ── Entry points ──────────────────────────────────────────────────────────────
 
-def run(team_ctx: list, game_ctx: dict) -> None:
+def run(team_ctx: list, game_ctx: dict,
+        pool_cache: dict | None = None) -> None:
     """Called from pokemain."""
-    display_team_offense(team_ctx, game_ctx)
+    display_team_offense(team_ctx, game_ctx, pool_cache=pool_cache)
     input("\n  Press Enter to continue...")
 
 
@@ -704,9 +730,80 @@ def _run_tests():
     else:
         fail("_print_offense_table move names")
 
+    # ── _build_member_pools: pool_cache ───────────────────────────────────────
+
+    import sys as _sys
+
+    _call_count = [0]
+    _orig_msd_bcp = None
+
+    class _MockMSD:
+        def build_candidate_pool(self, pkm_ctx, game_ctx):
+            _call_count[0] += 1
+            return {"damage": [{"name": "Tackle", "type": "Normal", "score": 10}],
+                    "status": [], "skipped": 0}
+
+    _real_msd = _sys.modules.get("feat_moveset_data")
+    _sys.modules["feat_moveset_data"] = _MockMSD()
+
+    game_ctx_fake = {"game": "TestGame", "era_key": "era3",
+                     "game_gen": 9, "game_slug": "test-game"}
+    hitters_all   = {"Charizard", "Blastoise"}
+    team_two = [
+        {"form_name": "Charizard", "type1": "Fire",  "type2": "Flying",
+         "variety_slug": "charizard"},
+        {"form_name": "Blastoise", "type1": "Water", "type2": "None",
+         "variety_slug": "blastoise"},
+        None, None, None, None,
+    ]
+
+    # pool_cache=None → normal behaviour, build_candidate_pool called per member
+    _call_count[0] = 0
+    _build_member_pools(team_two, game_ctx_fake, hitters_all, pool_cache=None)
+    if _call_count[0] == 2:
+        ok("_build_member_pools: pool_cache=None → build_candidate_pool called for each member")
+    else:
+        fail("_build_member_pools pool_cache=None call count", str(_call_count[0]))
+
+    # pool_cache provided, empty → pools computed and stored
+    _call_count[0] = 0
+    cache1 = {}
+    _build_member_pools(team_two, game_ctx_fake, hitters_all, pool_cache=cache1)
+    if _call_count[0] == 2:
+        ok("_build_member_pools: empty pool_cache → both pools computed")
+    else:
+        fail("_build_member_pools empty cache call count", str(_call_count[0]))
+
+    if ("charizard", "test-game") in cache1 and ("blastoise", "test-game") in cache1:
+        ok("_build_member_pools: computed pools stored in pool_cache")
+    else:
+        fail("_build_member_pools cache keys", str(list(cache1.keys())))
+
+    # pool_cache provided, already populated → no recomputation
+    _call_count[0] = 0
+    _build_member_pools(team_two, game_ctx_fake, hitters_all, pool_cache=cache1)
+    if _call_count[0] == 0:
+        ok("_build_member_pools: populated pool_cache → build_candidate_pool NOT called")
+    else:
+        fail("_build_member_pools: should reuse cache, got calls", str(_call_count[0]))
+
+    # Partial cache: one member cached, one not
+    _call_count[0] = 0
+    partial_cache = {("charizard", "test-game"): []}   # Charizard cached, Blastoise not
+    _build_member_pools(team_two, game_ctx_fake, hitters_all, pool_cache=partial_cache)
+    if _call_count[0] == 1:
+        ok("_build_member_pools: partial cache → only missing member recomputed")
+    else:
+        fail("_build_member_pools partial cache call count", str(_call_count[0]))
+
+    if _real_msd is not None:
+        _sys.modules["feat_moveset_data"] = _real_msd
+    else:
+        del _sys.modules["feat_moveset_data"]
+
     # ── summary ───────────────────────────────────────────────────────────────
     print()
-    total = 45
+    total = 50
     if errors:
         print(f"  FAILED ({len(errors)}): {errors}")
         sys.exit(1)
