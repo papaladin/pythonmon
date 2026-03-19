@@ -336,6 +336,8 @@ def select_pokemon(game_ctx=None, force_refresh=False):
             "form_gen"    : form_gen,
             "base_stats"  : _get_form_stats(name, form_name),
             "abilities"   : _get_form_abilities(name, form_name),
+            "egg_groups"        : cache.get_pokemon(name).get("egg_groups", []),
+            "evolution_chain_id": cache.get_pokemon(name).get("evolution_chain_id"),
         }
 
 def refresh_pokemon(pkm_ctx, game_ctx=None):
@@ -419,6 +421,8 @@ if __name__ == "__main__":
             api_calls.append(name)
             if name.lower() == "fakizard":
                 return {"pokemon": "fakizard", "species_gen": 1,
+                        "egg_groups": ["monster", "dragon"],
+                        "evolution_chain_id": 42,
                         "forms": [
                             {"name": "Fakizard",       "variety_slug": "fakizard",       "types": ["Fire","Flying"], "base_stats": {"hp":78}, "abilities": [{"slug":"blaze","is_hidden":False}]},
                             {"name": "Mega Fakizard X","variety_slug": "fakizard-mega-x","types": ["Fire","Dragon"], "base_stats": {"hp":78}, "abilities": [{"slug":"blaze","is_hidden":False}]},

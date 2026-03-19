@@ -12,7 +12,7 @@ pokemon-toolkit/
   pkm_cache.py              All cache reads and writes (single gateway)
   pkm_pokeapi.py            PokeAPI adapter (fetch + translate raw data)
   matchup_calculator.py     Type chart data + multiplier logic (pure library)
-  feat_type_matchup.py      Feature: quick view (stats / abilities / type chart)
+  feat_quick_view.py        Feature: quick view (stats / abilities / egg groups / type chart)
   feat_move_lookup.py       Feature: move lookup by name
   feat_movepool.py          Feature: learnable move list with learn conditions
   feat_moveset.py           Feature: scored pool + moveset recommendation UI
@@ -24,6 +24,9 @@ pokemon-toolkit/
   feat_team_analysis.py     Feature: team defensive vulnerability table
   feat_team_offense.py      Feature: team offensive type coverage (key O)
   feat_team_moveset.py      Feature: team moveset synergy (key S)
+  feat_stat_compare.py      Feature: side-by-side base stat comparison (key C)
+  feat_egg_group.py         Feature: egg group browser + breeding partners (key E)
+  feat_evolution.py         Feature: evolution chain display (embedded in option 1)
   run_tests.py              Test runner (calls --autotest on each module)
   cache/                    Local JSON cache (see section 4)
 ```
@@ -94,6 +97,8 @@ in module-level globals.
     "base_stats"   : dict,       # keys: hp, attack, defense,
                                  #       special-attack, special-defense, speed
     "abilities"    : list[dict], # [{"slug": str, "is_hidden": bool}, ...]
+    "egg_groups"        : list[str],  # PokeAPI slugs e.g. ["monster", "dragon"]; [] if unknown
+    "evolution_chain_id": int | None, # PokeAPI chain ID; None for event Pokemon with no chain
 }
 ```
 
@@ -135,6 +140,14 @@ cache/
 
   abilities/
     blaze.json             Per-ability detail: full effect text + Pokemon roster list
+
+  egg_groups/
+    monster.json           Per-group roster: list of {slug, name} dicts, sorted by name
+    dragon.json            One file per group; fetched once, cached indefinitely
+
+  evolution/
+    1.json                 Per-chain flattened paths: list[list[{slug, trigger}]]
+    67.json                One file per chain ID; fetched once, cached indefinitely
 ```
 
 **All cache access goes through `pkm_cache.py`.** No feature file opens cache files directly.
@@ -173,7 +186,7 @@ Key functions:
 
 This module is a pure library. It has no imports from this project.
 `matchup_calculator.py` is imported by: `pkm_session.py`, `pokemain.py`,
-`feat_type_matchup.py`, `feat_team_analysis.py`, `feat_team_offense.py`,
+`feat_quick_view.py`, `feat_team_analysis.py`, `feat_team_offense.py`,
 `feat_team_moveset.py`, `feat_moveset_data.py`.
 
 ---
@@ -188,16 +201,21 @@ by the move's display name:
   "Tackle": [
     {"from_gen": 1, "to_gen": 5, "type": "Normal", "category": "Physical",
      "power": 35, "accuracy": 95, "pp": 35, "priority": 0,
-     "drain": 0, "effect_chance": 0, "ailment": "none"},
+     "drain": 0, "effect_chance": 0, "ailment": "none", "effect": "Inflicts regular damage."},
     {"from_gen": 6, "to_gen": None, "type": "Normal", "category": "Physical",
      "power": 40, "accuracy": 100, "pp": 35, "priority": 0,
-     "drain": 0, "effect_chance": 0, "ailment": "none"}
+     "drain": 0, "effect_chance": 0, "ailment": "none", "effect": "Inflicts regular damage."}
   ]
 }
 ```
 
 `to_gen: None` means "current generation". `from_gen` and `to_gen` are inclusive.
 Resolution: find the entry where `from_gen <= game_gen <= to_gen`.
+
+Schema version history (see `MOVES_CACHE_VERSION` in `pkm_cache.py`):
+- v1 — type, category, power, accuracy, pp, priority
+- v2 — added drain, effect_chance, ailment
+- v3 — added effect (English short_effect text, §84)
 
 ---
 
@@ -312,6 +330,71 @@ Member result dict keys: `form_name`, `types` (list[str]), `moves` (list[dict]),
 Depends on: `feat_team_loader` (team_slots, team_size), `feat_moveset_data`
 (build_candidate_pool, select_combo), `matchup_calculator` (compute_defense,
 get_multiplier, CHARTS).
+
+---
+
+### feat_stat_compare.py
+Side-by-side base stat comparison (key C). Also the canonical home for
+pure stat-analysis helpers used by other feature modules.
+
+- `compare_stats(stats_a, stats_b) → list[dict]`  Per-stat winner annotation;
+  each dict: `key`, `label`, `val_a`, `val_b`, `winner` ("a"|"b"|"tie")
+- `total_stats(base_stats) → int`  Sum of all 6 base stats
+- `infer_role(base_stats) → str`  "physical" | "special" | "mixed"
+  (Atk vs SpA, 1.2× threshold)
+- `infer_speed_tier(base_stats) → str`  "fast" | "mid" | "slow"
+  (Speed ≥90 / ≥70 / <70)
+- `display_comparison(pkm_a, pkm_b, game_ctx)`  Side-by-side bar chart with ★/•
+- `run(pkm_ctx, game_ctx)`  Called from pokemain; key C; prompts for second Pokemon
+
+Imported by: `feat_nature_browser` (for `infer_role`, `infer_speed_tier`),
+`feat_quick_view` (deferred import of same).
+
+---
+
+### feat_egg_group.py
+Egg group browser and breeding partner finder (key E). Also provides inline
+egg group display for option 1 via `format_egg_groups`.
+
+- `egg_group_name(slug) → str`  PokeAPI slug → in-game display name
+  (covers all 15 groups; key mappings: `"ground"`→Field, `"plant"`→Grass)
+- `format_egg_groups(egg_groups) → str`  e.g. `["monster","dragon"]` → `"Monster  /  Dragon"`
+- `get_or_fetch_roster(slug) → list | None`  Cache-aware; fetches from PokeAPI on miss
+- `display_egg_group_browser(pkm_ctx)`  Full browser display; marks current Pokemon with ★
+- `run(pkm_ctx)`  Called from pokemain; key E; no game context needed
+
+---
+
+### feat_evolution.py
+Evolution chain display, embedded at the bottom of option 1 (feat_quick_view).
+No standalone menu key. Chain is filtered by `game_gen` so future-gen evolutions
+are not shown for older games (e.g. Eevee in FireRed shows only Gen 1–2 branches).
+
+**Public API:**
+- `get_or_fetch_chain(pkm_ctx) → list[list[dict]] | None`  Cache-aware; returns
+  `None` for `chain_id=None` (event Pokemon)
+- `display_evolution_block(pkm_ctx, paths, game_gen=None)`  Compact inline display;
+  fetches types for all stages; ★ on `pkm_ctx["pokemon"]`; filters by game_gen
+- `filter_paths_for_game(paths, game_gen) → list[list[dict]]`  Pure — truncates
+  branches whose target species was introduced after `game_gen`
+
+**Internal pure helpers (testable offline):**
+- `_parse_trigger(details) → str`  PokeAPI evolution_details → human string.
+  Key mappings: `min_happiness + time_of_day` → "High Friendship (day/night)";
+  trade + `held_item` → "Trade holding X" (PokeAPI field is `held_item`, not `item`)
+- `_flatten_chain(node, max_depth=20) → list[list[dict]]`  Recursive tree → list
+  of linear paths; each stage: `{slug, trigger}`
+- `_get_species_gen(slug) → int | None`  Reads from pokemon cache
+- `_get_types_for_slug(slug) → list[str]`  Cache hit instant; API call on miss
+
+**pkm_cache additions (§90B):**
+- `get_evolution_chain(chain_id) → list | None`
+- `save_evolution_chain(chain_id, paths) → None`
+- `invalidate_evolution_chain(chain_id) → None`
+
+**pkm_pokeapi additions (§90B):**
+- `fetch_evolution_chain(chain_id) → dict`  Returns the `chain` node from
+  `GET evolution-chain/{id}` — the root of the recursive tree
 
 ---
 

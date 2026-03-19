@@ -127,11 +127,90 @@ def _print_col_headers() -> None:
     print(f"  {'─'*(_SEP_WIDTH + 4)}")
 
 
+# ── Filter helpers ────────────────────────────────────────────────────────────
+
+def _passes_filter(details: dict | None, f: dict) -> bool:
+    """
+    Return True if a move passes the filter spec.
+
+    f keys (all optional / None = no constraint):
+      "type"      — case-insensitive type match  e.g. "Fire"
+      "category"  — "Physical" | "Special" | "Status"
+      "min_power" — inclusive lower bound on power (int)
+
+    Moves with details=None (not yet in cache) always pass — same
+    graceful behaviour as the rest of the display code.
+    """
+    if details is None:
+        return True
+    if f.get("type"):
+        if details.get("type", "").lower() != f["type"].lower():
+            return False
+    if f.get("category"):
+        if details.get("category", "").lower() != f["category"].lower():
+            return False
+    if f.get("min_power") is not None:
+        power = details.get("power")
+        if power is None:          # status move — excluded by any power filter
+            return False
+        if power < f["min_power"]:
+            return False
+    return True
+
+
+def _apply_filter(entries: list, f: dict) -> list:
+    """
+    Filter a flat list of (label, move_name, details_or_None) tuples.
+    Returns the subset that passes _passes_filter.
+    Pure — no I/O.
+    """
+    if not f or not any(v is not None for v in f.values()):
+        return list(entries)
+    return [e for e in entries if _passes_filter(e[2], f)]
+
+
+def _filter_summary(f: dict) -> str:
+    """Return a short human-readable description of active filter constraints."""
+    parts = []
+    if f.get("type"):
+        parts.append(f"type={f['type']}")
+    if f.get("category"):
+        parts.append(f"cat={f['category']}")
+    if f.get("min_power") is not None:
+        parts.append(f"pwr≥{f['min_power']}")
+    return "  |  ".join(parts) if parts else ""
+
+
+def _prompt_filter() -> dict:
+    """
+    Interactively ask the user for up to three filter constraints.
+    Returns a filter dict suitable for _passes_filter / _apply_filter.
+    All fields are optional — pressing Enter on any question leaves it None.
+    """
+    _CAT_MAP = {
+        "p": "Physical", "ph": "Physical", "physical": "Physical",
+        "s": "Special",  "sp": "Special",  "special":  "Special",
+        "t": "Status",   "st": "Status",   "sta": "Status", "status": "Status",
+    }
+
+    print("\n  Filter options (press Enter to skip any):")
+    type_raw = input("    Type      (e.g. Fire, Water): ").strip()
+    cat_raw  = input("    Category  (P)hysical / (S)pecial / (T) Status: ").strip().lower()
+    pow_raw  = input("    Min power (e.g. 80): ").strip()
+
+    return {
+        "type"     : type_raw.capitalize() if type_raw else None,
+        "category" : _CAT_MAP.get(cat_raw),
+        "min_power": int(pow_raw) if pow_raw.isdigit() else None,
+    }
+
+
 # ── Core display ──────────────────────────────────────────────────────────────
 
 def _display_learnset(learnset: dict, pkm_ctx: dict, game_ctx: dict,
-                      constraints: list) -> None:
-    """Render the full learnset for a form."""
+                      constraints: list,
+                      filter_spec: dict | None = None) -> None:
+    """Render the learnset for a form, optionally filtered."""
     # Find the right form in the learnset — fall back to first form
     form_name  = pkm_ctx["form_name"]
     forms_dict = learnset.get("forms", {})
@@ -151,59 +230,94 @@ def _display_learnset(learnset: dict, pkm_ctx: dict, game_ctx: dict,
 
     _prefetch_missing(all_moves, game_ctx)
 
+    active = (filter_spec is not None
+              and any(v is not None for v in filter_spec.values()))
+
     print_session_header(pkm_ctx, game_ctx, constraints)
+    if active:
+        print(f"  [ filter: {_filter_summary(filter_spec)} ]")
     _print_col_headers()
 
-    # ── Level-up ──────────────────────────────────────────────────────────────
-    lvlup = form_data.get("level-up", [])
-    if lvlup:
-        _section_header("LEVEL-UP")
-        for entry in lvlup:
-            lv    = entry["level"]
-            label = f"Lv{lv:>3}" if lv and lv > 0 else "Lv  --"
+    # ── Helper: build one section's row list ──────────────────────────────────
+    def _section_rows(entries, label_fn):
+        """Return list of (label, move_name, details) for this section."""
+        rows = []
+        for entry in entries:
             details = _get_move_details(entry["move"], game_ctx)
-            print(_fmt_move_row(label, entry["move"], details))
+            rows.append((label_fn(entry), entry["move"], details))
+        return rows
+
+    # ── Level-up ──────────────────────────────────────────────────────────────
+    lvlup_entries = form_data.get("level-up", [])
+    lvlup_rows = _section_rows(
+        lvlup_entries,
+        lambda e: f"Lv{e['level']:>3}" if e.get("level") and e["level"] > 0 else "Lv  --"
+    )
+    lvlup_shown = _apply_filter(lvlup_rows, filter_spec or {})
+    if lvlup_shown or not active:
+        _section_header("LEVEL-UP")
+        for label, name, details in (lvlup_shown if active else lvlup_rows):
+            print(_fmt_move_row(label, name, details))
 
     # ── TM / HM ───────────────────────────────────────────────────────────────
-    machines = form_data.get("machine", [])
-    if machines:
-        missing_labels = any("tm" not in e or not e["tm"] for e in machines)
+    machine_entries = form_data.get("machine", [])
+    machine_rows = _section_rows(machine_entries, lambda e: e.get("tm", ""))
+    machine_shown = _apply_filter(machine_rows, filter_spec or {})
+    if machine_shown or (not active and machine_entries):
+        missing_labels = any("tm" not in e or not e["tm"] for e in machine_entries)
         _section_header("TM / HM")
-        if missing_labels:
-            print("  (TM numbers unavailable — press T from main menu to fetch them,")
+        if missing_labels and machine_entries:
+            print("  (TM numbers unavailable — press W from main menu to fetch them,")
             print("   then press R to reload this Pokémon's data)")
-        for entry in machines:
-            label   = entry.get("tm", "")
-            details = _get_move_details(entry["move"], game_ctx)
-            print(_fmt_move_row(label, entry["move"], details))
+        for label, name, details in (machine_shown if active else machine_rows):
+            print(_fmt_move_row(label, name, details))
 
     # ── Tutor ─────────────────────────────────────────────────────────────────
-    tutors = form_data.get("tutor", [])
-    if tutors:
+    tutor_entries = form_data.get("tutor", [])
+    tutor_rows = _section_rows(tutor_entries, lambda e: "")
+    tutor_shown = _apply_filter(tutor_rows, filter_spec or {})
+    if tutor_shown or (not active and tutor_entries):
         _section_header("TUTOR")
-        for entry in tutors:
-            details = _get_move_details(entry["move"], game_ctx)
-            print(_fmt_move_row("", entry["move"], details))
+        for label, name, details in (tutor_shown if active else tutor_rows):
+            print(_fmt_move_row(label, name, details))
 
     # ── Egg moves ─────────────────────────────────────────────────────────────
-    eggs = form_data.get("egg", [])
-    if eggs:
+    egg_entries = form_data.get("egg", [])
+    egg_rows = _section_rows(egg_entries, lambda e: "")
+    egg_shown = _apply_filter(egg_rows, filter_spec or {})
+    if egg_shown or (not active and egg_entries):
         _section_header("EGG MOVES")
-        for entry in eggs:
-            details = _get_move_details(entry["move"], game_ctx)
-            print(_fmt_move_row("", entry["move"], details))
+        for label, name, details in (egg_shown if active else egg_rows):
+            print(_fmt_move_row(label, name, details))
 
     # ── Summary ───────────────────────────────────────────────────────────────
-    total = len(lvlup) + len(machines) + len(tutors) + len(eggs)
-    print(f"\n  Total: {total} moves  "
-          f"({len(lvlup)} level-up"
-          f"  {len(machines)} TM/HM"
-          f"  {len(tutors)} tutor"
-          f"  {len(eggs)} egg)")
+    n_lvlup    = len(lvlup_entries)
+    n_machine  = len(machine_entries)
+    n_tutor    = len(tutor_entries)
+    n_egg      = len(egg_entries)
+    total_all  = n_lvlup + n_machine + n_tutor + n_egg
+
+    if active:
+        s_lvlup   = len(lvlup_shown)
+        s_machine = len(machine_shown)
+        s_tutor   = len(tutor_shown)
+        s_egg     = len(egg_shown)
+        total_shown = s_lvlup + s_machine + s_tutor + s_egg
+        print(f"\n  Showing {total_shown} of {total_all} moves (filtered)"
+              f"  ({s_lvlup} level-up"
+              f"  {s_machine} TM/HM"
+              f"  {s_tutor} tutor"
+              f"  {s_egg} egg)")
+    else:
+        print(f"\n  Total: {total_all} moves  "
+              f"({n_lvlup} level-up"
+              f"  {n_machine} TM/HM"
+              f"  {n_tutor} tutor"
+              f"  {n_egg} egg)")
 
     # Mark locked moves if constraints are set
     if constraints:
-        locked_found = [m for m in constraints if m in all_moves]
+        locked_found   = [m for m in constraints if m in all_moves]
         locked_missing = [m for m in constraints if m not in all_moves]
         if locked_found:
             print(f"\n  Locked moves learnable here: {', '.join(locked_found)}")
@@ -227,7 +341,16 @@ def run(pkm_ctx: dict, game_ctx: dict, constraints: list = None) -> None:
         return
 
     _display_learnset(learnset, pkm_ctx, game_ctx, constraints or [])
-    input("\n  Press Enter to continue...")
+
+    choice = input("\n  Filter? (f to filter, Enter to return): ").strip().lower()
+    if choice == "f":
+        f = _prompt_filter()
+        if any(v is not None for v in f.values()):
+            _display_learnset(learnset, pkm_ctx, game_ctx, constraints or [],
+                              filter_spec=f)
+        else:
+            print("  (no filter set)")
+        input("\n  Press Enter to continue...")
 
 
 def main() -> None:
@@ -312,6 +435,56 @@ def _run_tests(with_cache=False):
     if "Level-up moves" in out: ok("_section_header smoke")
     else: fail("_section_header", out[:60])
 
+    # ── _apply_filter ─────────────────────────────────────────────────────────
+    fire_sp  = ("Lv 1", "Flamethrower", {"type": "Fire",   "category": "Special",  "power": 90})
+    water_ph = ("TM55", "Waterfall",    {"type": "Water",  "category": "Physical", "power": 80})
+    norm_st  = ("",     "Swords Dance", {"type": "Normal", "category": "Status",   "power": None})
+    fire_ph  = ("Lv 5", "Fire Punch",   {"type": "Fire",   "category": "Physical", "power": 75})
+    entries  = [fire_sp, water_ph, norm_st, fire_ph]
+
+    # Type filter
+    r = _apply_filter(entries, {"type": "Fire", "category": None, "min_power": None})
+    if [e[1] for e in r] == ["Flamethrower", "Fire Punch"]:
+        ok("_apply_filter type=Fire → 2 moves")
+    else: fail("_apply_filter type", str([e[1] for e in r]))
+
+    # Category filter
+    r = _apply_filter(entries, {"type": None, "category": "Special", "min_power": None})
+    if [e[1] for e in r] == ["Flamethrower"]:
+        ok("_apply_filter category=Special → 1 move")
+    else: fail("_apply_filter category", str([e[1] for e in r]))
+
+    # Min power filter
+    r = _apply_filter(entries, {"type": None, "category": None, "min_power": 80})
+    if [e[1] for e in r] == ["Flamethrower", "Waterfall"]:
+        ok("_apply_filter min_power=80 → 2 moves")
+    else: fail("_apply_filter min_power", str([e[1] for e in r]))
+
+    # Combined: Fire + Physical
+    r = _apply_filter(entries, {"type": "Fire", "category": "Physical", "min_power": None})
+    if [e[1] for e in r] == ["Fire Punch"]:
+        ok("_apply_filter type=Fire + category=Physical → 1 move")
+    else: fail("_apply_filter combined", str([e[1] for e in r]))
+
+    # No filter (all None) → all moves returned unchanged
+    r = _apply_filter(entries, {"type": None, "category": None, "min_power": None})
+    if r == list(entries):
+        ok("_apply_filter no filter → all moves returned")
+    else: fail("_apply_filter no filter", str([e[1] for e in r]))
+
+    # Filter that matches nothing → []
+    r = _apply_filter(entries, {"type": "Dragon", "category": None, "min_power": None})
+    if r == []:
+        ok("_apply_filter no match → []")
+    else: fail("_apply_filter no match", str([e[1] for e in r]))
+
+    # Status move (power=None): excluded by min_power, included when min_power=None
+    r_excl = _apply_filter([norm_st], {"type": None, "category": None, "min_power": 1})
+    r_incl = _apply_filter([norm_st], {"type": None, "category": None, "min_power": None})
+    if r_excl == [] and r_incl == [norm_st]:
+        ok("_apply_filter status move excluded by min_power, included without")
+    else: fail("_apply_filter status+min_power", f"excl={r_excl} incl={r_incl}")
+
     # ── _get_move_details (requires cache) ────────────────────────────────────
     if with_cache:
         game_ctx = {"game": "Scarlet / Violet", "era_key": "era3", "game_gen": 9}
@@ -329,7 +502,7 @@ def _run_tests(with_cache=False):
 
     # ── summary ──────────────────────────────────────────────────────────────
     print()
-    total = 9 + (2 if with_cache else 0)
+    total = 16 + (2 if with_cache else 0)
     if errors:
         print(f"  FAILED ({len(errors)}): {errors}")
         sys.exit(1)

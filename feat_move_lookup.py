@@ -119,6 +119,10 @@ def _display_move(name: str, entry: dict, game_ctx: dict):
     print(f"  Accuracy  : {_fmt(entry.get('accuracy'), '%')}")
     print(f"  PP        : {_fmt(entry.get('pp'))}")
 
+    effect = entry.get("effect", "")
+    if effect:
+        print(f"  Effect    : {effect}")
+
     # Coverage only for damaging moves whose type exists in this era
     _, valid_types, _ = calc.CHARTS[era_key]
     if category in ("Physical", "Special") and move_type in valid_types:
@@ -252,6 +256,37 @@ def _run_tests(with_cache=False):
         ok("_attacking_coverage Ghost era1 → Psychic immune (era1 quirk)")
     else: fail("_attacking_coverage Ghost era1 Psychic", str(imm_ghost1))
 
+    # ── _display_move effect line ─────────────────────────────────────────────
+    import io, contextlib
+
+    game_ctx_fake = {"game": "Scarlet / Violet", "era_key": "era3", "game_gen": 9}
+
+    entry_with_effect = {
+        "type": "Fire", "category": "Special", "power": 90,
+        "accuracy": 100, "pp": 15, "effect": "Inflicts regular damage. Has a 10% chance to burn the target."
+    }
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        _display_move("Flamethrower", entry_with_effect, game_ctx_fake)
+    out = buf.getvalue()
+    if "Effect" in out and "burn" in out:
+        ok("_display_move: Effect line shown when entry has effect text")
+    else:
+        fail("_display_move effect present", out[:120])
+
+    entry_no_effect = {
+        "type": "Normal", "category": "Physical", "power": 40,
+        "accuracy": 100, "pp": 35, "effect": ""
+    }
+    buf2 = io.StringIO()
+    with contextlib.redirect_stdout(buf2):
+        _display_move("Tackle", entry_no_effect, game_ctx_fake)
+    out2 = buf2.getvalue()
+    if "Effect" not in out2:
+        ok("_display_move: no Effect line when effect is empty string")
+    else:
+        fail("_display_move effect absent", out2[:120])
+
     # ── with_cache: _fetch_move_cached ───────────────────────────────────────
     if with_cache:
         # _fetch_move_cached returns (canonical_name, versioned_entries_list)
@@ -270,7 +305,7 @@ def _run_tests(with_cache=False):
 
     # ── summary ──────────────────────────────────────────────────────────────
     print()
-    total = 12 + (2 if with_cache else 0)
+    total = 14 + (2 if with_cache else 0)
     if errors:
         print(f"  FAILED ({len(errors)}): {errors}")
         sys.exit(1)

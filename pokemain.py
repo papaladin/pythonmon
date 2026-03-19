@@ -1,6 +1,21 @@
 #!/usr/bin/env python3
 """
-pokemain.py  Pokemon Toolkit main entry point
+pokemai
+    if "--refresh-evolution" in args:
+        idx = args.index("--refresh-evolution")
+        if idx + 1 < len(args):
+            name = args[idx + 1]
+            data = cache.get_pokemon(name)
+            if data is None:
+                print(f"  '{name}' not in cache — nothing to refresh.")
+            else:
+                chain_id = data.get("evolution_chain_id")
+                if chain_id is None:
+                    print(f"  No evolution chain ID for '{name}'.")
+                else:
+                    cache.invalidate_evolution_chain(chain_id)
+        else:
+            print("  Usage: --refresh-evolution <n>")n.py  Pokemon Toolkit main entry point
 
 State: pkm_ctx and game_ctx are independent, either can be None.
 
@@ -27,7 +42,7 @@ try:
     import matchup_calculator as calc
     from pkm_session import (select_game, select_pokemon, refresh_pokemon,
                              print_session_header)
-    import feat_type_matchup
+    import feat_quick_view
     import feat_moveset
     import feat_movepool
     import feat_move_lookup
@@ -38,6 +53,9 @@ try:
     import feat_team_analysis
     import feat_team_offense
     import feat_team_moveset
+    import feat_stat_compare
+    import feat_egg_group
+    import feat_evolution
     import pkm_cache as cache
     import pkm_pokeapi
 except ModuleNotFoundError as e:
@@ -50,7 +68,7 @@ except ModuleNotFoundError as e:
 # (label, module, entry_point, needs_pkm, needs_game, available)
 
 PKM_FEATURES = [
-    ("Quick view  (stats / abilities / types)", feat_type_matchup, "run",         True,  True,  True),
+    ("Quick view  (stats / abilities / types)", feat_quick_view, "run",         True,  True,  True),
     ("Learnable move list (conditions)",   feat_movepool,     "run",              True,  True,  True),
     ("Learnable move list (scored)",       feat_moveset,      "run_scored_pool",  True,  True,  True),
     ("Moveset recommendation",             feat_moveset,      "run",              True,  True,  True),
@@ -148,6 +166,10 @@ def _print_menu(pkm_ctx, game_ctx, team_ctx=None):
     lines.append("N. Browse natures / recommend for current Pokémon")
     lines.append("A. Ability browser")
 
+    if both:
+        lines.append("C. Compare stats  (pick a second Pokémon)")
+        lines.append("E. Egg group / breeding partners")
+
     # Pokemon context
     if has_pkm:
         lines.append("P. Load a different Pokemon")
@@ -209,32 +231,7 @@ def _ensure_pokemon(pkm_ctx, game_ctx):
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
-
-def _run_cache_check():
-    """Run the cache integrity check and print a report, then exit."""
-    W_SEP = 54
-    print()
-    print("  Cache integrity check")
-    print("  " + "═" * W_SEP)
-
-    issues = cache.check_integrity()
-
-    if not issues:
-        print("  All cache files OK — no issues found.")
-    else:
-        for issue in issues:
-            print(f"  ✗  {issue}")
-        print()
-        print(f"  {len(issues)} issue(s) found.")
-        print("  Tip: delete the affected file(s) and re-run to re-fetch from PokeAPI.")
-
-    print("  " + "═" * W_SEP)
-    sys.exit(0)
-
-
 def _handle_refresh_flags(args):
-    if "--check-cache" in args:
-        _run_cache_check()   # prints report and exits — must come first
     if "--refresh-moves" in args:
         cache.invalidate_moves()
     if "--refresh-pokemon" in args:
@@ -242,19 +239,19 @@ def _handle_refresh_flags(args):
         if idx + 1 < len(args):
             cache.invalidate_pokemon(args[idx + 1])
         else:
-            print("  Usage: --refresh-pokemon <n>")
+            print("  Usage: --refresh-pokemon <name>")
     if "--refresh-learnset" in args:
         idx = args.index("--refresh-learnset")
         if idx + 2 < len(args):
             cache.invalidate_learnset(args[idx+1], args[idx+2])
         else:
-            print("  Usage: --refresh-learnset <n> <game>")
+            print("  Usage: --refresh-learnset <name> <game>")
     if "--refresh-all" in args:
         idx = args.index("--refresh-all")
         if idx + 1 < len(args):
             cache.invalidate_all(args[idx + 1])
         else:
-            print("  Usage: --refresh-all <n>")
+            print("  Usage: --refresh-all <name>")
 
 
 def main():
@@ -278,17 +275,6 @@ def main():
             new = select_pokemon(game_ctx=game_ctx)
             if new is not None:
                 pkm_ctx = new
-                if (game_ctx is not None
-                        and feat_team_loader.team_size(team_ctx) < 6):
-                    ans = input("\n  Add to team? (y/n): ").strip().lower()
-                    if ans == "y":
-                        try:
-                            team_ctx, slot = feat_team_loader.add_to_team(
-                                team_ctx, pkm_ctx)
-                            print(f"  {pkm_ctx['form_name']} added to"
-                                  f" team slot {slot + 1}.")
-                        except feat_team_loader.TeamFullError:
-                            pass
 
         elif choice == "g":
             new = select_game(pkm_ctx=pkm_ctx)
@@ -299,6 +285,9 @@ def main():
             if pkm_ctx is None:
                 print("\n  No Pokemon loaded to refresh.")
             else:
+                chain_id = pkm_ctx.get("evolution_chain_id")
+                if chain_id is not None:
+                    cache.invalidate_evolution_chain(chain_id)
                 pkm_ctx = refresh_pokemon(pkm_ctx, game_ctx=game_ctx)
 
         elif choice == "t":
@@ -340,41 +329,17 @@ def main():
                 feat_team_moveset.run(team_ctx, game_ctx)
 
         elif choice == "move":
-            existing  = cache.get_moves()
-            n_cached  = sum(1 for k in existing if not k.startswith("_")) if existing else 0
-
-            if n_cached > 0:
-                print(f"\n  Move table: {n_cached} entries cached"
-                      f" (schema v{cache.MOVES_CACHE_VERSION}).")
-                print()
-                print("    F — Fetch missing moves only")
-                print("    R — Re-fetch all moves (overwrites everything)")
-                print("    Enter — Cancel")
-                confirm = input("\n  Choice: ").strip().lower()
+            existing = cache.get_moves()
+            n_existing = len(existing) if existing else 0
+            if n_existing > 0:
+                print(f"\n  Move table already has {n_existing} moves cached.")
+                confirm = input("  Re-fetch and overwrite? (y/n): ").strip().lower()
             else:
-                print("\n  Move table is empty.")
-                print("  This fetches type, power, accuracy and PP for all ~920 moves.")
+                print("\n  This fetches type, power, accuracy and PP for all ~920 moves.")
                 print("  Moves are also fetched lazily on first lookup — this just")
                 print("  avoids any wait when browsing move lists or learnsets.\n")
                 confirm = input("  Proceed? (y/n): ").strip().lower()
-                if confirm == "y":
-                    confirm = "r"   # empty cache → treat as full fetch
-
-            if confirm == "f":
-                try:
-                    known = set(existing.keys()) if existing else set()
-                    new_moves = pkm_pokeapi.fetch_missing_moves(known)
-                    if new_moves:
-                        cache.upsert_move_batch(new_moves)
-                        total_now = n_cached + len(new_moves)
-                        print(f"  Done — {len(new_moves)} move(s) added."
-                              f" Cache now has {total_now} entries.")
-                    else:
-                        print("  Cache is already up to date — no new moves found.")
-                except ConnectionError as e:
-                    print(f"  Connection error: {e}")
-
-            elif confirm == "r":
+            if confirm == "y":
                 try:
                     moves = pkm_pokeapi.fetch_all_moves()
                     cache.save_moves(moves)
@@ -419,6 +384,20 @@ def main():
 
         elif choice == "a":
             feat_ability_browser.run(game_ctx=game_ctx, pkm_ctx=pkm_ctx)
+
+        elif choice == "c":
+            if pkm_ctx is None:
+                print("\n  Load a Pokemon first (press P).")
+            elif game_ctx is None:
+                print("\n  Select a game first (press G).")
+            else:
+                feat_stat_compare.run(pkm_ctx, game_ctx)
+
+        elif choice == "e":
+            if pkm_ctx is None:
+                print("\n  Load a Pokemon first (press P).")
+            else:
+                feat_egg_group.run(pkm_ctx)
 
         elif choice == "v":
             if game_ctx is None:

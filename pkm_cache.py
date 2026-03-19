@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 """
-pkm_cache.py — Local JSON cache (4 layers)
+pkm_cache.py — Local JSON cache (6 layers)
 
 File layout:
   cache/moves.json                         — global move table (all ~920 moves)
   cache/machines.json                      — TM/HM number lookup table
   cache/pokemon_index.json                 — compact index: slug → {forms, types}
-  cache/pokemon/<slug>.json                — per-Pokémon forms, types, base stats
-  cache/learnsets/<slug>_<game>.json        — per-Pokémon+game learnset (form-keyed)
-  cache/types/<typename>.json              — per-type roster: all Pokémon of that type
+  cache/pokemon/<slug>.json                — per-Pokémon: forms, types, base stats,
+                                             egg_groups, evolution_chain_id
+  cache/learnsets/<slug>_<game>.json       — per-Pokémon+game learnset (form-keyed)
+  cache/types/<typename>.json             — per-type roster: all Pokémon of that type;
                                              fetched once, cached indefinitely (18 files max)
   cache/natures.json                       — all 25 natures + stat effects; fetched once
-  cache/abilities_index.json               — all abilities: name, gen, short_effect; fetched once
-  cache/abilities/<slug>.json              — per-ability detail: full effect + Pokémon list
+  cache/abilities_index.json              — all abilities: name, gen, short_effect; fetched once
+  cache/abilities/<slug>.json             — per-ability detail: full effect + Pokémon list
+  cache/egg_groups/<slug>.json            — per-egg-group roster: [{slug, name}, ...];
+                                             fetched once, cached indefinitely (15 files max)
+  cache/evolution/<chain_id>.json         — per-chain flattened paths: list[list[{slug, trigger}]];
+                                             fetched once, cached indefinitely
 
 Design principles:
   - Defensive reads  : corrupt / missing file → treated as cache miss, re-fetch triggered
@@ -20,6 +25,8 @@ Design principles:
   - Upsert by key    : forms matched by name, moves matched by name — never blind append
   - Self-healing     : corruption is fixed automatically on next access
   - Explicit refresh : invalidate_* methods wipe a specific entry so next read re-fetches
+  - Auto-upgrade     : pokemon entries missing new schema fields (egg_groups,
+                       evolution_chain_id) return None → triggers transparent re-fetch
 
 Public API:
   get_pokemon(name)                        → dict or None
@@ -30,8 +37,7 @@ Public API:
   save_moves(data)                         → None
   upsert_move(name, entries)               → None
   upsert_move_batch(batch)                 → None
-  get_move(name)                           → list or None
-  check_integrity()                        → list[str]  (empty = clean)
+  get_move(name)                           → list or None   (case-insensitive)
   invalidate_moves()                       → None
 
   get_machines()                           → dict or None
@@ -51,10 +57,9 @@ Public API:
   get_type_roster(type_name)               → list or None  (cache only, no fetch)
   save_type_roster(type_name, pokemon)     → None
   get_type_roster_or_fetch(type_name)      → list or None  (auto-fetches on miss)
-  resolve_type_roster_names(type_name)     → None  (enriches hyphenated entries with
-                                             proper display names; no-op if already done)
+  resolve_type_roster_names(type_name)     → None  (enriches entries with display names)
 
-  get_natures()                            → dict or None  (cache only, no fetch)
+  get_natures()                            → dict or None  (cache only)
   save_natures(data)                       → None
   get_natures_or_fetch()                   → dict or None  (auto-fetches on miss)
 
@@ -63,10 +68,22 @@ Public API:
   get_abilities_index_or_fetch()           → dict or None  (auto-fetches on miss)
   needs_ability_upgrade(cached_pokemon)    → bool
 
+  get_ability_detail(slug)                 → dict or None  (cache only)
+  save_ability_detail(slug, data)          → None
+
+  get_egg_group(slug)                      → list or None  (cache only)
+  save_egg_group(slug, roster)             → None
+
+  get_evolution_chain(chain_id)            → list or None  (cache only)
+  save_evolution_chain(chain_id, paths)    → None
+  invalidate_evolution_chain(chain_id)     → None
+
   resolve_move(moves_data, move_name, game, game_gen)
                                            → dict or None  (versioned entry for this game)
 
   game_to_slug(game)                       → str  ("Scarlet / Violet" → "scarlet-violet")
+
+  check_integrity()                        → list[str]  (issue strings; empty = clean)
 """
 
 import json
@@ -92,6 +109,8 @@ _TYPES_DIR    = os.path.join(_BASE, "types")
 _NATURES_FILE    = os.path.join(_BASE, "natures.json")
 _ABILITIES_FILE  = os.path.join(_BASE, "abilities_index.json")
 _ABILITIES_DIR   = os.path.join(_BASE, "abilities")
+_EGG_GROUP_DIR   = os.path.join(_BASE, "egg_groups")
+_EVOLUTION_DIR   = os.path.join(_BASE, "evolution")
 
 # Bump this integer whenever the move entry schema gains new fields.
 # A cached moves.json with a different (or absent) version is treated as a
@@ -99,7 +118,8 @@ _ABILITIES_DIR   = os.path.join(_BASE, "abilities")
 # History:
 #   1 — original schema (type, category, power, accuracy, pp, priority)
 #   2 — R3: added drain, effect_chance, ailment
-MOVES_CACHE_VERSION = 2
+#   3 — Pythonmon-28: added effect (English short_effect text)
+MOVES_CACHE_VERSION = 3
 
 
 def _ensure_dirs() -> None:
@@ -261,6 +281,11 @@ def get_pokemon(name: str) -> dict | None:
     if data is None or not _valid_pokemon(data):
         if data is not None:
             print(f"  ⚠  Cache: corrupted pokemon entry for '{name}' — will re-scrape.")
+        return None
+    # Auto-upgrade: if egg_groups or evolution_chain_id missing, the entry
+    # pre-dates Pythonmon-27 / Pythonmon-9. Returning None triggers a
+    # transparent re-fetch on next access.
+    if "egg_groups" not in data or "evolution_chain_id" not in data:
         return None
     # Repair index silently if this entry is missing
     if name.lower() not in get_index():
@@ -865,6 +890,78 @@ def save_ability_detail(slug: str, data: dict) -> None:
             os.remove(tmp)
 
 
+# ── Egg group roster cache  (cache/egg_groups/<slug>.json) ───────────────────
+#
+# One file per egg group, fetched once from PokeAPI and cached indefinitely.
+# Structure: list of {"slug": str, "name": str} dicts.
+
+def _egg_group_path(slug: str) -> str:
+    return os.path.join(_EGG_GROUP_DIR, f"{slug.lower()}.json")
+
+
+def get_egg_group(slug: str) -> list | None:
+    """Return cached egg group roster, or None on miss."""
+    data = _read(_egg_group_path(slug))
+    if not isinstance(data, list):
+        return None
+    return data
+
+
+def save_egg_group(slug: str, roster: list) -> None:
+    """Persist egg group roster.  Atomic write; failure is non-fatal."""
+    os.makedirs(_EGG_GROUP_DIR, exist_ok=True)
+    path = _egg_group_path(slug)
+    tmp  = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(roster, fh, ensure_ascii=False, indent=2)
+        shutil.move(tmp, path)
+    except OSError:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+# ── Evolution chain cache  (cache/evolution/<chain_id>.json) ─────────────────
+#
+# One file per chain ID, fetched once and cached indefinitely.
+# Structure: list of paths, where each path is a list of {slug, trigger} dicts
+# (the already-flattened output of feat_evolution._flatten_chain).
+# Storing the flattened form avoids re-parsing the recursive tree on every load.
+
+def _evolution_path(chain_id: int) -> str:
+    return os.path.join(_EVOLUTION_DIR, f"{chain_id}.json")
+
+
+def get_evolution_chain(chain_id: int) -> list | None:
+    """Return cached flattened evolution chain, or None on miss."""
+    data = _read(_evolution_path(chain_id))
+    if not isinstance(data, list):
+        return None
+    return data
+
+
+def save_evolution_chain(chain_id: int, paths: list) -> None:
+    """Persist flattened evolution chain.  Atomic write; failure is non-fatal."""
+    os.makedirs(_EVOLUTION_DIR, exist_ok=True)
+    path = _evolution_path(chain_id)
+    tmp  = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(paths, fh, ensure_ascii=False, indent=2)
+        shutil.move(tmp, path)
+    except OSError:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+def invalidate_evolution_chain(chain_id: int) -> None:
+    """Delete cached evolution chain. Next access will re-fetch."""
+    _delete(_evolution_path(chain_id))
+    print(f"  Cache invalidated: evolution/{chain_id}.json")
+
+
+# ── Cache integrity check ─────────────────────────────────────────────────────
+
 def check_integrity() -> list:
     """
     Scan every cache file and return a list of issue strings.
@@ -879,9 +976,8 @@ def check_integrity() -> list:
     issues = []
 
     def _check_file(path: str, label: str, validator) -> None:
-        """Read one file and run validator(data) → (ok: bool, note: str)."""
         if not os.path.exists(path):
-            return   # absent is fine
+            return
         data = _read(path)
         if data is None:
             issues.append(f"{label}: corrupt or unreadable")
@@ -891,15 +987,12 @@ def check_integrity() -> list:
             issues.append(f"{label}: {note}")
 
     def _scan_dir(dirpath: str, validator) -> None:
-        """Scan every .json file in dirpath through validator."""
         if not os.path.isdir(dirpath):
             return
         for fname in sorted(os.listdir(dirpath)):
             if not fname.endswith(".json"):
                 continue
             _check_file(os.path.join(dirpath, fname), fname, validator)
-
-    # ── Top-level files ───────────────────────────────────────────────────────
 
     def _check_moves(data):
         if not _valid_moves(data):
@@ -936,8 +1029,6 @@ def check_integrity() -> list:
     _check_file(_NATURES_FILE,  "natures.json",         _check_natures)
     _check_file(_ABILITIES_FILE,"abilities_index.json", _check_abilities_index)
 
-    # ── Per-entry directories ─────────────────────────────────────────────────
-
     def _check_pokemon_file(data):
         if not _valid_pokemon(data):
             return False, "failed schema check"
@@ -960,10 +1051,22 @@ def check_integrity() -> list:
             return False, "missing 'slug' key"
         return True, "ok"
 
+    def _check_egg_group_file(data):
+        if not isinstance(data, list):
+            return False, "not a list"
+        return True, "ok"
+
+    def _check_evolution_file(data):
+        if not isinstance(data, list):
+            return False, "not a list"
+        return True, "ok"
+
     _scan_dir(_POKEMON_DIR,   _check_pokemon_file)
     _scan_dir(_LEARNSET_DIR,  _check_learnset_file)
     _scan_dir(_TYPES_DIR,     _check_type_file)
     _scan_dir(_ABILITIES_DIR, _check_ability_file)
+    _scan_dir(_EGG_GROUP_DIR, _check_egg_group_file)
+    _scan_dir(_EVOLUTION_DIR, _check_evolution_file)
 
     return issues
 
@@ -1101,6 +1204,11 @@ if __name__ == "__main__":
 
     print()
 
+    # ── MOVES_CACHE_VERSION ───────────────────────────────────────────────────
+    assert MOVES_CACHE_VERSION == 3, \
+        f"Expected MOVES_CACHE_VERSION=3 (Pythonmon-28), got {MOVES_CACHE_VERSION}"
+    _ok("  MOVES_CACHE_VERSION == 3")
+
     # ── read/write/upsert round-trip (temp dir) ───────────────────────────────
     orig_base = globals()["_BASE"]
     orig_pkm  = globals()["_POKEMON_DIR"]
@@ -1119,10 +1227,13 @@ if __name__ == "__main__":
         _self._NATURES_FILE = os.path.join(tmp, "natures.json")
         _self._ABILITIES_FILE= os.path.join(tmp, "abilities_index.json")
         _self._ABILITIES_DIR = os.path.join(tmp, "abilities")
+        _self._EGG_GROUP_DIR = os.path.join(tmp, "egg_groups")
+        _self._EVOLUTION_DIR = os.path.join(tmp, "evolution")
         _self._ensure_dirs()
 
         # pokemon save + get
-        pkm = {"pokemon": "garchomp", "forms": [
+        pkm = {"pokemon": "garchomp", "egg_groups": [], "evolution_chain_id": 1,
+            "forms": [
             {"name": "Garchomp",      "types": ["Dragon","Ground"], "base_stats": []},
             {"name": "Mega Garchomp", "types": ["Dragon","Ground"], "base_stats": []},
         ]}
@@ -1132,7 +1243,8 @@ if __name__ == "__main__":
         _ok("  pokemon save/get   OK")
 
         # upsert: update one form, add one
-        pkm2 = {"pokemon": "garchomp", "forms": [
+        pkm2 = {"pokemon": "garchomp", "egg_groups": [], "evolution_chain_id": 1,
+            "forms": [
             {"name": "Garchomp",   "types": ["Dragon","Ground"], "base_stats": [], "updated": True},
             {"name": "Garchomp Z", "types": ["Dragon","Ground"], "base_stats": []},
         ]}
@@ -1232,7 +1344,8 @@ if __name__ == "__main__":
         _ok("  invalidate_all     OK")
 
         # __ index auto-update ______________________________________________
-        _self.save_pokemon("charizard", {"pokemon": "charizard", "forms": [
+        _self.save_pokemon("charizard", {"pokemon": "charizard", "egg_groups": [], "evolution_chain_id": 1,
+            "forms": [
             {"name": "Charizard",        "types": ["Fire","Flying"], "base_stats": []},
             {"name": "Mega Charizard X", "types": ["Fire","Dragon"],  "base_stats": []},
         ]})
@@ -1245,7 +1358,8 @@ if __name__ == "__main__":
         _ok("  index auto-update  OK")
 
         # index upsert: update charizard forms
-        _self.save_pokemon("charizard", {"pokemon": "charizard", "forms": [
+        _self.save_pokemon("charizard", {"pokemon": "charizard", "egg_groups": [], "evolution_chain_id": 1,
+            "forms": [
             {"name": "Charizard",        "types": ["Fire","Flying"], "base_stats": []},
             {"name": "Mega Charizard X", "types": ["Fire","Dragon"],  "base_stats": []},
             {"name": "Mega Charizard Y", "types": ["Fire","Flying"],  "base_stats": []},
@@ -1262,7 +1376,8 @@ if __name__ == "__main__":
         _ok("  index invalidate   OK")
 
         # index repair: pokemon file exists but missing from index
-        _self.save_pokemon("mewtwo", {"pokemon": "mewtwo", "forms": [
+        _self.save_pokemon("mewtwo", {"pokemon": "mewtwo", "egg_groups": [], "evolution_chain_id": 1,
+            "forms": [
             {"name": "Mewtwo", "types": ["Psychic"], "base_stats": []},
         ]})
         # Manually remove from index to simulate pre-index cache file
@@ -1273,60 +1388,181 @@ if __name__ == "__main__":
         assert "mewtwo" in _self.get_index(), "index not repaired by get_pokemon"
         _ok("  index repair       OK")
 
-        # ── check_integrity ───────────────────────────────────────────────────
-        # check_integrity() uses module-level path globals from the running
-        # module (__main__ = pkm_cache_p13), not from _self (pkm_cache).
-        # We must redirect those globals to the temp dir as well.
-        _g = globals()
-        _orig_g = {k: _g[k] for k in
-                   ("_BASE","_POKEMON_DIR","_LEARNSET_DIR","_MOVES_FILE",
-                    "_MACHINES_FILE","_INDEX_FILE","_TYPES_DIR",
-                    "_NATURES_FILE","_ABILITIES_FILE","_ABILITIES_DIR")}
-        _g["_BASE"]          = tmp
-        _g["_POKEMON_DIR"]   = _self._POKEMON_DIR
-        _g["_LEARNSET_DIR"]  = _self._LEARNSET_DIR
-        _g["_MOVES_FILE"]    = _self._MOVES_FILE
-        _g["_MACHINES_FILE"] = _self._MACHINES_FILE
-        _g["_INDEX_FILE"]    = _self._INDEX_FILE
-        _g["_TYPES_DIR"]     = _self._TYPES_DIR
-        _g["_NATURES_FILE"]  = _self._NATURES_FILE
-        _g["_ABILITIES_FILE"]= _self._ABILITIES_FILE
-        _g["_ABILITIES_DIR"] = _self._ABILITIES_DIR
+        # ── egg_groups auto-upgrade ───────────────────────────────────────────
 
-        # Clean state: no issues expected
+        # Entry without egg_groups → get_pokemon returns None (triggers re-fetch)
+        _write(os.path.join(_self._POKEMON_DIR, "oldmon.json"), {
+            "pokemon": "oldmon",
+            "species_gen": 1,
+            "forms": [{"name": "Oldmon", "types": ["Normal"],
+                       "variety_slug": "oldmon", "base_stats": {}, "abilities": []}],
+            "scraped_at": "2024-01-01T00:00:00",
+        })
+        # Redirect globals so get_pokemon reads from temp dir
+        _g = globals()
+        _orig_pkm_dir = _g["_POKEMON_DIR"]
+        _g["_POKEMON_DIR"] = _self._POKEMON_DIR
+        try:
+            assert get_pokemon("oldmon") is None, "missing egg_groups should return None"
+            _ok("  egg_groups upgrade  missing → None (triggers re-fetch)")
+
+            # Entry with egg_groups + evolution_chain_id → returns normally
+            _write(os.path.join(_self._POKEMON_DIR, "newmon.json"), {
+                "pokemon": "newmon",
+                "species_gen": 1,
+                "egg_groups": ["monster"],
+                "evolution_chain_id": 1,
+                "forms": [{"name": "Newmon", "types": ["Normal"],
+                           "variety_slug": "newmon", "base_stats": {}, "abilities": []}],
+                "scraped_at": "2024-01-01T00:00:00",
+            })
+            # Also redirect index so get_pokemon index repair doesn't break
+            _orig_idx = _g["_INDEX_FILE"]
+            _g["_INDEX_FILE"] = _self._INDEX_FILE
+            try:
+                assert get_pokemon("newmon") is not None, "entry with egg_groups should load"
+                _ok("  egg_groups upgrade  present → loads normally")
+            finally:
+                _g["_INDEX_FILE"] = _orig_idx
+        finally:
+            _g["_POKEMON_DIR"] = _orig_pkm_dir
+
+        # ── egg group roster cache ────────────────────────────────────────────
+
+        roster_a = [{"slug": "bulbasaur", "name": "Bulbasaur"},
+                    {"slug": "charmander", "name": "Charmander"}]
+        save_egg_group("monster", roster_a)
+        loaded_r = get_egg_group("monster")
+        assert loaded_r == roster_a, f"egg group round-trip failed: {loaded_r}"
+        _ok("  egg_group save/get  OK")
+
+        assert get_egg_group("nonexistent") is None, "missing egg group should return None"
+        _ok("  egg_group miss      → None")
+
+        # Non-list data → None
+        _write(os.path.join(_EGG_GROUP_DIR, "bad.json"), {"not": "a list"})
+        assert get_egg_group("bad") is None, "non-list egg group should return None"
+        _ok("  egg_group non-list  → None")
+
+        # ── evolution chain cache ─────────────────────────────────────────────
+
+        # Redirect globals so functions read from temp dir
+        _g3 = globals()
+        _orig_evo = _g3.get("_EVOLUTION_DIR")
+        _g3["_EVOLUTION_DIR"] = _self._EVOLUTION_DIR
+
+        try:
+            sample_paths = [
+                [{"slug": "charmander", "trigger": ""},
+                 {"slug": "charmeleon", "trigger": "Level 16"},
+                 {"slug": "charizard",  "trigger": "Level 36"}]
+            ]
+            save_evolution_chain(1, sample_paths)
+            loaded_evo = get_evolution_chain(1)
+            assert loaded_evo == sample_paths, f"evo round-trip failed: {loaded_evo}"
+            _ok("  evolution save/get  OK")
+
+            assert get_evolution_chain(9999) is None, "missing chain should return None"
+            _ok("  evolution miss      → None")
+
+            # Non-list data → None
+            _write(os.path.join(_g3["_EVOLUTION_DIR"], "bad.json"), {"not": "a list"})
+            assert get_evolution_chain("bad") is None, "non-list chain should return None"
+            _ok("  evolution non-list  → None")
+            os.remove(os.path.join(_g3["_EVOLUTION_DIR"], "bad.json"))
+        finally:
+            _g3["_EVOLUTION_DIR"] = _orig_evo
+
+        # ── egg_groups + evolution_chain_id auto-upgrade ──────────────────────
+
+        # Entry without evolution_chain_id → get_pokemon returns None
+        _g4 = globals()
+        _orig_pkm_dir2 = _g4["_POKEMON_DIR"]
+        _orig_idx2     = _g4["_INDEX_FILE"]
+        _g4["_POKEMON_DIR"] = _self._POKEMON_DIR
+        _g4["_INDEX_FILE"]  = _self._INDEX_FILE
+        try:
+            _write(os.path.join(_self._POKEMON_DIR, "noevo.json"), {
+                "pokemon"    : "noevo",
+                "species_gen": 1,
+                "egg_groups" : [],
+                # deliberately missing evolution_chain_id
+                "forms"      : [{"name": "Noevo", "types": ["Normal"],
+                                 "variety_slug": "noevo",
+                                 "base_stats": {}, "abilities": []}],
+                "scraped_at" : "2024-01-01T00:00:00",
+            })
+            assert get_pokemon("noevo") is None, \
+                "missing evolution_chain_id should return None"
+            _ok("  evo auto-upgrade    missing evolution_chain_id → None")
+        finally:
+            _g4["_POKEMON_DIR"] = _orig_pkm_dir2
+            _g4["_INDEX_FILE"]  = _orig_idx2
+
+        # ── check_integrity ───────────────────────────────────────────────────
+
+        _g2 = globals()
+        _orig_g2 = {k: _g2[k] for k in (
+            "_BASE","_POKEMON_DIR","_LEARNSET_DIR","_MOVES_FILE",
+            "_MACHINES_FILE","_INDEX_FILE","_TYPES_DIR",
+            "_NATURES_FILE","_ABILITIES_FILE","_ABILITIES_DIR",
+            "_EGG_GROUP_DIR","_EVOLUTION_DIR"
+        )}
+        _g2["_BASE"]           = tmp
+        _g2["_POKEMON_DIR"]    = _self._POKEMON_DIR
+        _g2["_LEARNSET_DIR"]   = _self._LEARNSET_DIR
+        _g2["_MOVES_FILE"]     = _self._MOVES_FILE
+        _g2["_MACHINES_FILE"]  = _self._MACHINES_FILE
+        _g2["_INDEX_FILE"]     = _self._INDEX_FILE
+        _g2["_TYPES_DIR"]      = _self._TYPES_DIR
+        _g2["_NATURES_FILE"]   = _self._NATURES_FILE
+        _g2["_ABILITIES_FILE"] = _self._ABILITIES_FILE
+        _g2["_ABILITIES_DIR"]  = _self._ABILITIES_DIR
+        _g2["_EGG_GROUP_DIR"]  = os.path.join(tmp, "egg_groups")
+        _g2["_EVOLUTION_DIR"]  = os.path.join(tmp, "evolution")
+
         issues = check_integrity()
         assert issues == [], f"expected clean cache, got: {issues}"
         _ok("  check_integrity    clean cache → no issues")
 
-        # Corrupt moves.json → issue reported
-        with open(_g["_MOVES_FILE"], "w") as f:
+        with open(_g2["_MOVES_FILE"], "w") as f:
             f.write("{bad json")
         issues = check_integrity()
         assert any("moves.json" in i for i in issues), f"corrupt moves not flagged: {issues}"
         _ok("  check_integrity    corrupt moves.json → issue reported")
-        _self.invalidate_moves()  # clean up
+        _self.invalidate_moves()
 
-        # Invalid pokemon file (parses but fails _valid_pokemon)
-        bad_pkm_path = os.path.join(_g["_POKEMON_DIR"], "badmon.json")
+        bad_pkm_path = os.path.join(_g2["_POKEMON_DIR"], "badmon.json")
         with open(bad_pkm_path, "w") as f:
             import json as _json
             _json.dump({"not_a_pokemon": True}, f)
         issues = check_integrity()
         assert any("badmon.json" in i for i in issues), f"bad pokemon not flagged: {issues}"
-        _ok("  check_integrity    invalid pokemon file → issue reported")
+        _ok("  check_integrity    invalid pokemon → issue reported")
         os.remove(bad_pkm_path)
 
-        # Valid pokemon file → no new issues
-        _self.save_pokemon("charizard", {"pokemon": "charizard", "forms": [
-            {"name": "Charizard", "types": ["Fire","Flying"], "base_stats": []},
-        ]})
+        # Egg group file in check_integrity
+        os.makedirs(_g2["_EGG_GROUP_DIR"], exist_ok=True)
+        bad_egg_path = os.path.join(_g2["_EGG_GROUP_DIR"], "bad-group.json")
+        with open(bad_egg_path, "w") as f:
+            _json.dump({"not": "a list"}, f)
         issues = check_integrity()
-        assert not any("charizard.json" in i for i in issues), \
-            f"valid pokemon flagged: {issues}"
-        _ok("  check_integrity    valid pokemon file → no issue")
+        assert any("bad-group.json" in i for i in issues), f"bad egg group not flagged: {issues}"
+        _ok("  check_integrity    invalid egg group → issue reported")
+        os.remove(bad_egg_path)
 
-        # Restore globals
-        _g.update(_orig_g)
+        # Evolution file in check_integrity
+        os.makedirs(_g2["_EVOLUTION_DIR"], exist_ok=True)
+        bad_evo_path = os.path.join(_g2["_EVOLUTION_DIR"], "99.json")
+        with open(bad_evo_path, "w") as f:
+            _json.dump({"not": "a list"}, f)
+        issues = check_integrity()
+        assert any("99.json" in i for i in issues), \
+            f"bad evolution not flagged: {issues}"
+        _ok("  check_integrity    invalid evolution → issue reported")
+        os.remove(bad_evo_path)
+
+        _g2.update(_orig_g2)
 
     print()
     if errors:

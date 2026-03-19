@@ -223,12 +223,7 @@ def fetch_pokemon(name: str) -> dict:
 
         forms.append({
             "name"        : display_name,
-            "variety_slug": form_slug,    # use form slug so each cosmetic form
-                                          # (Rotom-Wash, Wormadam-Sandy, …) gets
-                                          # its own learnset.  For single-form
-                                          # varieties form_slug == variety_slug,
-                                          # so there is no change for regional
-                                          # forms, Megas, or Gigantamax.
+            "variety_slug": variety_slug,
             "types"       : types,
             "base_stats"  : base_stats,
             "abilities"   : abilities,
@@ -241,9 +236,11 @@ def fetch_pokemon(name: str) -> dict:
         forms = [default]
 
     return {
-        "pokemon"    : slug,
-        "species_gen": species_gen,
-        "forms"      : forms,
+        "pokemon"           : slug,
+        "species_gen"       : species_gen,
+        "egg_groups"        : [g["name"] for g in species.get("egg_groups", [])],
+        "evolution_chain_id": _parse_chain_id(species),
+        "forms"             : forms,
     }
 
 
@@ -417,6 +414,11 @@ def fetch_move(name: str) -> list:
     # generations for a given move — so it is included once in current and
     # propagates to every versioned entry via **current.
     meta = data.get("meta") or {}
+    effect = ""
+    for entry in data.get("effect_entries", []):
+        if entry.get("language", {}).get("name") == "en":
+            effect = entry.get("short_effect", "").replace("\n", " ").strip()
+            break
     current = {
         "type"        : _TYPE_NAMES.get(data["type"]["name"],
                                         data["type"]["name"].capitalize()),
@@ -433,6 +435,8 @@ def fetch_move(name: str) -> list:
         "effect_chance": data.get("effect_chance") or 0,
         # ailment: secondary status effect name for display (e.g. "burn", "paralysis")
         "ailment"      : (meta.get("ailment") or {}).get("name", "none"),
+        # effect: English short_effect text (constant across generations)
+        "effect"       : effect,
     }
 
     intro_gen = _gen_name_to_int(data["generation"]["name"])
@@ -481,6 +485,11 @@ def fetch_all_moves(dry_run: bool = False) -> dict:
                 display_name = slug.replace("-", " ").title()
 
             meta = move_data.get("meta") or {}
+            effect = ""
+            for eff_entry in move_data.get("effect_entries", []):
+                if eff_entry.get("language", {}).get("name") == "en":
+                    effect = eff_entry.get("short_effect", "").replace("\n", " ").strip()
+                    break
             current = {
                 "type"         : _TYPE_NAMES.get(move_data["type"]["name"],
                                                  move_data["type"]["name"].capitalize()),
@@ -493,6 +502,7 @@ def fetch_all_moves(dry_run: bool = False) -> dict:
                 "drain"        : meta.get("drain", 0) or 0,
                 "effect_chance": move_data.get("effect_chance") or 0,
                 "ailment"      : (meta.get("ailment") or {}).get("name", "none"),
+                "effect"       : effect,
             }
 
             intro_gen = _gen_name_to_int(move_data["generation"]["name"])
@@ -1074,193 +1084,6 @@ def _test_fetch_moves_live():
     print("  [PASS] All GAMES entries have at least one version-group slug")
 
 
-def _test_fetch_pokemon_offline():
-    """
-    Offline unit tests for fetch_pokemon() using a mocked _get().
-
-    Covers:
-      - Single-form variety: form_slug == variety_slug → variety_slug unchanged
-      - Multi-form variety (Rotom-style): each form gets its own form_slug
-      - Deduplication: identical types → collapsed to default form
-      - Regional form (Alolan-style): separate variety, single form entry
-    """
-    import sys as _sys
-    errors = []
-
-    def _chk(label, cond, detail=""):
-        if cond:
-            print(f"  [PASS] {label}")
-        else:
-            print(f"  [FAIL] {label}" + (f": {detail}" if detail else ""))
-            errors.append(label)
-
-    # ── Fake API responses ────────────────────────────────────────────────────
-
-    def _make_pkm(variety_slug, types, form_slugs):
-        return {
-            "types"    : [{"type": {"name": t.lower()}, "slot": i+1}
-                          for i, t in enumerate(types)],
-            "stats"    : [{"stat": {"name": "hp"}, "base_stat": 50}],
-            "abilities": [],
-            "forms"    : [{"name": s} for s in form_slugs],
-        }
-
-    def _make_species(varieties):
-        # varieties: list of (slug, is_default)
-        return {
-            "generation": {"name": "generation-i"},
-            "names"     : [{"language": {"name": "en"}, "name": "TestMon"}],
-            "varieties" : [
-                {"pokemon": {"name": slug}, "is_default": is_def}
-                for slug, is_def in varieties
-            ],
-        }
-
-    def _make_form(en_name):
-        return {"names": [{"language": {"name": "en"}, "name": en_name}]}
-
-    # ── Test A: single-form variety — form_slug == variety_slug ──────────────
-    # Simulates Charizard base: variety_slug="charizard", forms=["charizard"]
-    _responses_a = {
-        "pokemon-species/testmon": _make_species([("testmon", True)]),
-        "pokemon/testmon"        : _make_pkm("testmon", ["Fire"], ["testmon"]),
-        "pokemon-form/testmon"   : _make_form("Testmon"),
-    }
-    orig_get = globals()["_get"]
-    globals()["_get"] = lambda path: _responses_a[path]
-
-    try:
-        result_a = fetch_pokemon("testmon")
-        _chk("single-form: exactly 1 form returned",
-             len(result_a["forms"]) == 1)
-        _chk("single-form: variety_slug == form_slug (no change)",
-             result_a["forms"][0]["variety_slug"] == "testmon",
-             result_a["forms"][0]["variety_slug"])
-    finally:
-        globals()["_get"] = orig_get
-
-    # ── Test B: two separate varieties, each with one form ───────────────────
-    # This matches how Rotom appliances actually appear in PokeAPI:
-    # pokemon-species/rotom lists rotom AND rotom-wash as separate varieties.
-    # Each variety fetches its own pokemon/{slug} with different types.
-    # form_slug comes from pkm["forms"][0]["name"] which equals the variety slug.
-    # The fix stores form_slug → same as variety_slug → no regression.
-    # Types differ (Electric/Ghost vs Water/Electric) → dedup does NOT fire.
-    _responses_b = {
-        "pokemon-species/rotom": _make_species([
-            ("rotom",      True),
-            ("rotom-wash", False),
-        ]),
-        "pokemon/rotom"      : _make_pkm("rotom",      ["Electric", "Ghost"],
-                                          ["rotom"]),
-        "pokemon/rotom-wash" : _make_pkm("rotom-wash", ["Water", "Electric"],
-                                          ["rotom-wash"]),
-        "pokemon-form/rotom"     : _make_form("Rotom"),
-        "pokemon-form/rotom-wash": _make_form("Rotom-Wash"),
-    }
-    globals()["_get"] = lambda path: _responses_b[path]
-
-    try:
-        result_b = fetch_pokemon("rotom")
-        _chk("separate-varieties: 2 forms returned (types differ, no dedup)",
-             len(result_b["forms"]) == 2,
-             str([f["variety_slug"] for f in result_b["forms"]]))
-        slugs_b = [f["variety_slug"] for f in result_b["forms"]]
-        _chk("separate-varieties: base form stored under 'rotom'",
-             "rotom" in slugs_b, str(slugs_b))
-        _chk("separate-varieties: wash form stored under 'rotom-wash'",
-             "rotom-wash" in slugs_b, str(slugs_b))
-    finally:
-        globals()["_get"] = orig_get
-
-    # ── Test C: identical types → deduplication fires ─────────────────────────
-    # One variety, two form slugs, but both Psychic → collapse to default.
-    _responses_c = {
-        "pokemon-species/deoxys": _make_species([("deoxys", True)]),
-        "pokemon/deoxys"        : _make_pkm("deoxys", ["Psychic"],
-                                             ["deoxys", "deoxys-attack"]),
-        "pokemon-form/deoxys"         : _make_form("Deoxys"),
-        "pokemon-form/deoxys-attack"  : _make_form("Deoxys Attack"),
-    }
-    globals()["_get"] = lambda path: _responses_c[path]
-
-    try:
-        result_c = fetch_pokemon("deoxys")
-        _chk("dedup: identical types → 1 form kept",
-             len(result_c["forms"]) == 1,
-             str([f["variety_slug"] for f in result_c["forms"]]))
-        _chk("dedup: kept form is the default (deoxys)",
-             result_c["forms"][0]["variety_slug"] == "deoxys",
-             result_c["forms"][0]["variety_slug"])
-    finally:
-        globals()["_get"] = orig_get
-
-    # ── Test D: regional form — separate variety, single form entry ───────────
-    # Simulates Alolan Sandslash: variety_slug="sandslash-alola",
-    # pkm["forms"]=["sandslash-alola"].  form_slug == variety_slug.
-    _responses_d = {
-        "pokemon-species/sandslash": _make_species([
-            ("sandslash",       True),
-            ("sandslash-alola", False),
-        ]),
-        "pokemon/sandslash"      : _make_pkm("sandslash",       ["Ground"],
-                                              ["sandslash"]),
-        "pokemon/sandslash-alola": _make_pkm("sandslash-alola", ["Ice","Steel"],
-                                              ["sandslash-alola"]),
-        "pokemon-form/sandslash"      : _make_form("Sandslash"),
-        "pokemon-form/sandslash-alola": _make_form("Alolan Sandslash"),
-    }
-    globals()["_get"] = lambda path: _responses_d[path]
-
-    try:
-        result_d = fetch_pokemon("sandslash")
-        # Types differ (Ground vs Ice/Steel) → no dedup → 2 forms
-        _chk("regional: 2 forms returned",
-             len(result_d["forms"]) == 2,
-             str([f["variety_slug"] for f in result_d["forms"]]))
-        slugs_d = [f["variety_slug"] for f in result_d["forms"]]
-        _chk("regional: base form stored under 'sandslash'",
-             "sandslash" in slugs_d, str(slugs_d))
-        _chk("regional: alolan form stored under 'sandslash-alola'",
-             "sandslash-alola" in slugs_d, str(slugs_d))
-    finally:
-        globals()["_get"] = orig_get
-
-    # ── Test E: form_slug differs from variety_slug ───────────────────────────
-    # The fix: store form_slug as variety_slug instead of the outer variety_slug.
-    # This matters when pkm["forms"][0]["name"] differs from the variety slug —
-    # e.g. if PokeAPI returns form slug "rotom-appliance" for variety "rotom-wash".
-    # With the old code: variety_slug stored = "rotom-wash"
-    # With the fix:      variety_slug stored = "rotom-appliance" (the form slug)
-    # This ensures build_candidate_pool fetches the learnset from the correct
-    # pokemon endpoint.
-    _responses_e = {
-        "pokemon-species/testmon-alt": _make_species([("testmon-alt", True)]),
-        "pokemon/testmon-alt": _make_pkm("testmon-alt", ["Water"],
-                                          ["testmon-form"]),   # form slug differs!
-        "pokemon-form/testmon-form": _make_form("Testmon Form"),
-    }
-    globals()["_get"] = lambda path: _responses_e[path]
-
-    try:
-        result_e = fetch_pokemon("testmon-alt")
-        _chk("form_slug≠variety_slug: stored variety_slug == form_slug",
-             result_e["forms"][0]["variety_slug"] == "testmon-form",
-             result_e["forms"][0]["variety_slug"])
-        _chk("form_slug≠variety_slug: outer variety_slug NOT stored",
-             result_e["forms"][0]["variety_slug"] != "testmon-alt",
-             result_e["forms"][0]["variety_slug"])
-    finally:
-        globals()["_get"] = orig_get
-
-    print()
-    if errors:
-        print(f"  FAILED ({len(errors)}): {errors}")
-        return False
-    print(f"  [PASS] All 12 offline fetch_pokemon tests passed")
-    return True
-
-
 def _test_mapping_completeness():
     """Assert every GAMES entry has at least one slug in the mapping."""
     missing = []
@@ -1346,6 +1169,139 @@ def _print_mapping_table():
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+
+def _test_fetch_pokemon_offline():
+    """
+    Offline unit tests for fetch_pokemon() using a mocked _get().
+    Covers egg_groups field extraction (Pythonmon-27A).
+    """
+    errors = []
+    def _chk(label, cond, detail=""):
+        if cond:
+            print(f"  [PASS] {label}")
+        else:
+            print(f"  [FAIL] {label}" + (f": {detail}" if detail else ""))
+            errors.append(label)
+
+    orig_get = globals()["_get"]
+
+    def _make_pkm(variety_slug, types, form_slugs):
+        return {
+            "types"    : [{"type": {"name": t.lower()}, "slot": i+1}
+                          for i, t in enumerate(types)],
+            "stats"    : [{"stat": {"name": "hp"}, "base_stat": 50}],
+            "abilities": [],
+            "forms"    : [{"name": s} for s in form_slugs],
+        }
+
+    def _make_species(varieties, egg_groups=None, chain_id=1):
+        return {
+            "generation"     : {"name": "generation-i"},
+            "names"          : [{"language": {"name": "en"}, "name": "TestMon"}],
+            "varieties"      : [
+                {"pokemon": {"name": slug}, "is_default": is_def}
+                for slug, is_def in varieties
+            ],
+            "egg_groups"     : [{"name": g} for g in (egg_groups or [])],
+            "evolution_chain": {"url": f"https://pokeapi.co/api/v2/evolution-chain/{chain_id}/"}
+                               if chain_id is not None else None,
+        }
+
+    def _make_form(en_name):
+        return {"names": [{"language": {"name": "en"}, "name": en_name}]}
+
+    # ── Test: egg_groups extracted correctly ──────────────────────────────────
+    _resp = {
+        "pokemon-species/testmon": _make_species(
+            [("testmon", True)], egg_groups=["monster", "dragon"]
+        ),
+        "pokemon/testmon"        : _make_pkm("testmon", ["Fire"], ["testmon"]),
+        "pokemon-form/testmon"   : _make_form("Testmon"),
+    }
+    globals()["_get"] = lambda path: _resp[path]
+    try:
+        result = fetch_pokemon("testmon")
+        _chk("egg_groups: two groups extracted",
+             result.get("egg_groups") == ["monster", "dragon"],
+             str(result.get("egg_groups")))
+    finally:
+        globals()["_get"] = orig_get
+
+    # ── Test: empty egg_groups → [] ───────────────────────────────────────────
+    _resp2 = {
+        "pokemon-species/eggless": _make_species(
+            [("eggless", True)], egg_groups=[]
+        ),
+        "pokemon/eggless"        : _make_pkm("eggless", ["Normal"], ["eggless"]),
+        "pokemon-form/eggless"   : _make_form("Eggless"),
+    }
+    globals()["_get"] = lambda path: _resp2[path]
+    try:
+        result2 = fetch_pokemon("eggless")
+        _chk("egg_groups: empty list → []",
+             result2.get("egg_groups") == [],
+             str(result2.get("egg_groups")))
+    finally:
+        globals()["_get"] = orig_get
+
+    # ── Test: no-eggs group preserved ─────────────────────────────────────────
+    _resp3 = {
+        "pokemon-species/legendary": _make_species(
+            [("legendary", True)], egg_groups=["no-eggs"]
+        ),
+        "pokemon/legendary"        : _make_pkm("legendary", ["Psychic"], ["legendary"]),
+        "pokemon-form/legendary"   : _make_form("Legendary"),
+    }
+    globals()["_get"] = lambda path: _resp3[path]
+    try:
+        result3 = fetch_pokemon("legendary")
+        _chk("egg_groups: no-eggs group preserved",
+             result3.get("egg_groups") == ["no-eggs"],
+             str(result3.get("egg_groups")))
+    finally:
+        globals()["_get"] = orig_get
+
+    # ── Test: evolution_chain_id extracted correctly ───────────────────────────
+    _resp4 = {
+        "pokemon-species/evomon": _make_species(
+            [("evomon", True)], chain_id=42
+        ),
+        "pokemon/evomon"        : _make_pkm("evomon", ["Fire"], ["evomon"]),
+        "pokemon-form/evomon"   : _make_form("Evomon"),
+    }
+    globals()["_get"] = lambda path: _resp4[path]
+    try:
+        result4 = fetch_pokemon("evomon")
+        _chk("evolution_chain_id: extracted from URL",
+             result4.get("evolution_chain_id") == 42,
+             str(result4.get("evolution_chain_id")))
+    finally:
+        globals()["_get"] = orig_get
+
+    # ── Test: missing evolution_chain → None ──────────────────────────────────
+    _resp5 = {
+        "pokemon-species/nochain": _make_species(
+            [("nochain", True)], chain_id=None
+        ),
+        "pokemon/nochain"        : _make_pkm("nochain", ["Normal"], ["nochain"]),
+        "pokemon-form/nochain"   : _make_form("Nochain"),
+    }
+    globals()["_get"] = lambda path: _resp5[path]
+    try:
+        result5 = fetch_pokemon("nochain")
+        _chk("evolution_chain_id: missing chain → None",
+             result5.get("evolution_chain_id") is None,
+             str(result5.get("evolution_chain_id")))
+    finally:
+        globals()["_get"] = orig_get
+
+    print()
+    if errors:
+        print(f"  FAILED ({len(errors)}): {errors}")
+        return False
+    print("  [PASS] All 5 offline fetch_pokemon tests passed")
+    return True
+
 
 def main():
     verify  = "--verify"   in sys.argv
@@ -1530,6 +1486,57 @@ def fetch_form_display_name(slug: str) -> str | None:
         return name   # None if names list was empty
     except ValueError:
         return None   # 404 — unknown slug
+
+
+# ── Evolution chain fetch ─────────────────────────────────────────────────────
+
+def _parse_chain_id(species: dict) -> int | None:
+    """Extract the evolution chain ID from a pokemon-species response."""
+    url = (species.get("evolution_chain") or {}).get("url", "")
+    if not url:
+        return None
+    try:
+        return int(url.rstrip("/").split("/")[-1])
+    except (ValueError, IndexError):
+        return None
+
+
+def fetch_evolution_chain(chain_id: int) -> dict:
+    """
+    Fetch the raw evolution chain from PokeAPI.
+
+    Returns the `chain` node dict directly — the root of the recursive tree
+    that `feat_evolution._flatten_chain` expects.
+
+    Raises ValueError on 404 (unknown chain_id).
+    Raises ConnectionError on network failure.
+    """
+    data = _get(f"evolution-chain/{chain_id}")
+    return data["chain"]
+
+
+# ── Egg group roster fetch ────────────────────────────────────────────────────
+
+def fetch_egg_group(slug: str) -> list:
+    """
+    Fetch the roster of species in an egg group from PokeAPI.
+
+    Returns a list of {"slug": str, "name": str} dicts sorted by name.
+    "name" is the English display name from the species names list, or
+    a title-cased slug fallback.
+
+    Raises ValueError on unknown slug (404).
+    Raises ConnectionError on network failure.
+    """
+    data = _get(f"egg-group/{slug}")
+    roster = []
+    for entry in data.get("pokemon_species", []):
+        species_slug = entry["name"]
+        name = _en_name(entry.get("names", []), None)
+        if not name:
+            name = species_slug.replace("-", " ").title()
+        roster.append({"slug": species_slug, "name": name})
+    return sorted(roster, key=lambda x: x["name"])
 
 
 # ── Type roster fetch ─────────────────────────────────────────────────────────

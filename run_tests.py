@@ -115,6 +115,9 @@ SUITES = [
     ("feat_team_analysis",        "feat_team_analysis.py",   ["--autotest"],               []),
     ("feat_team_offense",         "feat_team_offense.py",    ["--autotest"],               []),
     ("feat_team_moveset",         "feat_team_moveset.py",    ["--autotest"],               []),
+    ("feat_stat_compare",         "feat_stat_compare.py",    ["--autotest"],               []),
+    ("feat_egg_group",            "feat_egg_group.py",       ["--autotest"],               []),
+    ("feat_evolution",            "feat_evolution.py",       ["--autotest"],               []),
     # ── cache-dependent suites ────────────────────────────────────────────────
     ("feat_moveset (cache)",
         "feat_moveset.py",     ["--autotest", "--withcache"],
@@ -336,6 +339,25 @@ def main():
                  f"{total_failed:>{col_fail}}")
     print(f"║{total_row:<{W+1}}║")
     print("╚" + "═" * (W + 2) + "╝")
+
+    # ── Files with no test suite ───────────────────────────────────────────────
+    import re as _re
+    _suite_files = set(_re.findall(r'"((?:feat_|pkm_|matchup_)\w+\.py)"',
+                                   open(__file__, encoding="utf-8").read()))
+    _all_py = sorted(
+        f for f in os.listdir(HERE)
+        if f.endswith(".py")
+        and (f.startswith("feat_") or f.startswith("pkm_")
+             or f == "matchup_calculator.py")
+        and f not in ("run_tests.py",)
+        and "_p" not in f.replace(".py", "")   # exclude temp test copies (_p28, _p32, etc.)
+    )
+    _no_suite = [f for f in _all_py if f not in _suite_files]
+    if _no_suite:
+        print()
+        print("  No --autotest suite:")
+        for _f in _no_suite:
+            print(f"    {_f}  (display-only — verified manually)")
 
     print()
     if any_fail:

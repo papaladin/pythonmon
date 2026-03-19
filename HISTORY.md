@@ -621,3 +621,441 @@ single-form data from PokeAPI.
 
 ### Test count
 28 tests in `pkm_session.py`. Full suite: 628 offline tests, 0 failures.
+
+---
+
+## §81 — Pythonmon-6: move filter in pool
+
+### What changed
+- Modified: `feat_movepool.py` — 4 new functions, updated `_display_learnset`,
+  updated `run()`; 7 new tests (9 → 16)
+
+### Why
+A Charizard learnset in Scarlet/Violet has 60+ moves. When planning a moveset
+the user often wants to see only, say, Special Fire moves above 80 power — not
+scroll the full list. The filter makes that a two-keypress operation after the
+table is already on screen.
+
+### Key decisions
+- **Full table first**: pressing `2` always shows the complete unfiltered list.
+  The filter prompt appears at the bottom. Pressing Enter returns to the menu
+  immediately — the common case has zero extra keypresses (Option B).
+- **`_apply_filter` is pure**: takes `(label, name, details)` tuples and a
+  filter dict, returns the filtered subset. No I/O, fully testable offline.
+- **`_passes_filter` rules**:
+  - `details=None` (move not yet in cache) always passes — graceful fallback.
+  - Status moves (`power=None`) are excluded by any `min_power` constraint,
+    included when `min_power` is `None`.
+  - Type match is case-insensitive.
+  - Category accepts short inputs: `p` → Physical, `s` → Special, `t` → Status.
+- **Section headers suppressed when empty**: if a filter leaves a section with
+  zero rows, its header is not printed — cleaner output.
+- **Filtered summary line**: `Showing X of Y moves (filtered)` replaces the
+  normal total when a filter is active. The `[ filter: type=Fire | pwr≥80 ]`
+  line appears directly below the session header.
+- **Re-display, not in-place mutation**: filtered view is a fresh call to
+  `_display_learnset` with `filter_spec` set. Original learnset data is
+  never modified.
+- **`run()` signature unchanged**: pokemain requires no changes.
+
+### Test count
+16 tests in `feat_movepool.py`. Full suite: 648 offline tests, 0 failures.
+
+---
+
+## §82 — Pythonmon-8: stat comparison (key C)
+
+### What changed
+- New file: `feat_stat_compare.py` — 13 tests
+- Modified: `pokemain.py` — import added; `C` menu line; `elif choice == "c"` handler
+- Modified: `run_tests.py` — `feat_stat_compare` added to SUITES (offline)
+
+### Why
+Choosing between two Pokemon for the same team slot often comes down to a
+stat trade-off (e.g. Garchomp's Attack vs Charizard's SpA). The O and S
+screens already exist for team-level analysis; key C fills the single-Pokemon
+comparison gap with no new API calls.
+
+### Key decisions
+- **No new API data**: `base_stats` is already in the pokemon cache from the
+  initial `P` load. The second Pokemon is fetched via the existing
+  `select_pokemon()` picker, including fuzzy matching.
+- **`compare_stats` and `total_stats` are pure**: no I/O, fully testable
+  offline. `display_comparison` is the only function that prints.
+- **`_stat_bar` duplicated from `feat_type_matchup`**: private helpers are
+  not shared across feature modules (project convention). Same formula and
+  constants (`_BAR_MAX=255`, `_BAR_WIDTH=18` — slightly narrower than the
+  single-column view to fit two bars side by side).
+- **Header layout**: both Pokemon names sit on the same line, left name
+  left-padded to the exact width of the stat row's left half so each name
+  sits directly above its column of bars.
+- **Winner markers**: `★` for the higher value, `•` for a tie, blank for
+  the lower. Applied per stat and on the Total line.
+- **`run()` guards**: missing pkm_ctx or game_ctx each print a clear message
+  and return without crashing.
+- **`run()` signature**: `run(pkm_ctx, game_ctx)` — standard single-Pokemon
+  feature signature, consistent with ARCHITECTURE.md §8.
+
+### Test count
+13 tests in `feat_stat_compare.py`. Full suite: 654 offline tests, 0 failures.
+
+---
+
+## §83 — Pythonmon-32: role & speed tier in quick view and stat compare
+
+### What changed
+- Modified: `feat_stat_compare.py` — `infer_role(base_stats) → str` and
+  `infer_speed_tier(base_stats) → str` added as public functions; Role line
+  added to `display_comparison`; 13 new tests (13 → 26)
+- Modified: `feat_nature_browser.py` — `_infer_role` and `_infer_speed_tier`
+  definitions removed; `from feat_stat_compare import infer_role,
+  infer_speed_tier` added; all internal callers updated (no logic change)
+- Modified: `feat_type_matchup.py` — `_print_base_stats` appends a
+  `Role: X attacker  |  Speed: Y (base N)` line after the Total
+
+### Why
+The nature recommender already computed role and speed tier to rank natures,
+but that context was never surfaced to the user. Two screens already show
+base stats — option 1 (quick view) and option C (stat compare) — and both
+are natural places to display this derived information.
+
+### Key decisions
+- **`feat_stat_compare.py` as the home**: role and speed tier are pure
+  functions derived from base stats — the same category as `compare_stats`,
+  `total_stats`, and `_stat_bar`. Centralising all stat analysis in one
+  module gives `feat_nature_browser` a clean dependency direction (consumer
+  of stat analysis, not provider of it).
+- **`feat_nature_browser` becomes a consumer**: the two private functions
+  are removed entirely from that module and replaced with an import. No
+  logic change — exact same thresholds.
+- **Deferred import in `feat_type_matchup`**: `from feat_stat_compare import
+  infer_role, infer_speed_tier` is inside `_print_base_stats` rather than at
+  module top to avoid any circular import risk at load time.
+- **Display format**: `Role: Special attacker  |  Speed: Fast (base 100)`.
+  The actual base Speed value is shown in parentheses so the user can see
+  exactly where in the tier boundary their Pokemon sits.
+- **"Mixed attacker" not just "Mixed"**: capitalising the role and appending
+  "attacker" makes the label self-explanatory without context.
+
+### Test count
+`feat_stat_compare.py`: 26 tests. `feat_nature_browser.py`: existing 10
+role/speed tests now call through the imported public names — no regressions.
+Full suite: 667 offline tests, 0 failures.
+
+---
+
+## §84 — Pythonmon-28: move effect description in lookup
+
+### What changed
+- Modified: `pkm_pokeapi.py` — `"effect"` field added to the `current` dict
+  in both `fetch_move` and `fetch_all_moves`; extracted from `effect_entries`
+  (English `short_effect`), newlines stripped
+- Modified: `pkm_cache.py` — `MOVES_CACHE_VERSION` bumped 2 → 3; version
+  history comment updated; 1 new test asserting constant == 3 (37 → 38)
+- Modified: `feat_move_lookup.py` — `_display_move` prints
+  `Effect    : <text>` after the PP line when non-empty; 2 new tests (12 → 14)
+
+### Why
+The move lookup screen (key M) already showed type, category, power, accuracy,
+PP, and offensive coverage — but no description of what the move actually does.
+The `effect_entries` field was already returned by PokeAPI in every `fetch_move`
+call and then silently discarded. Storing and displaying it required no new API
+endpoint.
+
+### Key decisions
+- **`short_effect` not `effect`**: PokeAPI provides two effect fields.
+  `effect` is multi-paragraph verbose text (e.g. "Inflicts regular damage.
+  If the target is frozen, it will be thawed before receiving damage. Has a
+  \$effect_chance% chance to burn..."). `short_effect` is one sentence
+  ("Has a \$effect_chance% chance to burn the target."). `short_effect`
+  matches the style used for abilities and fits cleanly on one line.
+- **`"effect"` is constant across generations**: PokeAPI does not provide
+  historical `short_effect` values in `past_values`. The field lives once in
+  `current` and propagates to every versioned entry via `**current` in
+  `_build_versioned_entries` — same pattern as `drain`, `ailment`, `priority`.
+- **Suppressed when empty**: some moves (e.g. alternate-form moves, obscure
+  Z-moves) have no English effect entry. The display line is omitted entirely
+  rather than showing a blank or placeholder.
+- **`MOVES_CACHE_VERSION` bump to 3**: the schema changed. Existing
+  `moves.json` files at v2 are treated as a full miss — moves are lazily
+  re-fetched on first use with the new schema. Users can also run
+  MOVE → R to bulk re-fetch immediately.
+
+### Cache migration note
+After deploying: `moves.json` must be re-fetched to gain the effect field.
+Automatic: any `get_moves()` call detects the version mismatch, deletes the
+old file, and re-fetches lazily. Manual: MOVE → R.
+
+### Test count
+`pkm_cache.py`: 38 tests. `feat_move_lookup.py`: 14 tests.
+Full suite: 679 offline tests, 0 failures.
+
+---
+
+## §85 — Rename feat_type_matchup.py → feat_quick_view.py
+
+### Why
+`feat_type_matchup.py` was named after the original feature it contained: the
+defensive type chart. Over time, option 1 grew into a full single-Pokemon
+summary screen: base stats + role/speed tier (§83), abilities, egg groups
+(§84/Pythonmon-27A), and type chart. The old name no longer reflected the
+file's actual scope and conflicted with the menu label ("Quick view") already
+established in the CLI and documentation.
+
+### What changed
+- Renamed: `feat_type_matchup.py` → `feat_quick_view.py` (content unchanged)
+- Modified: `pokemain.py` — import and all references updated
+- Modified: `run_tests.py` — suite entry updated
+- Modified: `ARCHITECTURE.md` — §1 file list and §7 module entry updated;
+  description extended to include egg groups
+- Modified: `README.md` — files table updated
+
+### No logic changes
+The rename is purely cosmetic. No functions were added, removed, or modified.
+No tests were changed. All behaviour is identical.
+
+### Note
+The old filename `feat_type_matchup.py` should be deleted from the project
+directory after deploying `feat_quick_view.py` to avoid the old module being
+accidentally imported.
+
+---
+
+## §86 — Pythonmon-27A: egg groups schema + quick view display
+
+### What changed
+- Modified: `pkm_pokeapi.py` — `"egg_groups"` field added to `fetch_pokemon`
+  return dict, extracted from the already-fetched species response; 3 new
+  offline mock tests
+- Modified: `pkm_cache.py` — `get_pokemon` returns `None` for entries missing
+  `"egg_groups"` (transparent re-fetch trigger); all test fixtures updated;
+  2 new tests (25 → 27 in temp-dir block)
+- New file: `feat_egg_group.py` — `_EGG_GROUP_NAMES` (15 groups including
+  ground→Field and plant→Grass corrections); `egg_group_name()`; 
+  `format_egg_groups()`; stub `run()`; 11 tests
+- Modified: `feat_quick_view.py` — egg group names shown inline below
+  abilities block; deferred import of `feat_egg_group`
+- Modified: `pokemain.py` — `feat_egg_group` imported; key `E` menu line and
+  handler added (stub until §88)
+- Modified: `run_tests.py` — `feat_egg_group` added to SUITES
+- Modified: `pkm_session.py` — fake_api mock updated to include `egg_groups`
+  in test fixtures (was causing T2 and T5 failures)
+
+### Key decisions
+- `egg_groups` stored at species level (not per-form) — all forms of a
+  species share the same egg groups
+- Auto-upgrade pattern: missing `egg_groups` → `get_pokemon` returns `None`
+  → transparent re-fetch on next access. Same pattern as `variety_slug` §42.
+
+---
+
+## §87 — Pythonmon-27B: egg group roster fetch + cache layer
+
+### What changed
+- Modified: `pkm_cache.py` — `_EGG_GROUP_DIR` path constant;
+  `get_egg_group(slug)` / `save_egg_group(slug, roster)` with atomic write;
+  `check_integrity()` function (originally §77, now merged); 9 new tests
+  (27 → 47 including check_integrity suite and egg group round-trip)
+- Modified: `pkm_pokeapi.py` — `fetch_egg_group(slug)` fetching
+  `GET egg-group/{slug}`, returning `[{"slug", "name"}]` sorted by name
+- Modified: `feat_egg_group.py` — `get_or_fetch_roster(slug)` cache-aware
+  bridge function; fetches from PokeAPI on miss, prints progress, caches result
+
+### Key decisions
+- Roster stored as a plain list (not wrapped in a dict like type rosters) —
+  simpler schema, no metadata needed
+- `_en_name` used for display names with slug title-case fallback — consistent
+  with all other name resolution in `pkm_pokeapi`
+- `check_integrity` also merged here: it was implemented in §77 but never
+  reached the user's local file; §87B is the correct merge point
+
+---
+
+## §88 — Pythonmon-27C: full browser display + pkm_ctx bug fix
+
+### What changed
+- Modified: `feat_egg_group.py` — `_print_roster_grid` (5-column layout,
+  ★ marker for current Pokemon, truncation for long names);
+  `display_egg_group_browser` (header, one section per group with count,
+  "cannot breed" note for Undiscovered); `run()` replaces stub; 7 new tests
+  (11 → 18)
+- Modified: `pkm_session.py` — **bug fix**: `egg_groups` added to `pkm_ctx`
+  dict in `select_pokemon`; was never included despite being on the raw cache
+  entry, causing all egg group displays to show "No egg group data"
+
+### Bug fix detail
+`select_pokemon` builds `pkm_ctx` by explicitly listing fields from the
+cache. `egg_groups` was added to the cache schema in §86 but never added to
+this dict. The fix: `"egg_groups": cache.get_pokemon(name).get("egg_groups", [])`.
+`refresh_pokemon` was unaffected — it uses `{**pkm_ctx, ...}` which
+preserves all existing keys.
+
+### Display format
+```
+  Egg groups  |  Charizard
+  ══════════════════════════════════════════════════════
+  Groups: Monster  /  Dragon
+
+  Monster group  (98 Pokémon)
+  ──────────────────────────────────────────────────────
+  Bulbasaur         Charmander        Squirtle          ...
+
+  ★ = current Pokémon
+  ══════════════════════════════════════════════════════
+```
+
+### Test count
+`feat_egg_group.py`: 18 tests. `pkm_cache.py`: 47 tests. `pkm_session.py`:
+28 tests (unchanged). Full suite: ~900 offline tests, 0 failures.
+
+---
+
+## §89 — Pythonmon-9A: evolution chain pure parsing logic
+
+### What changed
+- New file: `feat_evolution.py` — `_parse_trigger` and `_flatten_chain`
+  (pure functions, no I/O); stubs for `get_or_fetch_chain` and
+  `display_evolution_block` (implemented in B and C); 16 tests
+
+### Why iteration A first
+`_parse_trigger` and `_flatten_chain` are the hardest part of the evolution
+chain feature — trigger parsing has 12 cases, flatten has recursion and
+branching. Implementing and testing them in isolation before any schema,
+cache, or display work means the complex logic is verified independently.
+Any error in the parsing logic caught here would otherwise be hard to
+diagnose once mixed with API calls and display output.
+
+### `_parse_trigger` design
+Takes a PokeAPI `evolution_details` list and returns a human-readable string.
+Uses the first entry in the list (multi-condition evolutions are rare and
+the first condition is always the primary one). Priority order within
+`level-up`: `min_level` → `min_happiness` → `known_move` → `time_of_day`
+→ bare level-up. Item and move slugs are title-cased via `_slug_to_title`.
+Empty list (stage 0, base species) returns `""`.
+
+### `_flatten_chain` design
+Recursively walks the PokeAPI chain tree and returns a list of linear paths,
+one per branch from root to leaf. Each stage dict contains only `slug` and
+`trigger` — types are not stored here (fetched separately at display time
+per the design decision in §tasks). `max_depth=20` guards against any
+malformed data with unexpected depth; truncates gracefully rather than
+raising `RecursionError`.
+
+### Test coverage
+12 `_parse_trigger` tests: all trigger types, all level-up sub-cases,
+item/move slug conversion, empty list, unknown trigger fallback.
+4 `_flatten_chain` tests: linear 3-stage chain (Bulbasaur line), 2-branch
+chain (Slowpoke), single-stage (no evolution), max_depth truncation.
+
+### Test count
+16 tests in `feat_evolution.py`. Full suite: ~900 offline tests, 0 failures.
+
+---
+
+## §90 — Pythonmon-9B: evolution chain schema + API + cache
+
+### What changed
+- Modified: `pkm_pokeapi.py` — `_parse_chain_id(species)` helper; `fetch_evolution_chain(chain_id)`
+  returning the raw `chain` node; `evolution_chain_id` added to `fetch_pokemon` return dict;
+  offline mock updated to include `evolution_chain` URL; 2 new offline tests (3 → 5)
+- Modified: `pkm_cache.py` — `_EVOLUTION_DIR` constant; `get_evolution_chain` /
+  `save_evolution_chain` / `invalidate_evolution_chain`; auto-upgrade check combined
+  into single condition (`egg_groups` + `evolution_chain_id`); `check_integrity` scans
+  `cache/evolution/`; `_EVOLUTION_DIR` in temp-dir redirect; header updated to "6 layers"
+  with full public API; 5 new tests (47 → 52)
+- Modified: `pkm_session.py` — `evolution_chain_id` added to `pkm_ctx` in `select_pokemon`;
+  fake_api mock updated with `"evolution_chain_id": 42`
+- Modified: `pokemain.py` — `--refresh-evolution <n>` startup flag; R key extended to call
+  `invalidate_evolution_chain` before `refresh_pokemon`
+
+### Key decisions
+
+**`fetch_evolution_chain` returns `chain` node, not full response** — callers only need the
+recursive tree; the metadata wrapper (`id`, `url`) is discarded. Same pattern as
+`fetch_egg_group` discarding the top-level container.
+
+**Combined auto-upgrade check** — `if "egg_groups" not in data or "evolution_chain_id" not in data`
+— single condition, single re-fetch. Avoids two sequential fetches for entries that
+predate both fields (all entries cached before §90).
+
+**Stored as flattened paths, not raw tree** — `save_evolution_chain` stores the output of
+`_flatten_chain` (list of paths), not the raw PokeAPI tree. Avoids re-parsing the
+recursive structure on every load. Consistent with "cache what you compute, not what
+you fetched" principle.
+
+**R key integration** — pressing R now invalidates the evolution chain before re-fetching
+the Pokemon. No separate menu key needed; a single keypress refreshes all Pokemon data
+including the chain. `--refresh-evolution <n>` covers the command-line path.
+
+### Bug found and fixed during testing
+All test fixtures in `pkm_cache.py` that were written before §90 (charizard ×2,
+mewtwo, newmon) were missing `"evolution_chain_id"`, causing the auto-upgrade check
+to return `None` for them and breaking the index repair test. All fixtures updated.
+
+### Cache action required
+All files in `cache/pokemon/` must be re-fetched — they are missing `evolution_chain_id`.
+The auto-upgrade triggers transparently on next load, or delete the folder to repopulate
+on demand.
+
+### Test count
+`pkm_cache.py`: 52 tests. `pkm_pokeapi.py`: 5 offline tests. `pkm_session.py`: 28 tests
+(unchanged). Full suite: ~900 offline tests, 0 failures.
+
+---
+
+## §91 — Pythonmon-9C: evolution chain display + gen filter + trigger fixes
+
+### What changed
+- Modified: `feat_evolution.py` — full implementation of:
+  - `_get_species_gen(slug)` — reads species gen from pokemon cache
+  - `_get_types_for_slug(slug)` — cache-hit instant; API call + cache write on miss
+  - `_type_tag(types)` — `['Fire','Flying']` → `'[Fire / Flying]'`
+  - `filter_paths_for_game(paths, game_gen)` — pure filter; truncates branches
+    whose target species was introduced after `game_gen`; de-duplicates base-only
+    stubs; base-only stub only shown when all evolutions are filtered out
+  - `get_or_fetch_chain(pkm_ctx)` — cache-aware bridge; returns `None` for
+    `chain_id=None`; fetches and caches on miss
+  - `display_evolution_block(pkm_ctx, paths, game_gen=None)` — compact inline
+    format; pre-fetches all uncached stage types with loading indicator; ★ on
+    `pkm_ctx["pokemon"]`; "does not evolve" vs "no further evolution in this game"
+  - `_parse_trigger` bug fixes (see below)
+  - 35 tests (16 → 35)
+  - Header updated with full public/internal API
+- Modified: `feat_quick_view.py` — one deferred import + `display_evolution_block`
+  call at end of `run()`, passing `game_ctx["game_gen"]`
+- Modified: `pokemain.py` — `import feat_evolution` added to try/except block
+- Modified: `run_tests.py` — `feat_evolution` added to SUITES (offline)
+
+### `_parse_trigger` bug fixes
+Two bugs discovered after live testing:
+
+**Bug 1 — High Friendship + time of day (Espeon, Umbreon)**
+The `min_happiness` branch exited before checking `time_of_day`. Was producing
+`"High Friendship"` for both Espeon and Umbreon. Fixed priority order:
+`min_happiness` + `time_of_day="day"` → `"High Friendship (day)"`,
+`time_of_day="night"` → `"High Friendship (night)"`, no time → `"High Friendship"`.
+
+**Bug 2 — Trade with held item (Steelix, Politoed, Slowking, etc.)**
+Code checked `d["item"]` for the held item but PokeAPI uses `d["held_item"]`
+for trade-held-item evolutions. `d["item"]` is used for use-item trigger only.
+Was producing `"Trade"` instead of `"Trade holding Metal Coat"`. Fixed to read
+`d.get("held_item")` for trade triggers.
+
+### `filter_paths_for_game` design
+- Each path is truncated at the first stage whose `species_gen > game_gen`
+- Stages with unknown gen (not yet cached) are kept — safe default, never over-filters
+- Branches that truncate to base-only are collected separately; the base-only
+  stub is only surfaced when no valid evolution paths remain (prevents Eevee
+  from showing a redundant `[Eevee ★ — no further evolution]` alongside 5 valid branches)
+- Eevee in FireRed/LeafGreen (gen 3): shows Vaporeon / Jolteon / Flareon
+  (gen 1) + Espeon / Umbreon (gen 2); drops Leafeon / Glaceon (gen 4) and
+  Sylveon (gen 6)
+
+### Cache action required
+Delete `cache/evolution/` or run `--refresh-evolution <n>` for any Pokemon
+with friendship evolutions (Espeon, Umbreon, Sylveon, Togekiss, etc.) or
+trade-held-item evolutions (Steelix, Politoed, Slowking, Scizor, etc.).
+The cached trigger strings are incorrect due to the bugs fixed in this section.
+
+### Test count
+35 tests in `feat_evolution.py`. Full suite: ~930 offline tests, 0 failures.

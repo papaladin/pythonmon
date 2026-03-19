@@ -1,7 +1,7 @@
 # Pokemon Toolkit
 
 A Python CLI for in-game Pokemon analysis. Load any Pokemon and game, then explore
-type matchups, learnable moves, moveset recommendations, and team composition analysis.
+type matchups, learnable moves, moveset recommendations, egg group browsing, and team composition analysis.
 
 All data is fetched from [PokeAPI](https://pokeapi.co) on first use and cached locally
 as JSON. Subsequent runs are fully offline — no network needed.
@@ -45,6 +45,8 @@ machine tables in bulk — recommended before first moveset run.
   B   Type browser
   N   Nature browser
   A   Ability browser
+  C   Stat comparison       (needs Pokemon + game)
+  E   Egg group browser     (needs Pokemon)
   ─────────────────────────────────────────────
   T   Manage team
   V   Team analysis        (needs team + game)
@@ -71,9 +73,13 @@ has at least one member loaded.
 Shows a full single-screen summary for the loaded Pokemon:
 
 - **Base stats** as a bar chart (hp / atk / def / sp.atk / sp.def / speed)
+- **Inferred role and speed tier** (Physical / Special / Mixed attacker; Fast / Mid / Slow)
 - **Abilities** with effect descriptions (from abilities cache)
+- **Egg groups** — inline display of which breeding groups this Pokemon belongs to
 - **Defensive type chart** — all attacking types grouped by multiplier:
   immunities (×0), resistances (×0.25, ×0.5), weaknesses (×2, ×4)
+- **Evolution chain** — compact inline display at the bottom; filtered by
+  game generation (future-gen evolutions not shown for older games)
 
 **Era-aware:** the type chart reflects the era of the selected game.
 Fairy type does not appear for Gen 1–5 games.
@@ -169,8 +175,8 @@ or a HM you need). Locked moves are included in all three recommendations.
 Look up any move by name. Accepts partial names (e.g. "thunder" shows Thunderbolt,
 Thunder, Thundershock, Thunderpunch, etc.).
 
-Shows: type, category, power, accuracy, PP, effect description, and a version history
-table showing how the move's stats changed across generations.
+Shows: type, category, power, accuracy, PP, **effect description** (one-sentence summary
+of what the move does), and a version history table showing how stats changed across generations.
 
 Also shows **offensive coverage**: which types this move hits SE, neutrally, and
 not-very-effectively (era-aware).
@@ -378,6 +384,9 @@ when fewer than 4 scoreable moves exist in the pool.
 | Missing move in learnable list | PokeAPI incomplete for this game | Check PokeAPI directly; this is a data gap, not a bug |
 | Connection error on first load | PokeAPI unreachable | Check network; cached data is used on all subsequent runs |
 | `TypeError: too many values to unpack` | Stale `pkm_cache.py` from before §38 | Replace with latest version |
+| No egg group data shown in E or option 1 | Pokemon cached before Pythonmon-27 (`egg_groups` field missing) | Press **R** to refresh Pokemon data |
+| Evolution chain shows wrong conditions (missing "day/night" or held item) | Chain cached before §91 bug fixes | Run `python pokemain.py --refresh-evolution <n>` or delete `cache/evolution/` |
+| No evolution chain shown in option 1 | Pokemon cached before Pythonmon-9 (`evolution_chain_id` field missing) | Press **R** to refresh Pokemon data |
 ---
 
 ## Running the tests
@@ -387,20 +396,23 @@ Every module with testable logic has an `--autotest` flag (offline unless noted)
 | Command | Tests |
 |---|---|
 | `python matchup_calculator.py --autotest` | 79 — type chart, all 3 eras, all multipliers |
-| `python pkm_cache.py` | 41 — read/write/invalidate/upsert/batch/index/integrity |
+| `python pkm_cache.py` | 47 — read/write/invalidate/upsert/batch/index/integrity/egg_groups/check_integrity |
 | `python pkm_session.py --autotest` | 28 — cache upgrade, form selection, era/gen blocking, fuzzy search, form_gen fix |
 | `python feat_moveset_data.py --autotest` | 156 — scoring formula, combo selection, status ranking, batch cache regression |
 | `python feat_type_browser.py --autotest` | 41 (+8 cache) — gen derivation, name resolution |
-| `python feat_nature_browser.py --autotest` | 27 (+11 cache) — role inference, nature scoring |
+| `python feat_nature_browser.py --autotest` | 27 (+11 cache) — nature scoring (role/speed inference now in feat_stat_compare) |
 | `python feat_ability_browser.py --autotest` | 14 (+8 cache) — display helpers |
 | `python feat_team_loader.py --autotest` | 28 — team ops, summary line |
 | `python feat_team_analysis.py --autotest` | 58 — defense aggregation, gap labels, display |
 | `python feat_team_offense.py --autotest`  | 50 — offensive coverage, type-letter tags, gap detection, pool cache |
 | `python feat_team_moveset.py --autotest`  | 70 — moveset engine, formatting helpers, coverage aggregation, pool cache |
 | `python feat_moveset.py --autotest` | 28 (+1 cache) — breakdown, coverage, locked moves |
-| `python feat_move_lookup.py --autotest` | 12 (+2 cache) — formatting, coverage all eras |
-| `python feat_movepool.py --autotest` | 9 (+2 cache) — row formatting, section headers |
-| `python pkm_pokeapi.py --autotest` | ~22 — versioned entry builder, mapping tables, fetch_pokemon offline |
+| `python feat_move_lookup.py --autotest` | 14 (+2 cache) — formatting, coverage all eras, effect line |
+| `python feat_movepool.py --autotest` | 16 (+2 cache) — row formatting, section headers, filter |
+| `python feat_stat_compare.py --autotest` | 26 — compare_stats, total_stats, infer_role, infer_speed_tier, display |
+| `python feat_egg_group.py --autotest` | 18 — name mapping, formatting, display browser, graceful edge cases |
+| `python feat_evolution.py --autotest` | 35 — trigger parsing, chain flattening, gen filter, display (mock) |
+| `python pkm_pokeapi.py --autotest` | ~22 — versioned entry builder, mapping tables, fetch_pokemon offline, egg_groups, evolution_chain_id |
 
 Run all suites at once:
 ```
@@ -420,7 +432,7 @@ python run_tests.py --quiet   # summary table only
 | `pkm_cache.py` | All cache reads and writes (single gateway) |
 | `pkm_pokeapi.py` | PokeAPI adapter; fetch + translate raw data |
 | `matchup_calculator.py` | Type chart data (ERA1/2/3) + multiplier logic |
-| `feat_type_matchup.py` | Option 1: quick view (stats / abilities / type chart) |
+| `feat_quick_view.py` | Option 1: quick view (stats / abilities / egg groups / type chart) |
 | `feat_move_lookup.py` | Key M: move lookup with version history |
 | `feat_movepool.py` | Option 2: learnable move list with conditions |
 | `feat_moveset.py` | Options 3–4: scored pool + moveset recommendation UI |
@@ -428,6 +440,9 @@ python run_tests.py --quiet   # summary table only
 | `feat_type_browser.py` | Key B: browse Pokemon by type |
 | `feat_nature_browser.py` | Key N: nature table + recommender |
 | `feat_ability_browser.py` | Key A: ability browser + drill-in |
+| `feat_stat_compare.py` | Key C: side-by-side base stat comparison + stat analysis helpers |
+| `feat_egg_group.py` | Key E: egg group browser + breeding partners |
+| `feat_evolution.py` | Evolution chain display (embedded in option 1) |
 | `feat_team_loader.py` | Key T: team context management |
 | `feat_team_analysis.py` | Key V: team defensive vulnerability table |
 | `feat_team_offense.py`  | Key O: team offensive type coverage |
@@ -435,5 +450,6 @@ python run_tests.py --quiet   # summary table only
 | `run_tests.py` | Test runner for all suites |
 
 **Obsolete files** (safe to delete):
+`feat_type_matchup.py` (renamed to `feat_quick_view.py` in §85),
 `pkm_scraper.py`, `pkm_move_scraper.py`, `debug2.py`, `debug3.py`, `probe_forms.py`,
 `test_move_parser.py`, `test_status_categories.py`, `probe_status_categories.py`

@@ -21,6 +21,7 @@ import sys
 
 try:
     import pkm_cache as cache
+    from feat_stat_compare import infer_role, infer_speed_tier
 except ModuleNotFoundError as e:
     print(f"\n  ERROR: {e}")
     print("  Make sure all files are in the same folder.\n")
@@ -114,27 +115,6 @@ def _role_score(inc: str | None, dec: str | None, stats: dict) -> float:
     cut_val   = stats[dec] * 0.1 * _weight(dec)
     return boost_val - cut_val
 
-
-def _infer_role(stats: dict) -> str:
-    """Return 'physical', 'special', or 'mixed' based on Atk vs SpA."""
-    atk = stats.get("attack", 1) or 1
-    spa = stats.get("special-attack", 1) or 1
-    if atk >= spa * 1.2:
-        return "physical"
-    if spa >= atk * 1.2:
-        return "special"
-    return "mixed"
-
-
-def _infer_speed_tier(stats: dict) -> str:
-    """Return 'fast', 'mid', or 'slow' based on base Speed."""
-    spe = stats.get("speed", 0)
-    if spe >= 90:   return "fast"
-    if spe >= 70:   return "mid"
-    return "slow"
-
-
-# ── Net stat-point calculation ────────────────────────────────────────────────
 
 def _net_pts(inc: str | None, dec: str | None, stats: dict) -> tuple[int, int]:
     """
@@ -248,8 +228,8 @@ def _print_top5(natures: dict, stats: dict, form_name: str) -> None:
     Effect column shows base stats + delta for full context,
     e.g.  109+10 SpA,  84−8 Atk
     """
-    role = _infer_role(stats)
-    tier = _infer_speed_tier(stats)
+    role = infer_role(stats)
+    tier = infer_speed_tier(stats)
 
     scored = []
     for name, entry in natures.items():
@@ -350,24 +330,24 @@ def _run_tests(with_cache: bool = False) -> None:
             failed += 1
             print(f"  FAIL  {label}")
 
-    # ── _infer_role ───────────────────────────────────────────────────────────
+    # ── infer_role (from feat_stat_compare) ───────────────────────────────────────────────────────────
     check("role: Machamp physical (Atk 130, SpA 65)",
-          _infer_role({"attack": 130, "special-attack": 65}) == "physical")
+          infer_role({"attack": 130, "special-attack": 65}) == "physical")
     check("role: Alakazam special (Atk 45, SpA 135)",
-          _infer_role({"attack": 45, "special-attack": 135}) == "special")
+          infer_role({"attack": 45, "special-attack": 135}) == "special")
     check("role: mixed when ratio < 1.2× (Atk 85, SpA 90 → 1.06×)",
-          _infer_role({"attack": 85, "special-attack": 90}) == "mixed")
+          infer_role({"attack": 85, "special-attack": 90}) == "mixed")
     check("role: exactly 1.2× threshold is physical",
-          _infer_role({"attack": 120, "special-attack": 100}) == "physical")
+          infer_role({"attack": 120, "special-attack": 100}) == "physical")
     check("role: just below 1.2× threshold is mixed",
-          _infer_role({"attack": 119, "special-attack": 100}) == "mixed")
+          infer_role({"attack": 119, "special-attack": 100}) == "mixed")
 
-    # ── _infer_speed_tier ─────────────────────────────────────────────────────
-    check("speed tier: 90 → fast",  _infer_speed_tier({"speed": 90})  == "fast")
-    check("speed tier: 89 → mid",   _infer_speed_tier({"speed": 89})  == "mid")
-    check("speed tier: 70 → mid",   _infer_speed_tier({"speed": 70})  == "mid")
-    check("speed tier: 69 → slow",  _infer_speed_tier({"speed": 69})  == "slow")
-    check("speed tier: 30 → slow",  _infer_speed_tier({"speed": 30})  == "slow")
+    # ── infer_speed_tier (from feat_stat_compare) ─────────────────────────────────────────────────────
+    check("speed tier: 90 → fast",  infer_speed_tier({"speed": 90})  == "fast")
+    check("speed tier: 89 → mid",   infer_speed_tier({"speed": 89})  == "mid")
+    check("speed tier: 70 → mid",   infer_speed_tier({"speed": 70})  == "mid")
+    check("speed tier: 69 → slow",  infer_speed_tier({"speed": 69})  == "slow")
+    check("speed tier: 30 → slow",  infer_speed_tier({"speed": 30})  == "slow")
 
     # ── _net_pts ──────────────────────────────────────────────────────────────
     # Modest (+SpA/-Atk) on Charizard (SpA 109, Atk 84)
