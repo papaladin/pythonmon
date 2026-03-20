@@ -18,15 +18,18 @@ python pokemain.py
 
 Optional startup flags:
 ```
+python pokemain.py --cache-info               # show count of cached Pokémon, moves, learnsets, etc.
 python pokemain.py --check-cache              # scan all cache files and report issues
 python pokemain.py --refresh-moves            # force-refresh the full move table
 python pokemain.py --refresh-pokemon <name>   # force-refresh one Pokemon's cached data
 python pokemain.py --refresh-learnset <name> <game>  # force-refresh one learnset
 python pokemain.py --refresh-all <name>       # force-refresh all data for a Pokemon
+python pokemain.py --refresh-evolution <n>      # force-refresh one Pokemon's evolution chain
 ```
 
 First run requires a network connection to populate the cache. After that, all
-features work offline. The **T** and **W** keys in the menu pre-warm the move and
+features work offline. If PokeAPI is unreachable on a sparse cache, a warning is
+printed at startup. The **T** and **W** keys in the menu pre-warm the move and
 machine tables in bulk — recommended before first moveset run.
 
 ---
@@ -46,12 +49,14 @@ machine tables in bulk — recommended before first moveset run.
   N   Nature browser
   A   Ability browser
   C   Stat comparison       (needs Pokemon + game)
+  L   Learnset comparison   (needs Pokemon + game)
   E   Egg group browser     (needs Pokemon)
   ─────────────────────────────────────────────
   T   Manage team
   V   Team analysis        (needs team + game)
   O   Offensive coverage   (needs team + game)
   S   Team moveset synergy (needs team + game)
+  H   Team builder         (needs team + game)
   ─────────────────────────────────────────────
   MOVE  Pre-load move table
   W     Pre-load TM/HM table
@@ -196,12 +201,34 @@ and cached. If a Pokemon was added after the last cache refresh, it may not appe
 
 ---
 
-### N — Nature browser
+### N — Nature & EV build advisor
 
-Shows all 25 natures with their stat effects (+10% / −10%).
+Shows two complete build profiles for the loaded Pokémon (when available), followed
+by the full 25-nature reference table.
 
-Also: enter the Pokemon's role (physical / special / mixed) and speed tier preference,
-and the browser recommends the top 3 natures and explains why.
+**Build profiles** (shown when a Pokémon is loaded):
+
+Each profile combines a recommended nature with a standard EV spread and shows
+the resulting stat values for all 6 stats at Level 100:
+
+| Profile | Optimises for |
+|---|---|
+| Speed-safe | Maximises Speed tier — never lose a speed tie |
+| Power-max  | Maximises primary attacking stat at the cost of speed |
+
+Example for Charizard (Special / Fast):
+- Profile 1: Timid (+Spe/−Atk), 252 SpA / 252 Spe / 4 HP
+- Profile 2: Modest (+SpA/−Atk), 252 SpA / 252 Spe / 4 HP
+
+Each profile shows base stat, final stat, and change per stat, with notes
+indicating which stats the nature boosts/cuts and how many EVs are allocated.
+
+**Assumption:** All stat calculations assume Level 100, 31 IVs in all stats
+(standard competitive baseline). Actual values will differ at lower levels
+or with non-31 IVs.
+
+**Nature table** (always shown): all 25 natures with +10%/−10% effects,
+and a top-5 role-aware nature ranking when a Pokémon is loaded.
 
 ---
 
@@ -212,6 +239,27 @@ to search. From any ability, drill in to see which Pokemon have it.
 
 Also available from the type matchup screen (option 1): the current Pokemon's abilities
 are shown with drill-in available.
+
+---
+
+### L — Learnset comparison
+
+**Needs:** Pokemon + game
+
+Compares the learnable moves of two Pokémon in the same game. After pressing L,
+you are prompted to pick a second Pokémon. The screen shows:
+
+- **Compact stat header** — side-by-side base stats for quick context
+- **Only [Pokémon A]** — moves learnable by A but not B
+- **Only [Pokémon B]** — moves learnable by B but not A
+- **Shared by both** — moves learnable by both
+
+Each section is sorted alphabetically and shows type, category, power, accuracy,
+and PP (era-correct). All learn methods (level-up, TM/HM, tutor, egg) are
+merged into the flat pool — the comparison is about *what* is learnable, not *how*.
+
+Moves not yet in the local move cache are shown with `?` stats — run
+MOVE → F to fill missing move data if needed.
 
 ---
 
@@ -337,6 +385,54 @@ when fewer than 4 scoreable moves exist in the pool.
 
 ---
 
+### H — Team builder
+
+**Needs:** team (at least 1 member) + game
+
+Suggests the best Pokémon to fill the next open team slot based on the current
+team's offensive and defensive gaps.
+
+**Gap analysis:**
+- **Offensive gaps** — era types that no current team member can hit SE using their own types
+- **Defensive gaps** — types where ≥2 members are weak AND 0 members resist or are immune (critical)
+
+**Each suggestion card shows:**
+
+```
+  1. Garchomp      [Dragon / Ground]   ●●●●●
+     ✓ Covers:  Normal  Rock  Electric
+     ✓ Resists: Electric
+     ✗ Adds pair: Charizard shares: Rock  Ice
+     → After: Dragon gap  (3 types cover it)
+```
+
+- **●●●●●** — dot rating (1–5) based on percentile rank within the suggestion set
+- **Covers** — offensive gap types this Pokémon can hit SE
+- **Resists** — critical defensive gap types this Pokémon resists or is immune to
+- **Adds pair** — warning when this Pokémon would share ≥2 weaknesses with an existing member
+- **After** — lookahead showing which gaps would remain and how patchable they are
+
+Up to 6 candidates are shown, ranked by a composite score:
+
+```
+  intrinsic  =  offensive contribution × 10
+              + defensive contribution × 8
+              - shared weakness pairs  × 6
+              + role diversity bonus   × 4
+  lookahead  =  patchability of remaining gaps / slots_remaining
+                (weighted ×2 when ≤2 slots remain)
+  total      =  intrinsic + lookahead
+```
+
+**Notes:**
+- A note is shown when the team has fewer than 3 members (suggestions improve with more context).
+- Candidates are drawn from cached type rosters. Missing rosters are fetched automatically
+  before the pool is built; a per-type progress indicator is shown.
+- Base stats are used for role diversity scoring when the Pokémon is already in the local
+  cache; type-only scoring is used for uncached entries.
+
+---
+
 ## Supported games
 
 17 games across 3 type chart eras:
@@ -351,25 +447,18 @@ when fewer than 4 scoreable moves exist in the pool.
 
 ## Known limitations
 
-1. **Regional / alternate forms** — most forms (Alolan, Galarian, Hisuian,
-   Paldean, Shaymin Sky Forme, etc.) are fully supported via their distinct
-   `variety_slug`. The `variety_slug` field now stores the form slug where it
-   differs from the variety slug (§80), ensuring correct learnsets for those
-   forms. Mega Evolutions share the base learnset by design — PokeAPI models
-   them as separate varieties but with identical move pools.
-
-2. **Legends: Z-A cooldown system** — PokeAPI does not yet model Z-A's cooldown mechanic.
+1. **Legends: Z-A cooldown system** — PokeAPI does not yet model Z-A's cooldown mechanic.
    Move stats are shown as standard PP values.
 
-3. **STATUS_MOVE_TIERS is hand-curated** (~130 entries). Moves added to the game after
+2. **STATUS_MOVE_TIERS is hand-curated** (~130 entries). Moves added to the game after
    the last toolkit update will not have a tier and will fall to lowest priority in
    moveset recommendations. You can still use them as locked slots.
 
-4. **Learnset completeness** — PokeAPI learnset data varies in completeness by game.
+3. **Learnset completeness** — PokeAPI learnset data varies in completeness by game.
    Some older games have partial learnset data. The toolkit shows exactly what PokeAPI
    provides; missing moves are not flagged.
 
-5. **Team is session-only** — closing the toolkit loses the team. No save/load yet.
+4. **Team is session-only** — closing the toolkit loses the team. No save/load yet.
 
 ---
 
@@ -396,23 +485,25 @@ Every module with testable logic has an `--autotest` flag (offline unless noted)
 | Command | Tests |
 |---|---|
 | `python matchup_calculator.py --autotest` | 79 — type chart, all 3 eras, all multipliers |
-| `python pkm_cache.py` | 47 — read/write/invalidate/upsert/batch/index/integrity/egg_groups/check_integrity |
+| `python pkm_cache.py` | 62 — read/write/invalidate/upsert/batch/index/integrity/egg_groups/evolution/check_integrity/cache_info/learnset_age |
 | `python pkm_session.py --autotest` | 28 — cache upgrade, form selection, era/gen blocking, fuzzy search, form_gen fix |
 | `python feat_moveset_data.py --autotest` | 156 — scoring formula, combo selection, status ranking, batch cache regression |
 | `python feat_type_browser.py --autotest` | 41 (+8 cache) — gen derivation, name resolution |
-| `python feat_nature_browser.py --autotest` | 27 (+11 cache) — nature scoring (role/speed inference now in feat_stat_compare) |
+| `python feat_nature_browser.py --autotest` | 48 (+11 cache) — nature scoring, stat formula, build profiles |
 | `python feat_ability_browser.py --autotest` | 14 (+8 cache) — display helpers |
-| `python feat_team_loader.py --autotest` | 28 — team ops, summary line |
-| `python feat_team_analysis.py --autotest` | 58 — defense aggregation, gap labels, display |
+| `python feat_team_loader.py --autotest` | 41 — team ops, summary line, batch load |
+| `python feat_team_analysis.py --autotest` | 75 — defense aggregation, gap labels, display, weakness pairs |
 | `python feat_team_offense.py --autotest`  | 50 — offensive coverage, type-letter tags, gap detection, pool cache |
 | `python feat_team_moveset.py --autotest`  | 70 — moveset engine, formatting helpers, coverage aggregation, pool cache |
-| `python feat_moveset.py --autotest` | 28 (+1 cache) — breakdown, coverage, locked moves |
+| `python feat_moveset.py --autotest` | 33 (+1 cache) — breakdown, coverage, locked moves, pool filter |
 | `python feat_move_lookup.py --autotest` | 14 (+2 cache) — formatting, coverage all eras, effect line |
 | `python feat_movepool.py --autotest` | 16 (+2 cache) — row formatting, section headers, filter |
 | `python feat_stat_compare.py --autotest` | 26 — compare_stats, total_stats, infer_role, infer_speed_tier, display |
+| `python feat_learnset_compare.py --autotest` | 20 — flat_moves, compare, build rows, display |
 | `python feat_egg_group.py --autotest` | 18 — name mapping, formatting, display browser, graceful edge cases |
 | `python feat_evolution.py --autotest` | 35 — trigger parsing, chain flattening, gen filter, display (mock) |
-| `python pkm_pokeapi.py --autotest` | ~22 — versioned entry builder, mapping tables, fetch_pokemon offline, egg_groups, evolution_chain_id |
+| `python feat_team_builder.py --autotest` | 57 — gap analysis, scoring, pool building, display, run() guards |
+| `python pkm_pokeapi.py --autotest` | 14 — versioned entry builder, mapping tables, fetch_pokemon offline, egg_groups, evolution_chain_id, check_connectivity |
 
 Run all suites at once:
 ```
@@ -438,16 +529,19 @@ python run_tests.py --quiet   # summary table only
 | `feat_moveset.py` | Options 3–4: scored pool + moveset recommendation UI |
 | `feat_moveset_data.py` | Scoring engine (pure logic, no I/O) |
 | `feat_type_browser.py` | Key B: browse Pokemon by type |
-| `feat_nature_browser.py` | Key N: nature table + recommender |
+| `feat_nature_browser.py` | Key N: nature & EV build advisor + nature browser |
 | `feat_ability_browser.py` | Key A: ability browser + drill-in |
 | `feat_stat_compare.py` | Key C: side-by-side base stat comparison + stat analysis helpers |
+| `feat_learnset_compare.py` | Key L: learnset comparison — unique/shared moves between two Pokémon |
 | `feat_egg_group.py` | Key E: egg group browser + breeding partners |
 | `feat_evolution.py` | Evolution chain display (embedded in option 1) |
 | `feat_team_loader.py` | Key T: team context management |
 | `feat_team_analysis.py` | Key V: team defensive vulnerability table |
 | `feat_team_offense.py`  | Key O: team offensive type coverage |
 | `feat_team_moveset.py` | Key S: team-level moveset recommendations + coverage summary |
+| `feat_team_builder.py` | Key H: team slot suggestion — gap analysis + ranked candidates |
 | `run_tests.py` | Test runner for all suites |
+| `build.py` | Build script — produces a single-file executable via PyInstaller |
 
 **Obsolete files** (safe to delete):
 `feat_type_matchup.py` (renamed to `feat_quick_view.py` in §85),

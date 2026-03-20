@@ -174,6 +174,66 @@ def gap_label(weak_count: int, cover_count: int) -> str:
         return ".  MINOR"
     return ""
 
+def build_weakness_pairs(team_ctx: list, era_key: str) -> list:
+    """
+    For each pair of filled team slots (i < j), find types where both members
+    are weak (multiplier > 1.0). Return pairs with ≥ 2 shared weaknesses.
+
+    Each result dict:
+      {
+        "name_a":       str,
+        "name_b":       str,
+        "shared_types": list[str],   # alphabetically sorted
+        "shared_count": int,
+      }
+
+    Sorted descending by shared_count, then name_a ascending.
+    """
+    slots = team_slots(team_ctx)
+    pairs = []
+    for ai, (_, pkm_a) in enumerate(slots):
+        def_a = calc.compute_defense(era_key, pkm_a["type1"], pkm_a["type2"])
+        weak_a = {t for t, m in def_a.items() if m > 1.0}
+        for _, (_, pkm_b) in enumerate(slots[ai + 1:]):
+            def_b = calc.compute_defense(era_key, pkm_b["type1"], pkm_b["type2"])
+            weak_b = {t for t, m in def_b.items() if m > 1.0}
+            shared = sorted(weak_a & weak_b)
+            if len(shared) >= 2:
+                pairs.append({
+                    "name_a":       pkm_a["form_name"],
+                    "name_b":       pkm_b["form_name"],
+                    "shared_types": shared,
+                    "shared_count": len(shared),
+                })
+    pairs.sort(key=lambda p: (-p["shared_count"], p["name_a"]))
+    return pairs
+
+
+def gap_pair_label(shared_count: int) -> str:
+    """Return severity label for a weakness-sharing pair."""
+    if shared_count >= 3:
+        return "!! CRITICAL"
+    return ""
+
+
+def _print_weakness_pairs(pairs: list) -> None:
+    """Print the shared-weakness section for all qualifying pairs."""
+    # Dynamic name column: "Name A + Name B", capped at 26
+    name_col = min(26, max(len(f"{p['name_a']} + {p['name_b']}") for p in pairs))
+    sep_w    = name_col + 2 + 40
+
+    print("  Shared weaknesses (pairs with \u2265 2 in common)")
+    print("  " + "\u2500" * sep_w)
+    for p in pairs:
+        label    = f"{p['name_a']} + {p['name_b']}"
+        types_str = "  ".join(p["shared_types"])
+        count_str = f"({p['shared_count']} shared)"
+        severity  = gap_pair_label(p["shared_count"])
+        suffix    = f"  {severity}" if severity else ""
+        print(f"  {label:<{name_col}}  {types_str:<34}{count_str}{suffix}")
+
+
+
 
 # ── Display helpers ───────────────────────────────────────────────────────────
 
@@ -321,6 +381,12 @@ def display_team_analysis(team_ctx: list, game_ctx: dict) -> None:
             print(f"  .  MINOR gaps    : {' / '.join(minors)}")
     else:
         print("\n  No significant gaps detected.")
+
+    # ── Weakness overlap heatmap ──────────────────────────────────────────────
+    pairs = build_weakness_pairs(team_ctx, era_key)
+    if pairs:
+        print()
+        _print_weakness_pairs(pairs)
 
 
 # ── Entry points ──────────────────────────────────────────────────────────────
@@ -740,9 +806,124 @@ def _run_tests():
     else:
         fail("_print_unified_table Dragon line", repr(drag_line))
 
+    # ── build_weakness_pairs ─────────────────────────────────────────────────
+
+    # Fixtures already defined: charizard, blastoise, lapras, butterfree, snorlax
+
+    # Empty team → []
+    if build_weakness_pairs(team_empty, "era3") == []:
+        ok("build_weakness_pairs: empty team → []")
+    else: fail("build_weakness_pairs empty")
+
+    # Single member → [] (no pairs possible)
+    if build_weakness_pairs(team1, "era3") == []:
+        ok("build_weakness_pairs: single member → []")
+    else: fail("build_weakness_pairs single")
+
+    # Charizard (Fire/Flying) + Blastoise (Water):
+    # Charizard weak: Rock, Water, Electric
+    # Blastoise weak: Grass, Electric
+    # Shared: Electric only (count=1) → NOT in results
+    team_cb = [charizard, blastoise, None, None, None, None]
+    pairs_cb = build_weakness_pairs(team_cb, "era3")
+    if pairs_cb == []:
+        ok("build_weakness_pairs: Charizard+Blastoise share only Electric (count=1) → []")
+    else: fail("build_weakness_pairs Char+Blas", str(pairs_cb))
+
+    # Charizard (Rock×4, Water×2, Electric×2) + Lapras (Water/Ice: Grass, Electric, Rock, Fighting)
+    # Charizard weak: Rock, Water, Electric
+    # Lapras weak: Grass, Electric, Rock, Fighting
+    # Shared: Rock, Electric (count=2) → in results
+    lapras2 = _pkm("Lapras", "Water", "Ice")
+    team_cl = [charizard, lapras2, None, None, None, None]
+    pairs_cl = build_weakness_pairs(team_cl, "era3")
+    if len(pairs_cl) == 1 and pairs_cl[0]["shared_count"] == 2:
+        if "Rock" in pairs_cl[0]["shared_types"] and "Electric" in pairs_cl[0]["shared_types"]:
+            ok("build_weakness_pairs: Charizard+Lapras → Rock+Electric shared (count=2)")
+        else: fail("build_weakness_pairs Char+Lapras shared_types", str(pairs_cl[0]["shared_types"]))
+    else: fail("build_weakness_pairs Char+Lapras count", str(pairs_cl))
+
+    # Two Charizard instances → all 3 weaknesses shared (Rock, Water, Electric)
+    team_cc = [charizard, charizard, None, None, None, None]
+    pairs_cc = build_weakness_pairs(team_cc, "era3")
+    if len(pairs_cc) == 1 and pairs_cc[0]["shared_count"] == 3:
+        ok("build_weakness_pairs: two Charizard → 3 shared weaknesses")
+    else: fail("build_weakness_pairs two Charizard", str(pairs_cc))
+
+    # Pair with exactly 2 shared → in results
+    if any(p["shared_count"] == 2 for p in pairs_cl):
+        ok("build_weakness_pairs: pair with count=2 → included")
+    else: fail("build_weakness_pairs count=2 included")
+
+    # Pair with count=1 (Char+Blas) → not in results
+    if pairs_cb == []:
+        ok("build_weakness_pairs: pair with count=1 → excluded")
+    else: fail("build_weakness_pairs count=1 excluded")
+
+    # Sorted descending by shared_count: 3-shared before 2-shared
+    team_sort = [charizard, charizard, lapras2, None, None, None]
+    pairs_sort = build_weakness_pairs(team_sort, "era3")
+    if len(pairs_sort) >= 2 and pairs_sort[0]["shared_count"] >= pairs_sort[1]["shared_count"]:
+        ok("build_weakness_pairs: sorted descending by shared_count")
+    else: fail("build_weakness_pairs sort", str([(p['name_a'],p['name_b'],p['shared_count']) for p in pairs_sort]))
+
+    # shared_types is alphabetically sorted
+    if pairs_cl and pairs_cl[0]["shared_types"] == sorted(pairs_cl[0]["shared_types"]):
+        ok("build_weakness_pairs: shared_types alphabetically sorted")
+    else: fail("build_weakness_pairs alpha sort", str(pairs_cl[0]["shared_types"] if pairs_cl else "no pairs"))
+
+    # ── gap_pair_label ────────────────────────────────────────────────────────
+    if gap_pair_label(3) == "!! CRITICAL":
+        ok("gap_pair_label(3) → '!! CRITICAL'")
+    else: fail("gap_pair_label 3", gap_pair_label(3))
+
+    if gap_pair_label(4) == "!! CRITICAL":
+        ok("gap_pair_label(4) → '!! CRITICAL'")
+    else: fail("gap_pair_label 4", gap_pair_label(4))
+
+    if gap_pair_label(2) == "":
+        ok("gap_pair_label(2) → '' (no label)")
+    else: fail("gap_pair_label 2", gap_pair_label(2))
+
+    if gap_pair_label(1) == "":
+        ok("gap_pair_label(1) → '' (no label)")
+    else: fail("gap_pair_label 1", gap_pair_label(1))
+
+    # ── _print_weakness_pairs (stdout capture) ────────────────────────────────
+    import io as _io2, contextlib as _cl2
+
+    pairs_display = [
+        {"name_a": "Charizard", "name_b": "Lapras",
+         "shared_types": ["Electric", "Rock"], "shared_count": 2},
+        {"name_a": "Charizard", "name_b": "Butterfree",
+         "shared_types": ["Electric", "Flying", "Rock"], "shared_count": 3},
+    ]
+    buf_p = _io2.StringIO()
+    with _cl2.redirect_stdout(buf_p):
+        _print_weakness_pairs(pairs_display)
+    out_p = buf_p.getvalue()
+
+    if "Charizard" in out_p and "Lapras" in out_p and "Butterfree" in out_p:
+        ok("_print_weakness_pairs: pair names present in output")
+    else: fail("_print_weakness_pairs names", out_p[:120])
+
+    if "Electric" in out_p and "Rock" in out_p and "Flying" in out_p:
+        ok("_print_weakness_pairs: shared type names present")
+    else: fail("_print_weakness_pairs types", out_p[:120])
+
+    if "!! CRITICAL" in out_p:
+        ok("_print_weakness_pairs: !! CRITICAL shown for 3-shared pair")
+    else: fail("_print_weakness_pairs CRITICAL", out_p[:120])
+
+    # The 2-shared pair should NOT have !! CRITICAL
+    lines_p = [l for l in out_p.splitlines() if "Lapras" in l]
+    if lines_p and "!! CRITICAL" not in lines_p[0]:
+        ok("_print_weakness_pairs: 2-shared pair has no CRITICAL label")
+    else: fail("_print_weakness_pairs no CRITICAL on 2-shared", str(lines_p))
+
     # ── summary ───────────────────────────────────────────────────────────────
     print()
-    total = 58
+    total = 75
     if errors:
         print(f"  FAILED ({len(errors)}): {errors}")
         sys.exit(1)

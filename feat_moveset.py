@@ -18,6 +18,7 @@ import sys
 
 try:
     import matchup_calculator as calc
+    import pkm_cache as cache
     from pkm_session import select_game, select_pokemon, print_session_header
     from feat_moveset_data import (
         build_candidate_pool, select_combo, rank_status_moves,
@@ -276,6 +277,77 @@ def _show_all(damage, status_ranked, total_status,
 
 
 
+# ── Scored pool filter helpers ────────────────────────────────────────────────
+
+def _adapt_pool_for_filter(pool: list) -> list:
+    """
+    Convert scored pool rows (dicts) to (label, name, details) tuples for
+    use with feat_movepool._apply_filter / _passes_filter.
+
+    The row dict itself serves as `details` — _passes_filter reads
+    .get("power"), .get("type"), .get("category") which are present on
+    every scored row.
+
+    Pure function — no I/O.
+    """
+    return [(str(i + 1), r["name"], r) for i, r in enumerate(pool)]
+
+
+def _display_filtered_scored_pool(damage: list, status_ranked: list,
+                                   f: dict, game_gen: int,
+                                   base_stats: dict) -> None:
+    """
+    Re-render the scored pool with a filter applied to the damage section.
+    Status moves: type filter applied if set; category/power filters ignored
+    (status moves have no power).
+    Prints a filter summary line, filtered damage section, and full status
+    section.
+    """
+    from feat_movepool import _apply_filter, _filter_summary
+
+    filtered = _apply_filter(_adapt_pool_for_filter(damage), f)
+    total_d  = len(damage)
+
+    # Filter summary
+    print(f"\n  [ filter: {_filter_summary(f)} ]")
+
+    # Damage section
+    print()
+    hdr = "  ATTACK MOVES — ranked by score "
+    print(hdr + "─" * max(0, 72 - len(hdr)))
+    if filtered:
+        print(f"  {'#':<4}{'Move':<22}{'Type':<12}{'Cat':<10}"
+              f"{'Pwr':>5}{'Acc':>6}  {'Score':>7}  Notes")
+        print("  " + "─" * 80)
+        for rank, (_label, _name, row) in enumerate(filtered, start=1):
+            pwr = str(row["power"])    if row["power"]    is not None else "--"
+            acc = str(row["accuracy"]) if row["accuracy"] is not None else "--"
+            bd  = _breakdown(row, game_gen, base_stats)
+            print(f"  {rank:<4}{row['name']:<22}{row['type']:<12}{row['category']:<10}"
+                  f"{pwr:>5}{acc:>5}%  {row['score']:>7.1f}  {bd}")
+        print(f"\n  Showing {len(filtered)} of {total_d} attack moves (filtered)")
+    else:
+        print("  (no moves match filter)")
+
+    # Status section — apply type filter only
+    print()
+    hdr = "  STATUS MOVES — ranked by tier & quality "
+    print(hdr + "─" * max(0, 72 - len(hdr)))
+    if status_ranked:
+        type_filter = f.get("type")
+        shown_status = [r for r in status_ranked
+                        if not type_filter
+                        or r.get("type", "").lower() == type_filter.lower()]
+        if shown_status:
+            print(f"  {'Move':<22}{'Type':<12}{'Tier':<20}{'Quality':>7}")
+            print("  " + "─" * 62)
+            for row in shown_status:
+                print(f"  {row['name']:<22}{row['type']:<12}"
+                      f"{row['tier_label']:<20}{row['quality']:>7}")
+        else:
+            print("  (no status moves match filter)")
+    else:
+        print("  (none)")
 
 
 # ── 8a: Learnset name set ─────────────────────────────────────────────────────
@@ -491,6 +563,11 @@ def run_scored_pool(pkm_ctx, game_ctx):
         input("  Press Enter to continue...")
         return
 
+    variety_slug = pkm_ctx.get("variety_slug") or pkm_ctx["pokemon"]
+    age = cache.get_learnset_age_days(variety_slug, game_ctx["game"])
+    if age is not None and age > cache.LEARNSET_STALE_DAYS:
+        print(f"  [ learnset cached {age} days ago — press R to refresh ]")
+
     game_gen   = game_ctx["game_gen"]
     base_stats = pkm_ctx.get("base_stats", {})
 
@@ -530,7 +607,16 @@ def run_scored_pool(pkm_ctx, game_ctx):
     else:
         print("  (none)")
 
-    input("\n  Press Enter to continue...")
+    choice = input("\n  Filter? (f to filter, Enter to return): ").strip().lower()
+    if choice == "f":
+        from feat_movepool import _prompt_filter
+        f = _prompt_filter()
+        if any(v is not None for v in f.values()):
+            _display_filtered_scored_pool(damage, status_ranked, f,
+                                          game_gen, base_stats)
+        else:
+            print("  (no filter set)")
+        input("\n  Press Enter to continue...")
 
 def run(pkm_ctx, game_ctx, constraints=None):
     """
@@ -556,6 +642,11 @@ def run(pkm_ctx, game_ctx, constraints=None):
         print("\n  No moves found in pool.")
         input("  Press Enter to continue...")
         return
+
+    variety_slug = pkm_ctx.get("variety_slug") or pkm_ctx["pokemon"]
+    age = cache.get_learnset_age_days(variety_slug, game_ctx["game"])
+    if age is not None and age > cache.LEARNSET_STALE_DAYS:
+        print(f"  [ learnset cached {age} days ago — press R to refresh ]")
 
     # ── Step 1: collect locked moves ─────────────────────────────────────────
     locked_names = collect_constraints(pkm_ctx, game_ctx, existing=[])
@@ -861,10 +952,55 @@ def _run_tests(with_cache=False):
         else:
             fail("get_learnable_names", f"got {names_set!r:.80}")
 
+    # ── _adapt_pool_for_filter ────────────────────────────────────────────────
+
+    def _row(name, typ, cat, pwr):
+        return {"name": name, "type": typ, "category": cat, "power": pwr,
+                "accuracy": 100, "score": float(pwr or 0)}
+
+    pool_f = [
+        _row("Flamethrower", "Fire",   "Special",  90),
+        _row("Waterfall",    "Water",  "Physical", 80),
+        _row("Swords Dance", "Normal", "Status",   None),
+        _row("Ice Beam",     "Ice",    "Special",  90),
+    ]
+
+    adapted = _adapt_pool_for_filter(pool_f)
+    if len(adapted) == 4 and all(len(t) == 3 for t in adapted):
+        ok("_adapt_pool_for_filter: correct length and tuple shape")
+    else:
+        fail("_adapt_pool_for_filter shape", str(adapted))
+
+    if adapted[0][1] == "Flamethrower" and adapted[0][2] is pool_f[0]:
+        ok("_adapt_pool_for_filter: name and dict reference correct")
+    else:
+        fail("_adapt_pool_for_filter content", str(adapted[0]))
+
+    if _adapt_pool_for_filter([]) == []:
+        ok("_adapt_pool_for_filter: empty pool → []")
+    else:
+        fail("_adapt_pool_for_filter empty")
+
+    from feat_movepool import _apply_filter
+    f_fire = {"type": "Fire", "category": None, "min_power": 80}
+    result = _apply_filter(_adapt_pool_for_filter(pool_f), f_fire)
+    names_r = [t[1] for t in result]
+    if names_r == ["Flamethrower"]:
+        ok("_adapt_pool_for_filter + _apply_filter: Fire+pwr≥80 → Flamethrower only")
+    else:
+        fail("_adapt_pool_for_filter+_apply_filter fire filter", str(names_r))
+
+    f_none = {"type": None, "category": None, "min_power": None}
+    result_all = _apply_filter(_adapt_pool_for_filter(pool_f), f_none)
+    if len(result_all) == 4:
+        ok("_adapt_pool_for_filter + _apply_filter: all-None filter → all rows")
+    else:
+        fail("_adapt_pool_for_filter all-None filter", str(len(result_all)))
+
     # ── summary ──────────────────────────────────────────────────────────────
     print()
     n = len(errors)
-    total = 28 + (1 if with_cache else 0)
+    total = 33 + (1 if with_cache else 0)
     if n:
         print(f"  FAILED ({n}): {errors}")
         sys.exit(1)

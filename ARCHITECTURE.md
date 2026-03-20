@@ -18,7 +18,7 @@ pokemon-toolkit/
   feat_moveset.py           Feature: scored pool + moveset recommendation UI
   feat_moveset_data.py      Scoring engine (pure logic, no I/O)
   feat_type_browser.py      Feature: browse Pokemon by type
-  feat_nature_browser.py    Feature: nature table + stat recommender
+  feat_nature_browser.py    Feature: nature & EV build advisor + nature browser (key N)
   feat_ability_browser.py   Feature: ability browser + Pokemon roster drill-in
   feat_team_loader.py       Feature: team context management (add/remove/view)
   feat_team_analysis.py     Feature: team defensive vulnerability table
@@ -27,6 +27,8 @@ pokemon-toolkit/
   feat_stat_compare.py      Feature: side-by-side base stat comparison (key C)
   feat_egg_group.py         Feature: egg group browser + breeding partners (key E)
   feat_evolution.py         Feature: evolution chain display (embedded in option 1)
+  feat_learnset_compare.py  Feature: learnset comparison between two Pokémon (key L)
+  feat_team_builder.py      Feature: team slot suggestion — gap analysis + ranked candidates (key H)
   run_tests.py              Test runner (calls --autotest on each module)
   cache/                    Local JSON cache (see section 4)
 ```
@@ -395,6 +397,56 @@ are not shown for older games (e.g. Eevee in FireRed shows only Gen 1–2 branch
 **pkm_pokeapi additions (§90B):**
 - `fetch_evolution_chain(chain_id) → dict`  Returns the `chain` node from
   `GET evolution-chain/{id}` — the root of the recursive tree
+
+---
+
+### feat_learnset_compare.py
+Learnset comparison between two Pokémon in the same game (key L).
+
+- `_flat_moves(learnset, form_name) → set[str]`  Extract flat set of move names
+  from one form's learnset across all learn methods
+- `compare_learnsets(learnset_a, form_a, learnset_b, form_b) → dict`  Pure;
+  returns `{only_a, only_b, shared}` — three sets of move name strings
+- `build_rows(move_set, game_ctx) → list[dict]`  Resolve move details for display;
+  each row: `{name, type, category, power, accuracy, pp}`
+- `display_comparison(pkm_a, pkm_b, game_ctx, only_a, only_b, shared)`  Three-
+  section table to stdout (Only A / Only B / Shared)
+- `run(pkm_ctx, game_ctx)`  Called from pokemain; key L; prompts for second Pokémon
+
+---
+
+### feat_team_builder.py
+Team slot suggestion — gap analysis + scored candidate ranking (key H).
+Suggests the best Pokémon to add to the next open team slot based on current
+offensive and critical defensive gaps. No API calls at runtime (roster-only
+cache reads); fetches missing type rosters on demand before pool build.
+
+**Pure logic (no I/O):**
+- `team_offensive_gaps(team_ctx, era_key) → list[str]`  Era types no member hits SE
+- `team_defensive_gaps(team_ctx, era_key) → list[str]`  Critical gaps (≥2 weak, 0 cover)
+- `candidate_passes_filter(candidate_types, off_gaps, def_gaps, era_key) → bool`
+- `patchability_score(remaining_off_gaps, era_key) → float`  Ease of patching gaps
+- `score_candidate(candidate_types, team_ctx, era_key, off_gaps, def_gaps,
+  slots_remaining, base_stats=None) → float`  Composite intrinsic + lookahead score
+- `rank_candidates(candidates, team_ctx, era_key, off_gaps, def_gaps,
+  slots_remaining, top_n=6) → list[dict]`
+
+**Pool building (cache reads):**
+- `collect_relevant_types(off_gaps, def_gaps, era_key) → set[str]`
+- `fetch_needed_rosters(relevant_types, progress_cb=None) → int`
+- `build_suggestion_pool(team_ctx, game_ctx, off_gaps, def_gaps) → dict`
+  Returns `{candidates, missing_rosters, skipped_forms, skipped_gen, skipped_team}`
+
+**Display:**
+- `_format_dots(rating) → str`  1–5 → "●●●●●" etc.
+- `_dot_rating(score, all_scores) → int`  Percentile within result set
+- `_format_lookahead(remaining_off_gaps, era_key) → str`
+- `_print_suggestion(rank, result, era_key, all_scores)`  One suggestion card
+- `display_team_builder(team_ctx, game_ctx, results, off_gaps, def_gaps,
+  missing_rosters=None)`  Full screen with header, gap summary, suggestion cards
+
+**Entry point:**
+- `run(team_ctx, game_ctx)`  Called from pokemain; key H
 
 ---
 

@@ -1059,3 +1059,555 @@ The cached trigger strings are incorrect due to the bugs fixed in this section.
 
 ### Test count
 35 tests in `feat_evolution.py`. Full suite: ~930 offline tests, 0 failures.
+
+---
+
+## §76 — Pythonmon-4: session pool cache for O and S screens
+
+### What changed
+- Modified: `pokemain.py` — `pool_cache = {}` session dict added to `main()`; passed as
+  `pool_cache=pool_cache` to `feat_team_offense.run()` and `feat_team_moveset.run()`
+
+### Why
+On a 6-member team, pressing O then S would re-score every member's learnset twice —
+one full `build_candidate_pool` call per member per screen. The session cache keys pools
+by `(variety_slug, game_slug)` so the second screen reuses the first screen's work.
+
+### Key decisions
+- Session dict lives in `pokemain.main()` locals — consistent with the no-module-globals rule.
+- Both O and S already accepted `pool_cache=None` (§63, §66); wiring just required passing
+  the shared dict.
+
+### Test count
+No new tests (wiring-only change). Full suite: unchanged.
+
+---
+
+## §77 — Pythonmon-13: cache integrity check (`--check-cache`)
+
+### What changed
+- Modified: `pokemain.py` — `--check-cache` handling added to `_handle_refresh_flags()`;
+  calls `cache.check_integrity()`, prints any issues, and exits with `sys.exit(0)`
+
+### Why
+`check_integrity()` was already implemented in `pkm_cache.py` (§87B) but had no CLI
+entry point. Without `--check-cache`, users had no way to run the scan from the command line.
+
+### Key decisions
+- Exits after reporting — diagnostic flags should not drop into the interactive menu.
+- `check_integrity()` already covers all cache layers including evolution and egg_groups.
+
+### Test count
+No new tests. Full suite: unchanged.
+
+---
+
+## §78 — Pythonmon-5: add-to-team prompt after loading a Pokemon
+
+### What changed
+- Modified: `pokemain.py` — P handler extended: after a successful `select_pokemon()`,
+  if a game is loaded and the team has a free slot, offer
+  `"Add <Name> to team? (y/n):"`. Y calls `add_to_team` and prints the slot number.
+
+### Why
+The common workflow is: load a Pokemon, then immediately add it to the team for analysis.
+Previously this required two separate actions (P then T → type name again). The prompt
+eliminates the redundant step.
+
+### Key decisions
+- Suppressed when no game is loaded (team features require a game) or team is full.
+- Uses `feat_team_loader.TeamFullError` guard for safety even though the size check
+  already prevents the prompt when full.
+
+### Test count
+No new tests (interactive I/O). Full suite: unchanged.
+
+---
+
+## §79 — Pythonmon-12: partial move refresh (F option in MOVE handler)
+
+### What changed
+- New function: `pkm_pokeapi.fetch_missing_moves()` — queries the full move slug list,
+  checks each against the cache (case-insensitive), fetches only the missing ones, and
+  returns `{display_name: versioned_entries}`. Returns `{}` if nothing is missing.
+- Modified: `pokemain.py` — MOVE handler changed from a simple y/n confirm to a
+  three-option sub-menu when moves are already cached: F (fetch missing), R (re-fetch all),
+  Enter (cancel). When the cache is empty the original single-confirm flow is preserved.
+
+### Why
+Re-fetching all ~920 moves to add a handful of newly introduced moves (e.g. after a game
+update) was wasteful. The F option lets users top up the cache without overwriting good data.
+
+### Key decisions
+- `fetch_missing_moves` uses `cache.get_move(slug)` for the miss-check — same
+  case-insensitive lookup used everywhere else; no new logic needed.
+- `fetch_missing_moves` is structurally parallel to `fetch_all_moves` inner loop.
+  Some duplication is accepted to keep each function independently readable.
+- Results saved via `upsert_move_batch` (single write) not per-move `upsert_move`.
+
+### Test count
+No new tests for `pokemain.py` (interactive I/O). `fetch_missing_moves` is exercised
+indirectly by the existing move-cache round-trip tests.
+Full suite: unchanged.
+
+---
+
+## §92 — Pythonmon-17: cache size report (`--cache-info`)
+
+### What changed
+- Modified: `pkm_cache.py` — `get_cache_info() → dict` added after `check_integrity()`;
+  public API docstring updated; 6 new tests in isolated temp-dir block (52 → 58)
+- Modified: `pokemain.py` — `--cache-info` handler added at top of
+  `_handle_refresh_flags()`; prints 10-row table with totals and exits
+- Modified: `README.md` — `--cache-info` line added to startup flags block
+
+### Why
+`check_integrity()` reports *problems* but gave no quick answer to "how much
+is actually cached?". Users had no way to see at a glance whether the cache
+was well-populated before going offline, or how many moves/learnsets were
+present after a bulk fetch.
+
+### Key decisions
+- **10 layers, all zero-safe:** each layer is counted independently with its
+  own `try/except OSError`; missing directories count as 0, never raise.
+- **Moves exclude metadata keys:** `_version` and `_scraped_at` are not move
+  entries — counted with `not k.startswith("_")` guard.
+- **Schema version shown inline:** when moves > 0, the table appends
+  `(schema vN)` to the Moves row so the user immediately knows if a version
+  bump is needed.
+- **Exits after printing:** diagnostic flags should not drop into the
+  interactive menu — `sys.exit(0)` after output, same pattern as `--check-cache`.
+- **`--cache-info` before `--check-cache`** in the handler — cache-info is
+  read-only and lighter; natural ordering is info → integrity.
+
+### Test count
+`pkm_cache.py`: 58 tests (was 52). Full suite: 757 offline tests, 0 failures.
+
+---
+
+## §93 — Pythonmon-18: offline mode detection
+
+### What changed
+- Modified: `pkm_pokeapi.py` — `check_connectivity() → bool` added after `_get()`;
+  lightweight GET to API root with 3-second timeout; `_test_check_connectivity()`
+  added with 3 offline mock tests; called from `main()` (11 → 14 [PASS] lines)
+- Modified: `pokemain.py` — offline warning added in `main()` after `_banner()`;
+  calls `cache.get_cache_info()` then `pkm_pokeapi.check_connectivity()` only when
+  `pokemon < 5`; prints two-line warning when offline
+- Modified: `README.md` — Quick start paragraph updated to mention the startup
+  warning; pkm_pokeapi test count updated 11 → 14
+
+### Why
+A network failure previously surfaced deep inside a feature call with a generic
+`ConnectionError` message, far from the menu. New users on first run had no early
+signal that they needed a network connection. The warning appears immediately after
+the banner, before the menu loop starts.
+
+### Key decisions
+- **`< 5` pokemon guard:** a well-used cache has dozens of entries; probing is
+  only worth the 3-second cost when the cache is sparse and network access is
+  likely needed soon. Regular offline sessions pay zero startup cost.
+- **Non-blocking:** the warning is purely informational — the tool continues
+  into the menu normally. No `sys.exit()`, no input prompt.
+- **`Exception` catch in `check_connectivity`:** catches all failure modes
+  (URLError, OSError, timeout) without listing them explicitly — any failure
+  means unreachable.
+- **3-second timeout:** fast enough not to feel sluggish on startup; the normal
+  fetch timeout is 10s.
+- **`get_cache_info()` reuse:** already added in §92, so no extra code needed to
+  check the pokemon count.
+
+### Test count
+`pkm_pokeapi.py`: 14 offline [PASS] tokens (was 11). Full suite: 760 offline
+tests, 0 failures (once project files are replaced).
+
+---
+
+## §94 — Pythonmon-19: learnset staleness flag
+
+### What changed
+- Modified: `pkm_cache.py` — `LEARNSET_STALE_DAYS = 30` constant added;
+  `get_learnset_age_days(variety_slug, game) → int | None` added after
+  `save_learnset()`; public API docstring updated; 4 new tests (58 → 62)
+- Modified: `feat_movepool.py` — staleness note printed in `run()` after
+  successful learnset load, when age > `LEARNSET_STALE_DAYS`
+- Modified: `feat_moveset.py` — `import pkm_cache as cache` added to
+  top-level imports; staleness note added in both `run_scored_pool()` and
+  `run()` after `build_candidate_pool()` returns successfully
+
+### Why
+Learnsets are cached indefinitely. After a game patch or DLC release, a user
+running on a 3-month-old learnset would see no indication that the data might
+be outdated. The note appears inline just before the display, pointing the
+user to press R to refresh — no blocking, no extra prompt.
+
+### Key decisions
+- **File mtime, no schema change:** `os.path.getmtime()` is reliable and
+  requires no change to the learnset JSON format. A freshly written file
+  always returns 0.
+- **30-day threshold:** conservative enough not to nag on short gaps but
+  catches genuinely stale data after a patch cycle.
+- **Three call sites:** options 2 (movepool), 3 (scored pool), 4 (moveset
+  recommendation) — all learnset-dependent screens. Option 1 (quick view)
+  does not use learnset data so no note is needed there.
+- **`feat_moveset` top-level import:** `feat_moveset.py` already imports
+  several project modules at the top; adding `pkm_cache` there is consistent
+  and avoids scattered deferred imports for the same module.
+
+### Test count
+`pkm_cache.py`: 62 tests (was 58). Full suite: 764 offline tests, 0 failures
+(once project files are replaced).
+
+---
+
+## §95 — Pythonmon-20: move filter on scored pool (option 3)
+
+### What changed
+- Modified: `feat_moveset.py` — two new helpers added before the 8a section:
+  `_adapt_pool_for_filter(pool) → list` (pure, converts scored rows to tuples
+  for `_apply_filter`) and `_display_filtered_scored_pool(damage, status_ranked,
+  f, game_gen, base_stats)` (re-renders damage section filtered, status section
+  with type-filter only); filter prompt `(f to filter, Enter to return)` added
+  at end of `run_scored_pool()`; `import pkm_cache as cache` already at top
+  from §94; 5 new tests (28 → 33)
+
+### Why
+Option 2 (learnable move list) gained a filter in §81. Option 3 (scored pool)
+showed the same data but had no filter — inconsistent UX. A Charizard with 60+
+scored moves benefits from "show me only Special Fire moves above 80 power"
+just as much as the raw list does.
+
+### Key decisions
+- **Import filter helpers from `feat_movepool`:** `_apply_filter`, `_passes_filter`,
+  `_prompt_filter`, `_filter_summary` are pure functions — importing across sibling
+  feat_ modules is consistent with existing patterns (`feat_nature_browser` imports
+  from `feat_stat_compare`). Deferred import inside the filter branch avoids any
+  load-time cost on the common (no-filter) path.
+- **`_adapt_pool_for_filter` as the bridge:** scored pool rows are dicts, but
+  `_apply_filter` expects `(label, name, details)` tuples. The adapter wraps each
+  row in a 3-tuple using the row dict as details — `_passes_filter` reads
+  `.get("power")` / `.get("type")` / `.get("category")` which are present on
+  every scored row.
+- **Status section applies type filter only:** category and min_power are
+  meaningless for status moves (power is always None). Applying the type filter
+  there is still useful (e.g. "show me only Fire-type status moves").
+- **Same UX as option 2:** full table shown first, `f` at the bottom to filter,
+  Enter to return immediately — zero extra keypresses on the common path.
+
+### Test count
+`feat_moveset.py`: 33 tests (was 28). Full suite: 756 offline tests, 0 failures.
+
+---
+
+## §96 — Pythonmon-22: Batch team load
+
+### What changed
+- Modified: `feat_team_loader.py` — `_resolve_batch_name`, `_build_pkm_ctx_from_cache`,
+  `_load_batch` (new helpers); comma detection in `_team_menu`; hint updated;
+  11 new tests (28 → 39)
+
+### Why
+Loading a full team of 6 one-by-one required 6 separate name lookups through the
+interactive picker. A comma-separated input like `char, blastoise, gengar` now
+resolves all three from the local cache index in a single step.
+
+### Key decisions
+- **Two-step resolution** — index first (instant, no network), then PokeAPI
+  lazy fetch on miss (with a `… fetching...` indicator). Names that fail even
+  the PokeAPI lookup are skipped with "not found.". Same lazy-cache pattern
+  as the single-name P path.
+- **`_index_search` reuse** — deferred import of `_index_search` from
+  `pkm_session`; same priority order (exact → prefix → substring), same
+  `_MAX_SUGGESTIONS` cap.
+- **Ambiguous names** — multiple prefix matches pick the first alphabetically
+  and print a `?  'name': multiple matches — using '...'` warning. Never
+  silently picks the wrong Pokemon.
+- **Default form** — `_build_pkm_ctx_from_cache` always uses `forms[0]`
+  (the default form). Regional/alternate forms must be loaded individually.
+- **Comma detection** — fires before the single-name path in `_team_menu`,
+  so a name that happens to contain a comma (none exist in current PokeAPI
+  data) would still route to batch mode — acceptable edge case.
+
+### Test count
+41 tests in `feat_team_loader.py`. Full suite: 769 offline tests, 0 failures.
+
+---
+
+## §97 — Pythonmon-30: Weakness overlap heatmap
+
+### What changed
+- Modified: `feat_team_analysis.py` — `build_weakness_pairs`, `gap_pair_label`,
+  `_print_weakness_pairs` (new); `display_team_analysis` calls the new section
+  after the gap summary; 17 new tests (58 → 75)
+
+### Why
+The V screen already showed per-type weakness counts but didn't surface the
+most dangerous pattern: two or more team members sharing the same weaknesses.
+A team with Charizard + Butterfree both weak to Rock, Electric, and Flying can
+be swept by the same attacker. The heatmap makes that visible at a glance.
+
+### Key decisions
+- **Threshold ≥ 2** — pairs sharing only one weakness type are noise. Two or
+  more shared weaknesses is the meaningful signal.
+- **`!! CRITICAL` at ≥ 3 shared** — consistent with the existing gap_label
+  severity vocabulary already used in the type table.
+- **Dynamic name column** — `max(len("A + B") for pairs)`, capped at 26,
+  so the column fits any team composition without wasted space.
+- **Pure `build_weakness_pairs`** — uses `calc.compute_defense()` directly;
+  no I/O, fully testable offline with the existing pkm fixtures.
+- **Sorted descending by shared_count, then name_a asc** — most dangerous
+  pairs shown first.
+
+### Test count
+75 tests in `feat_team_analysis.py`. Full suite: 786 offline tests, 0 failures.
+
+---
+
+## §98 — Pythonmon-24: Nature & EV build advisor
+
+### What changed
+- Modified: `feat_nature_browser.py` — `_calc_stat`, `_ev_spread`,
+  `_PROFILE_NATURES`, `build_profiles`, `_print_build_profiles` (new);
+  `run()` calls build profiles first when a Pokémon is loaded; 21 new
+  tests (27 → 48)
+- Modified: `pokemain.py` — N key label updated to
+  "Nature & EV build advisor"
+- Modified: `README.md` — N feature description updated
+
+### Why
+The nature browser already ranked natures by role but showed no concrete
+stat outcomes. Users had to mentally combine the nature choice with an EV
+spread themselves. Combining both into two build profiles (speed-safe vs
+power-max) gives a complete, actionable recommendation in one screen.
+
+### Key decisions
+- **Always two profiles** — one prioritising speed safety, one prioritising
+  raw attack power. Simplifies the output and covers the real tradeoff most
+  players face.
+- **Assumption: Lv 100, 31 IVs** — standard competitive baseline. Clearly
+  marked with ⚠ in the interface, in comments, and in the README. The
+  formula is Gen 3+; HP uses a different formula than other stats.
+- **`_calc_stat` is pure** — takes base, ev, nature_name, natures dict;
+  no I/O. Fully testable offline with minimal fixture natures.
+- **build_profiles is pure** — derives role and speed tier via
+  `infer_role`/`infer_speed_tier` (already in `feat_stat_compare`);
+  selects nature pair from `_PROFILE_NATURES` lookup; computes all 6 stats
+  per profile.
+- **`_print_build_profiles` shown before the nature table** — the advisor
+  is the main draw when a Pokémon is loaded; the full 25-nature table
+  remains below for reference.
+- **EV total always 508** (252+252+4) — the standard max-two-stats spread.
+  No custom split supported; this is a recommendation tool, not a calculator.
+
+### Stat formula (Gen 3+, Lv 100, 31 IVs)
+  HP    = 2*B + IV + floor(EV/4) + 110
+  Other = floor((2*B + IV + floor(EV/4) + 5) * nature_mod)
+
+### Test count
+48 tests in `feat_nature_browser.py`. Full suite: 797 offline tests, 0 failures.
+
+---
+
+## §99 — Pythonmon-26: Learnset comparison
+
+### What changed
+- New file: `feat_learnset_compare.py` — `_flat_moves`, `compare_learnsets`,
+  `_build_move_rows`, `display_learnset_comparison`, `run`; 20 tests
+- Modified: `pokemain.py` — `import feat_learnset_compare`; `L` menu line
+  (visible when both pkm_ctx and game_ctx loaded); `elif choice == "l"` handler
+- Modified: `run_tests.py` — `feat_learnset_compare` added to SUITES (offline)
+
+### Why
+Choosing between two Pokémon for a team slot often comes down to move pool:
+does Pokémon A learn something Pokémon B can't? The comparison makes that
+immediately visible without manually cross-referencing two learnset screens.
+
+### Key decisions
+- **Three sections**: Only A / Only B / Shared — the structure that directly
+  answers the comparison question.
+- **Compact stat header** above the move sections: shows base stat side-by-side
+  (reusing `feat_stat_compare.compare_stats`) so the user has context on both
+  Pokémon while reading move pools. No duplication of logic.
+- **Alphabetical sort within sections** — easier to scan than learn-method
+  grouping; learn method is secondary when comparing pools across two Pokémon.
+- **Uncached moves shown as `?`** — included rather than silently dropped so
+  the full picture is visible. User can warm the move cache with MOVE → F.
+- **All four learn methods merged** into the flat set — level-up, TM/HM,
+  tutor, and egg. Distinction matters for individual move planning (option 2)
+  but not for pool comparison.
+- **Defensive `.get()` in `_build_move_rows`** — older cached move entries
+  may lack newer schema fields; graceful fallback to `"?"` avoids KeyError.
+
+### Test count
+20 tests in `feat_learnset_compare.py`. Full suite: 817 offline tests, 0 failures.
+
+---
+
+## §99 — Pythonmon-26: Learnset comparison (key L)
+
+### What changed
+- New file: `feat_learnset_compare.py` — `_flat_moves`, `compare_learnsets`,
+  `_build_move_rows` (pure); `_print_stat_header`, `_print_section`,
+  `display_learnset_comparison`, `run`, `main`; 19 tests
+- Modified: `pokemain.py` — `import feat_learnset_compare`; L key menu line
+  and handler added (needs both pkm_ctx and game_ctx)
+- Modified: `run_tests.py` — `feat_learnset_compare` added to SUITES (offline)
+
+### Why
+Choosing between two Pokemon for the same team slot often comes down to
+move availability — one might learn a key coverage move the other doesn't.
+The learnset comparison surfaces that difference directly, sorted into
+unique-to-A, unique-to-B, and shared sections with full move stats.
+
+### Key decisions
+- **Stat header at the top** — a brief side-by-side stat summary (same logic
+  as key C) gives context for *which* Pokemon is stronger while reviewing
+  the move differences. Avoids needing to open key C separately.
+- **All learn methods merged** — level-up, machine, tutor, and egg moves
+  are all included in the flat set. The comparison is about capability,
+  not how the move is learned.
+- **Graceful fallback for uncached moves** — moves not in moves.json get "?"
+  fields rather than crashing. The user sees the name and can look it up
+  with key M.
+- **`compare_learnsets` is pure** — takes two sets, returns three. Fully
+  testable offline with any fixture data.
+
+### Test count
+19 tests in `feat_learnset_compare.py`. Full suite: 816 offline, 0 failures.
+
+---
+
+## §100 — Pythonmon-11: Team builder / slot suggestion (key H)
+
+### What changed
+- New file: `feat_team_builder.py` — team slot suggestion; 57 tests across 4 iterations
+- Modified: `pokemain.py` — `import feat_team_builder`; `H` menu line (shown when game + ≥1 team member); `elif choice == "h":` handler; docstring updated
+- Modified: `run_tests.py` — `feat_team_builder` added to offline SUITES
+- Modified: `ARCHITECTURE.md` — `feat_team_builder.py` in §1 file list and §7 module roles; `feat_learnset_compare.py` §7 entry added (was missing)
+- Modified: `README.md` — `H` in menu overview; H feature section; test table row; files table row; duplicate `L` menu line removed
+
+### Why
+Pythonmon-11 was the highest-complexity team feature in the roadmap. With the
+type roster cache, gap analysis, and scoring engine in place, the feature fills
+a genuine workflow gap: "I have 2–3 Pokémon loaded — what should I add next?"
+
+### Key decisions
+- **Four-iteration structure**: pure scoring (A) → pool builder with mocked cache (B) →
+  display (C) → `run()` + wiring (D). Each iteration testable in isolation before the
+  next begins.
+- **Intrinsic + lookahead scoring**: intrinsic rewards offensive coverage, defensive
+  resistance, and role diversity; lookahead rewards candidates that leave the remaining
+  gaps easy to patch (patchability weighted ×2 when ≤2 slots remain).
+- **Type-only fallback**: base_stats used for role diversity scoring when the Pokémon
+  is in the pokemon cache; type-only scoring for uncached entries. Avoids any API calls
+  at pool-build time.
+- **Critical defensive gap threshold**: ≥2 members weak AND 0 members resist/immune.
+  Single-member teams can never produce a critical gap — prevents spurious warnings on
+  tiny teams.
+- **Roster fetch separated from pool build**: `fetch_needed_rosters()` is called
+  before `build_candidate_pool()` so the display layer controls progress output.
+  Pool build is cache-only (no side effects).
+- **Dot rating is relative**: percentile within the current result set (not an
+  absolute scale) so the top suggestion always shows ●●●●● regardless of absolute
+  score, making the ranking immediately readable.
+
+### Bugs found during testing
+- `run()` referenced `feat_team_loader.team_size()` but the module imports
+  `from feat_team_loader import team_slots, team_size` — fixed to bare `team_size()`.
+
+### Test count
+57 tests in `feat_team_builder.py`. Full suite: ~897 offline tests, 0 failures.
+
+---
+
+## §101 — Technical debt: pokemain.py cleanup (TD-1, TD-2, TD-3)
+
+### What changed
+- Modified: `pokemain.py` — three structural fixes (details below)
+
+### TD-1 — Duplicate `L` menu line removed
+`_print_menu()` appended `"L. Compare learnsets..."` twice. The runtime
+deduplication guard silently discarded the second copy, so the menu looked
+correct but the source was misleading. One line deleted.
+
+### TD-2 — Team menu visibility block consolidated
+V/O/S visibility and H visibility were two separate `if` blocks with
+inconsistent guard styles (`> 0` vs `>= 1`). Merged into one block with
+H nested inside the `has_game` condition. All guards now use `> 0` / `== 0`
+consistently.
+
+### TD-3 — `_handle_refresh_flags` split into two functions
+The original function mixed two different contracts in one body:
+- Diagnostic flags (`--cache-info`, `--check-cache`) that print and call
+  `sys.exit(0)` — control never returns.
+- Mutation flags (`--refresh-*`) that modify cache and return normally.
+
+Split into:
+- `_handle_diagnostic_flags(args)` — exits if a diagnostic flag is present,
+  returns normally otherwise.
+- `_handle_refresh_flags(args)` — always returns normally; handles cache
+  mutation flags only.
+
+Both are called from `main()` in sequence.
+
+### Test count
+No new tests (structural/display changes). Full suite: 0 failures.
+
+---
+
+## §102 — Technical debt: pkm_cache.py + feat_team_builder.py (TD-4, TD-5, TD-6)
+
+### What changed
+- Modified: `pkm_cache.py` — TD-4: removed redundant second `_MACHINES_FILE`
+  definition; TD-5: constant block now fully uninterrupted, `game_to_slug` and
+  `_learnset_path` moved to a dedicated "Slug and path helpers" section below
+  all constants
+- Modified: `feat_team_builder.py` — TD-6: `build_candidate_pool` renamed to
+  `build_suggestion_pool` throughout (definition, call site in `run()`, module
+  docstring, test section header); ok/fail label strings preserved for traceability
+- Modified: `ARCHITECTURE.md` — `feat_team_builder` §7 entry updated for rename
+
+### Why
+Audit pass after TD-1/2/3 (§101) revealed three more issues:
+- `_MACHINES_FILE` was silently shadowed by an identical re-definition 350 lines
+  later — looked like an intentional change but was just noise
+- `_learnset_path` interrupting the constant block and referencing a function
+  defined below it was a forward-reference smell that confused top-to-bottom reading
+- Identical public function name in two sibling modules is a maintenance trap
+
+### Test count
+`pkm_cache.py`: 62 tests. `feat_team_builder.py`: 57 tests.
+Full suite: 0 failures.
+
+---
+
+## §103 — Packaging: frozen-path detection + build script (PKG-1, PKG-2, PKG-3)
+
+### What changed
+- Modified: `pkm_cache.py` — PKG-1: `_BASE` now uses a `sys.frozen` guard;
+  when running as a PyInstaller bundle `_BASE` resolves to a folder next to
+  the executable (always writable); normal source runs are unaffected.
+  3 new tests (62 → 68).
+- New file: `build.py` — PKG-3: wrapper around PyInstaller with `--clean` flag,
+  PyInstaller availability check, platform-aware output path, and distribution
+  instructions printed on success.
+
+### PKG-2 note
+PKG-2 is the actual build step — run `pip install pyinstaller` then
+`python build.py` on each target platform (Windows / Mac / Linux) to produce
+`dist/pokemain.exe` or `dist/pokemain`. No further code changes required;
+PKG-1 ensures the cache is correctly redirected in the bundled binary.
+
+### Key decisions
+- `sys.frozen` is set by PyInstaller at runtime and does not exist in a normal
+  Python environment — `getattr(sys, "frozen", False)` is the safe test.
+- `os.path.abspath` used in both branches for robustness when the script is
+  invoked from a different working directory.
+- `build.py` uses `subprocess.run([sys.executable, "-m", "PyInstaller", ...])`
+  rather than a bare `pyinstaller` command to ensure the correct Python
+  environment's PyInstaller is used (important in virtual environments).
+- `--console` flag kept (no `--windowed`) — this is a CLI tool and must show
+  a terminal.
+
+### Test count
+`pkm_cache.py`: 68 tests. Full suite: 0 failures.

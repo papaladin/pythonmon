@@ -118,6 +118,8 @@ SUITES = [
     ("feat_stat_compare",         "feat_stat_compare.py",    ["--autotest"],               []),
     ("feat_egg_group",            "feat_egg_group.py",       ["--autotest"],               []),
     ("feat_evolution",            "feat_evolution.py",       ["--autotest"],               []),
+    ("feat_learnset_compare",     "feat_learnset_compare.py", ["--autotest"],               []),
+    ("feat_team_builder",         "feat_team_builder.py",     ["--autotest"],               []),
     # ── cache-dependent suites ────────────────────────────────────────────────
     ("feat_moveset (cache)",
         "feat_moveset.py",     ["--autotest", "--withcache"],
@@ -340,24 +342,46 @@ def main():
     print(f"║{total_row:<{W+1}}║")
     print("╚" + "═" * (W + 2) + "╝")
 
-    # ── Files with no test suite ───────────────────────────────────────────────
+    # ── Files with no test suite (known, display-only or wiring-only) ────────────
+    #
+    # These two files are intentionally excluded from automated testing:
+    #   feat_quick_view.py — display-only: all functions print to stdout;
+    #                        _stat_bar() is the only pure helper but is trivially
+    #                        verified by visual inspection of option 1 output.
+    #   pokemain.py        — wiring-only: the main menu loop; contains no logic
+    #                        of its own, only calls into feat_* modules that are
+    #                        fully tested. Interactive I/O makes unit testing
+    #                        impractical.
+    #
+    # All other feat_/pkm_/matchup_ files must have an --autotest suite.
+    # Any unexpected file appearing below indicates a missing test suite.
     import re as _re
     _suite_files = set(_re.findall(r'"((?:feat_|pkm_|matchup_)\w+\.py)"',
                                    open(__file__, encoding="utf-8").read()))
+    _known_no_suite = {
+        "feat_quick_view.py": "display-only — all functions print to stdout; no pure logic to test",
+        "pokemain.py":        "wiring-only  — menu loop with no logic; interactive I/O untestable",
+        "build.py":           "build tool   — wraps PyInstaller; depends on external binary, not testable offline",
+    }
     _all_py = sorted(
         f for f in os.listdir(HERE)
         if f.endswith(".py")
         and (f.startswith("feat_") or f.startswith("pkm_")
-             or f == "matchup_calculator.py")
+             or f in ("matchup_calculator.py", "pokemain.py", "build.py"))
         and f not in ("run_tests.py",)
         and "_p" not in f.replace(".py", "")   # exclude temp test copies (_p28, _p32, etc.)
     )
-    _no_suite = [f for f in _all_py if f not in _suite_files]
+    _no_suite = [f for f in _all_py
+                 if f not in _suite_files and f not in _known_no_suite]
+    print()
+    print("  No --autotest suite (intentional):")
+    for _f, _reason in sorted(_known_no_suite.items()):
+        print(f"    {_f:<30}  {_reason}")
     if _no_suite:
         print()
-        print("  No --autotest suite:")
+        print("  !! UNEXPECTED files with no suite (add --autotest):")
         for _f in _no_suite:
-            print(f"    {_f}  (display-only — verified manually)")
+            print(f"    {_f}")
 
     print()
     if any_fail:
@@ -369,4 +393,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

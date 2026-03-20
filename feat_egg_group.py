@@ -11,8 +11,8 @@ important cases: "ground" → Field, "plant" → Grass.  All 15 known groups
 are mapped in _EGG_GROUP_NAMES.
 
 Entry points:
-  egg_group_name(slug)          → str   (used by feat_type_matchup)
-  format_egg_groups(egg_groups) → str   (used by feat_type_matchup)
+  egg_group_name(slug)          → str   (used by feat_quick_view)
+  format_egg_groups(egg_groups) → str   (used by feat_quick_view)
   run(pkm_ctx)                  → None  called from pokemain; key E
   main()                        → None  standalone
 """
@@ -48,7 +48,7 @@ _EGG_GROUP_NAMES: dict[str, str] = {
 }
 
 
-# ── Pure helpers (used by feat_type_matchup and browser) ─────────────────────
+# ── Pure helpers (used by feat_quick_view and browser) ──────────────────────
 
 def egg_group_name(slug: str) -> str:
     """

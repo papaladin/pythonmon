@@ -45,6 +45,7 @@ Public API:
 
   get_learnset(variety_slug, game)         → dict or None
   save_learnset(variety_slug, game, data)  → None
+  get_learnset_age_days(variety_slug, game) → int | None
   get_learnset_or_fetch(variety_slug, form_name, game)
                                            → dict or None  (auto-fetches on miss)
   invalidate_learnset(variety_slug, game)  → None
@@ -84,6 +85,7 @@ Public API:
   game_to_slug(game)                       → str  ("Scarlet / Violet" → "scarlet-violet")
 
   check_integrity()                        → list[str]  (issue strings; empty = clean)
+  get_cache_info()                         → dict  (entry counts per cache layer)
 """
 
 import json
@@ -93,15 +95,21 @@ import shutil
 from datetime import datetime, timezone
 
 # ── Directory layout ──────────────────────────────────────────────────────────
+#
+# When running as a PyInstaller bundle (sys.frozen = True), __file__ points
+# inside the read-only archive. Redirect _BASE to a folder next to the
+# executable instead, which is always writable. Normal source runs are
+# unaffected — sys.frozen is not set by the Python interpreter itself.
 
-_BASE         = os.path.join(os.path.dirname(__file__), "cache")
+import sys as _sys
+if getattr(_sys, "frozen", False):
+    # PyInstaller bundle — cache lives next to the executable
+    _BASE = os.path.join(os.path.dirname(os.path.abspath(_sys.executable)), "cache")
+else:
+    # Normal source run — cache lives next to the .py files
+    _BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
 _POKEMON_DIR  = os.path.join(_BASE, "pokemon")
 _LEARNSET_DIR = os.path.join(_BASE, "learnsets")
-
-
-def _learnset_path(variety_slug: str, game: str) -> str:
-    """Return the cache file path for a given variety slug + game."""
-    return os.path.join(_LEARNSET_DIR, f"{variety_slug.lower()}_{game_to_slug(game)}.json")
 _MOVES_FILE   = os.path.join(_BASE, "moves.json")
 _MACHINES_FILE= os.path.join(_BASE, "machines.json")
 _INDEX_FILE   = os.path.join(_BASE, "pokemon_index.json")
@@ -128,7 +136,7 @@ def _ensure_dirs() -> None:
     os.makedirs(_LEARNSET_DIR, exist_ok=True)
 
 
-# ── Slug helper ───────────────────────────────────────────────────────────────
+# ── Slug and path helpers ─────────────────────────────────────────────────────
 
 def game_to_slug(game: str) -> str:
     """
@@ -144,6 +152,11 @@ def game_to_slug(game: str) -> str:
     slug = re.sub(r"-+", "-", slug)         # collapse multiple hyphens
     slug = slug.strip("-")
     return slug
+
+
+def _learnset_path(variety_slug: str, game: str) -> str:
+    """Return the cache file path for a given variety slug + game."""
+    return os.path.join(_LEARNSET_DIR, f"{variety_slug.lower()}_{game_to_slug(game)}.json")
 
 
 # ── Low-level read / write ────────────────────────────────────────────────────
@@ -436,9 +449,26 @@ def save_learnset(variety_slug: str, game: str, data: dict) -> None:
     _write(_learnset_path(variety_slug, game), data)
 
 
-# ── Machines cache (TM/HM number lookup table) ───────────────────────────────
+# Learnsets older than this many days show a staleness note in the display.
+LEARNSET_STALE_DAYS = 30
 
-_MACHINES_FILE = os.path.join(_BASE, "machines.json")
+
+def get_learnset_age_days(variety_slug: str, game: str) -> int | None:
+    """
+    Return the age of the learnset cache file in whole days, or None if the
+    file does not exist.  Uses file mtime — no schema change required.
+    Returns 0 for a file written within the last 24 hours.
+    """
+    import time as _time
+    path = _learnset_path(variety_slug, game)
+    try:
+        age_sec = _time.time() - os.path.getmtime(path)
+        return int(age_sec // 86400)
+    except OSError:
+        return None
+
+
+# ── Machines cache (TM/HM number lookup table) ───────────────────────────────
 
 
 def get_machines() -> dict | None:
@@ -1071,6 +1101,67 @@ def check_integrity() -> list:
     return issues
 
 
+def get_cache_info() -> dict:
+    """
+    Return a summary dict of how many entries are in each cache layer.
+
+    Keys:
+      pokemon         — number of .json files in cache/pokemon/
+      learnsets       — number of .json files in cache/learnsets/
+      moves           — number of move entries in moves.json (metadata keys excluded)
+      machines        — 1 if machines.json exists, else 0
+      types           — number of .json files in cache/types/
+      natures         — number of entries in natures.json
+      abilities_index — number of entries in abilities_index.json
+      abilities       — number of .json files in cache/abilities/
+      egg_groups      — number of .json files in cache/egg_groups/
+      evolution       — number of .json files in cache/evolution/
+
+    All values are ints. Missing files or directories silently return 0.
+    Never raises.
+    """
+
+    def _count_dir(path: str) -> int:
+        try:
+            return sum(1 for f in os.listdir(path) if f.endswith(".json"))
+        except OSError:
+            return 0
+
+    # moves: exclude metadata keys (_version, _scraped_at)
+    moves_count = 0
+    try:
+        moves_data = get_moves() or {}
+        moves_count = sum(1 for k in moves_data if not k.startswith("_"))
+    except Exception:
+        pass
+
+    # natures / abilities_index: count dict entries
+    natures_count = 0
+    try:
+        natures_count = len(get_natures() or {})
+    except Exception:
+        pass
+
+    abilities_count = 0
+    try:
+        abilities_count = len(get_abilities_index() or {})
+    except Exception:
+        pass
+
+    return {
+        "pokemon"        : _count_dir(_POKEMON_DIR),
+        "learnsets"      : _count_dir(_LEARNSET_DIR),
+        "moves"          : moves_count,
+        "machines"       : 1 if os.path.exists(_MACHINES_FILE) else 0,
+        "types"          : _count_dir(_TYPES_DIR),
+        "natures"        : natures_count,
+        "abilities_index": abilities_count,
+        "abilities"      : _count_dir(_ABILITIES_DIR),
+        "egg_groups"     : _count_dir(_EGG_GROUP_DIR),
+        "evolution"      : _count_dir(_EVOLUTION_DIR),
+    }
+
+
 if __name__ == "__main__":
     import tempfile, sys
 
@@ -1563,6 +1654,152 @@ if __name__ == "__main__":
         os.remove(bad_evo_path)
 
         _g2.update(_orig_g2)
+
+        # ── get_learnset_age_days ─────────────────────────────────────────────
+
+        # T1: missing file → None
+        assert get_learnset_age_days("missing", "No Such Game") is None
+        _ok("  learnset_age_days  missing file → None")
+
+        # T2: freshly written file → 0
+        _ls_fresh = {"pokemon": "pikachu", "game": "Red / Blue / Yellow",
+                     "forms": {"Pikachu": {"level-up": []}}}
+        _self.save_learnset("pikachu", "Red / Blue / Yellow", _ls_fresh)
+        age_fresh = _self.get_learnset_age_days("pikachu", "Red / Blue / Yellow")
+        assert age_fresh == 0, f"expected 0 for fresh file, got {age_fresh}"
+        _ok("  learnset_age_days  fresh file → 0")
+
+        # T3: file with mtime patched to 40 days ago → 40
+        import time as _time2
+        _ls_path = _self._learnset_path("pikachu", "Red / Blue / Yellow")
+        _forty_days_ago = _time2.time() - (40 * 86400)
+        os.utime(_ls_path, (_forty_days_ago, _forty_days_ago))
+        age_old = _self.get_learnset_age_days("pikachu", "Red / Blue / Yellow")
+        assert age_old == 40, f"expected 40 for old file, got {age_old}"
+        _ok("  learnset_age_days  40-day-old file → 40")
+
+        # T4: LEARNSET_STALE_DAYS constant exists and equals 30
+        assert _self.LEARNSET_STALE_DAYS == 30, \
+            f"expected LEARNSET_STALE_DAYS=30, got {_self.LEARNSET_STALE_DAYS}"
+        _ok("  LEARNSET_STALE_DAYS  constant == 30")
+
+        # ── get_cache_info ────────────────────────────────────────────────────
+
+        # Use a fresh isolated temp dir so counts start at zero
+        with tempfile.TemporaryDirectory() as tmp_ci:
+            import pkm_cache as _ci
+            _orig_ci = {k: getattr(_ci, k) for k in (
+                "_BASE","_POKEMON_DIR","_LEARNSET_DIR","_MOVES_FILE",
+                "_MACHINES_FILE","_INDEX_FILE","_TYPES_DIR","_NATURES_FILE",
+                "_ABILITIES_FILE","_ABILITIES_DIR","_EGG_GROUP_DIR","_EVOLUTION_DIR"
+            )}
+            _ci._BASE            = tmp_ci
+            _ci._POKEMON_DIR     = os.path.join(tmp_ci, "pokemon")
+            _ci._LEARNSET_DIR    = os.path.join(tmp_ci, "learnsets")
+            _ci._MOVES_FILE      = os.path.join(tmp_ci, "moves.json")
+            _ci._MACHINES_FILE   = os.path.join(tmp_ci, "machines.json")
+            _ci._INDEX_FILE      = os.path.join(tmp_ci, "pokemon_index.json")
+            _ci._TYPES_DIR       = os.path.join(tmp_ci, "types")
+            _ci._NATURES_FILE    = os.path.join(tmp_ci, "natures.json")
+            _ci._ABILITIES_FILE  = os.path.join(tmp_ci, "abilities_index.json")
+            _ci._ABILITIES_DIR   = os.path.join(tmp_ci, "abilities")
+            _ci._EGG_GROUP_DIR   = os.path.join(tmp_ci, "egg_groups")
+            _ci._EVOLUTION_DIR   = os.path.join(tmp_ci, "evolution")
+            _ci._ensure_dirs()
+
+            try:
+                # T1: empty cache → all zeros, all 10 keys present
+                info = _ci.get_cache_info()
+                _expected_keys = {"pokemon","learnsets","moves","machines","types",
+                                  "natures","abilities_index","abilities","egg_groups","evolution"}
+                assert set(info.keys()) == _expected_keys, f"missing keys: {_expected_keys - set(info.keys())}"
+                assert all(v == 0 for v in info.values()), f"expected all-zero on empty cache: {info}"
+                _ok("  get_cache_info     empty cache → all zeros, all 10 keys")
+
+                # T2: one pokemon saved → pokemon == 1
+                _pkm_ci = {"pokemon": "pikachu", "egg_groups": [], "evolution_chain_id": 1,
+                           "forms": [{"name": "Pikachu", "types": ["Electric"],
+                                      "variety_slug": "pikachu", "base_stats": {}, "abilities": []}]}
+                _ci.save_pokemon("pikachu", _pkm_ci)
+                info2 = _ci.get_cache_info()
+                assert info2["pokemon"] == 1, f"expected pokemon=1, got {info2['pokemon']}"
+                _ok("  get_cache_info     1 pokemon saved → pokemon == 1")
+
+                # T3: two learnsets saved → learnsets == 2
+                _ls = {"pokemon": "pikachu", "game": "Red / Blue / Yellow",
+                       "forms": {"Pikachu": {"level-up": []}}}
+                _ci.save_learnset("pikachu", "Red / Blue / Yellow", _ls)
+                _ci.save_learnset("pikachu", "Scarlet / Violet", _ls)
+                info3 = _ci.get_cache_info()
+                assert info3["learnsets"] == 2, f"expected learnsets=2, got {info3['learnsets']}"
+                _ok("  get_cache_info     2 learnsets saved → learnsets == 2")
+
+                # T4: moves saved → moves count excludes metadata keys
+                _ci.save_moves({"Tackle": [{"from_gen": 1, "to_gen": None,
+                                            "type": "Normal", "category": "Physical",
+                                            "power": 40, "accuracy": 100, "pp": 35}]})
+                info4 = _ci.get_cache_info()
+                assert info4["moves"] == 1, f"expected moves=1, got {info4['moves']}"
+                _ok("  get_cache_info     1 move saved → moves == 1, metadata excluded")
+
+                # T5: one evolution chain saved → evolution == 1
+                _ci.save_evolution_chain(1, [[{"slug": "bulbasaur", "trigger": ""}]])
+                info5 = _ci.get_cache_info()
+                assert info5["evolution"] == 1, f"expected evolution=1, got {info5['evolution']}"
+                _ok("  get_cache_info     1 evolution chain saved → evolution == 1")
+
+                # T6: machines file present → machines == 1; absent → 0
+                assert info4["machines"] == 0, "machines should be 0 before save"
+                _ci.save_machines({"scarlet-violet": {"flamethrower": "TM35"}})
+                info6 = _ci.get_cache_info()
+                assert info6["machines"] == 1, f"expected machines=1, got {info6['machines']}"
+                _ok("  get_cache_info     machines file present → machines == 1")
+
+            finally:
+                for k, v in _orig_ci.items():
+                    setattr(_ci, k, v)
+
+    # ── PKG-1: frozen-path detection ─────────────────────────────────────────
+    #
+    # Simulate sys.frozen = True (PyInstaller) and confirm _BASE would resolve
+    # to a folder next to sys.executable rather than next to __file__.
+    # Uses the same conditional logic as the module-level _BASE assignment.
+
+    import sys as _sys_pkg
+
+    def _compute_base(frozen: bool) -> str:
+        """Replicate the _BASE detection logic for testing."""
+        if frozen:
+            return os.path.join(os.path.dirname(os.path.abspath(_sys_pkg.executable)), "cache")
+        else:
+            return os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
+
+    base_normal = _compute_base(False)
+    base_frozen = _compute_base(True)
+
+    if base_normal.endswith(os.path.join("", "cache")):
+        _ok("  PKG-1: normal run → _BASE ends with 'cache'")
+    else:
+        errors.append("PKG-1 normal base")
+        print(f"  [FAIL] PKG-1 normal base: {base_normal}")
+        passed[0] -= 1
+    passed[0] += 1
+
+    if base_frozen.endswith(os.path.join("", "cache")):
+        _ok("  PKG-1: frozen run → _BASE ends with 'cache'")
+    else:
+        errors.append("PKG-1 frozen base")
+        print(f"  [FAIL] PKG-1 frozen base: {base_frozen}")
+        passed[0] -= 1
+    passed[0] += 1
+
+    if base_frozen != base_normal:
+        _ok("  PKG-1: frozen path differs from normal path (next to executable, not __file__)")
+    else:
+        errors.append("PKG-1 paths differ")
+        print(f"  [FAIL] PKG-1 paths should differ: normal={base_normal} frozen={base_frozen}")
+        passed[0] -= 1
+    passed[0] += 1
 
     print()
     if errors:

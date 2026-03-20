@@ -260,11 +260,238 @@ def _print_top5(natures: dict, stats: dict, form_name: str) -> None:
 
 # ── Main feature entry point ──────────────────────────────────────────────────
 
+# ── Stat calculator (Lv 100, 31 IVs assumed) ─────────────────────────────────
+#
+# ASSUMPTION: All calculations assume Level 100, 31 IVs in every stat.
+# This is the standard competitive baseline. Actual in-game stats will differ
+# for Pokemon at lower levels or with non-31 IVs.
+#
+# Formulae (Generation 3+):
+#   HP    = (2*B + IV + floor(EV/4)) * Lv/100 + Lv + 10
+#   Other = floor(((2*B + IV + floor(EV/4)) * Lv/100 + 5) * nature_mod)
+#
+# At Lv 100, IV=31:
+#   HP    = 2*B + 31 + floor(EV/4) + 110
+#   Other = floor((2*B + 31 + floor(EV/4) + 5) * nature_mod)
+
+_LV    = 100
+_IV    = 31
+_STATS = ["hp", "attack", "defense", "special-attack", "special-defense", "speed"]
+_STAT_LABELS = {
+    "hp"            : "HP",
+    "attack"        : "Attack",
+    "defense"       : "Defense",
+    "special-attack": "Sp. Attack",
+    "special-defense": "Sp. Defense",
+    "speed"         : "Speed",
+}
+
+
+def _calc_stat(key: str, base: int, ev: int, nature_name: str,
+               natures: dict) -> int:
+    """
+    Compute a single stat value at Lv 100 with 31 IVs.
+
+    key         — PokeAPI stat slug  e.g. "attack", "hp"
+    base        — base stat value
+    ev          — EV allocation for this stat (0–252, multiple of 4 assumed)
+    nature_name — nature display name e.g. "Modest"; used to look up +/− modifier
+    natures     — loaded natures dict from cache
+
+    Returns the final integer stat value.
+    Assumption: Level 100, 31 IVs. See module comment above.
+    """
+    ev_contrib = ev // 4
+    inner      = 2 * base + _IV + ev_contrib
+    if key == "hp":
+        return inner + _LV + 10
+
+    # Nature modifier: +10% if this stat is increased, -10% if decreased
+    entry = natures.get(nature_name, {})
+    if entry.get("increased") == key:
+        mod = 1.1
+    elif entry.get("decreased") == key:
+        mod = 0.9
+    else:
+        mod = 1.0
+    return int((inner + 5) * mod)
+
+
+# ── Build profile tables ──────────────────────────────────────────────────────
+#
+# Each profile is a (label, nature_name, ev_spread) triple.
+# Two profiles are always generated — one prioritising speed safety, one
+# prioritising raw attacking power.
+#
+# EV spreads are role-based:
+#   Physical sweeper (fast/mid) : 252 Atk / 252 Spe / 4 HP
+#   Physical tank   (slow)      : 252 HP  / 252 Def / 4 Atk
+#   Special sweeper (fast/mid)  : 252 SpA / 252 Spe / 4 HP
+#   Special tank    (slow)      : 252 HP  / 252 SpD / 4 SpA
+#   Mixed           (fast/mid)  : 128 Atk / 128 SpA / 252 Spe
+#   Mixed           (slow)      : 252 HP  / 128 Atk / 128 SpA
+
+def _ev_spread(role: str, speed_tier: str) -> dict:
+    """Return an EV spread dict keyed by PokeAPI stat slugs."""
+    base = {k: 0 for k in _STATS}
+    if role == "physical":
+        if speed_tier == "slow":
+            base.update({"hp": 252, "defense": 252, "attack": 4})
+        else:
+            base.update({"attack": 252, "speed": 252, "hp": 4})
+    elif role == "special":
+        if speed_tier == "slow":
+            base.update({"hp": 252, "special-defense": 252, "special-attack": 4})
+        else:
+            base.update({"special-attack": 252, "speed": 252, "hp": 4})
+    else:  # mixed
+        if speed_tier == "slow":
+            base.update({"hp": 252, "attack": 128, "special-attack": 128})
+        else:
+            base.update({"speed": 252, "attack": 128, "special-attack": 128})
+    return base
+
+
+_PROFILE_NATURES = {
+    # (role, speed_tier): [(label, nature_name), (label, nature_name)]
+    ("physical", "fast") : [("Sweeper — speed-safe", "Jolly"),
+                             ("Sweeper — power-max",  "Adamant")],
+    ("physical", "mid")  : [("Sweeper — speed-safe", "Jolly"),
+                             ("Sweeper — power-max",  "Adamant")],
+    ("physical", "slow") : [("Tank — no speed loss", "Brave"),
+                             ("Tank — atk boost",     "Adamant")],
+    ("special",  "fast") : [("Sweeper — speed-safe", "Timid"),
+                             ("Sweeper — power-max",  "Modest")],
+    ("special",  "mid")  : [("Sweeper — speed-safe", "Timid"),
+                             ("Sweeper — power-max",  "Modest")],
+    ("special",  "slow") : [("Tank — no speed loss", "Quiet"),
+                             ("Tank — SpA boost",     "Modest")],
+    ("mixed",    "fast") : [("Mixed — speed-safe",   "Hasty"),
+                             ("Mixed — sp. power",    "Naive")],
+    ("mixed",    "mid")  : [("Mixed — speed-safe",   "Hasty"),
+                             ("Mixed — sp. power",    "Naive")],
+    ("mixed",    "slow") : [("Mixed — atk/SpA",      "Rash"),
+                             ("Mixed — atk/SpA",      "Mild")],
+}
+
+
+def build_profiles(base_stats: dict, natures: dict) -> list:
+    """
+    Build two recommended build profiles for a Pokémon.
+
+    Each profile dict:
+      {
+        "label"      : str,          # e.g. "Sweeper — speed-safe"
+        "nature"     : str,          # e.g. "Timid"
+        "nature_inc" : str | None,   # increased stat slug
+        "nature_dec" : str | None,   # decreased stat slug
+        "ev_spread"  : dict,         # {stat_slug: ev_amount}
+        "stats"      : [             # one entry per stat in _STATS order
+          {"key": str, "label": str,
+           "base": int, "final": int, "change": int,
+           "ev": int, "nature_effect": str}  # "+", "-", ""
+        ]
+      }
+
+    Assumption: Level 100, 31 IVs in all stats.
+    """
+    role  = infer_role(base_stats)
+    tier  = infer_speed_tier(base_stats)
+    pairs = _PROFILE_NATURES.get((role, tier), _PROFILE_NATURES[("special", "fast")])
+    evs   = _ev_spread(role, tier)
+
+    profiles = []
+    for label, nature_name in pairs:
+        entry  = natures.get(nature_name, {})
+        n_inc  = entry.get("increased")
+        n_dec  = entry.get("decreased")
+        stats_rows = []
+        for key in _STATS:
+            base  = base_stats.get(key, 0)
+            ev    = evs[key]
+            final = _calc_stat(key, base, ev, nature_name, natures)
+            # Nature effect indicator
+            if n_inc == key:   nat_eff = "+"
+            elif n_dec == key: nat_eff = "-"
+            else:               nat_eff = ""
+            stats_rows.append({
+                "key"           : key,
+                "label"         : _STAT_LABELS[key],
+                "base"          : base,
+                "final"         : final,
+                "change"        : final - (2 * base + _IV + 110 if key == "hp"
+                                          else int((2 * base + _IV + 5))),
+                "ev"            : ev,
+                "nature_effect" : nat_eff,
+            })
+        profiles.append({
+            "label"     : label,
+            "nature"    : nature_name,
+            "nature_inc": n_inc,
+            "nature_dec": n_dec,
+            "ev_spread" : evs,
+            "stats"     : stats_rows,
+        })
+    return profiles
+
+
+def _ev_label(ev: int) -> str:
+    """Short EV annotation for the change column."""
+    if ev == 252: return "max EVs"
+    if ev > 0:    return f"{ev} EVs"
+    return ""
+
+
+def _print_build_profiles(profiles: list, form_name: str) -> None:
+    """Print the two build profiles for a Pokémon."""
+    _SEP = "═" * 62
+    _DIV = "─" * 62
+
+    role_line = f"{profiles[0]['label'].split(' — ')[0]}"  # e.g. "Sweeper"
+
+    print(f"\n  Build advisor  |  {form_name}")
+    print(f"  ⚠  Assumes Lv 100, 31 IVs all stats")
+    print("  " + _SEP)
+
+    for i, p in enumerate(profiles):
+        nature_entry = p["nature"]
+        inc_s = STAT_SHORT.get(p["nature_inc"], "—") if p["nature_inc"] else "—"
+        dec_s = STAT_SHORT.get(p["nature_dec"], "—") if p["nature_dec"] else "—"
+        ev_parts = []
+        for key in _STATS:
+            ev = p["ev_spread"][key]
+            if ev > 0:
+                ev_parts.append(f"{ev} {STAT_SHORT.get(key, key)}")
+        ev_str = " / ".join(ev_parts)
+
+        print(f"  ── Profile {i+1}: {p['label']}")
+        print(f"  Nature  {nature_entry:<10}  (+{inc_s} / −{dec_s})"
+              f"      EVs  {ev_str}")
+        print()
+        print(f"  {'Stat':<14}{'Base':>5}{'Final':>7}{'Change':>8}  Notes")
+        print("  " + _DIV)
+
+        for r in p["stats"]:
+            notes = []
+            if r["ev"]:          notes.append(_ev_label(r["ev"]))
+            if r["nature_effect"] == "+": notes.append(f"+{inc_s}")
+            if r["nature_effect"] == "-": notes.append(f"−{dec_s}")
+            change_str = f"+{r['change']}" if r["change"] >= 0 else str(r["change"])
+            print(f"  {r['label']:<14}{r['base']:>5}{r['final']:>7}"
+                  f"{change_str:>8}  {'  '.join(notes)}")
+
+        if i == 0 and len(profiles) > 1:
+            print()
+
+    print("  " + _SEP)
+
+
+
 def run(game_ctx=None, pkm_ctx=None) -> None:
     """
-    Nature browser entry point.  Always accessible; warns for Gen 1/2 games.
-    Shows the full 25-nature table, with per-stat impact if a Pokémon is loaded,
-    and a top-3 role-aware recommendation if a Pokémon is loaded.
+    Nature & EV build advisor entry point. Always accessible; warns for Gen 1/2 games.
+    When a Pokémon is loaded: (1) full nature table with stat impact,
+    (2) top-5 role-aware nature ranking, (3) two EV build profiles.
     """
     # Gen 1/2 warning
     if game_ctx is not None:
@@ -298,15 +525,24 @@ def run(game_ctx=None, pkm_ctx=None) -> None:
 
     if stats:
         print(f"\n  Nature impact for {form_name}")
-        print( "  (±pts = approximate stat change at base stat level; "
+        print( "  (\u00b1pts = approximate stat change at base stat level; "
                "actual values depend on level, EVs, IVs)")
     else:
         print("\n  All natures  (load a Pokémon to see stat impact)")
 
+    # 1) Full 25-nature table
     _print_nature_table(ordered, stats)
 
+    # 2) Top-5 role-aware ranking
     if stats:
         _print_top5(ordered, stats, form_name)
+
+    # 3) EV build profiles — shown last, after all nature reference material
+    if stats:
+        profiles = build_profiles(stats, ordered)
+        _print_build_profiles(profiles, form_name)
+
+    input("\n  Press Enter to continue...")
 
 
 # ── Standalone entry point ────────────────────────────────────────────────────
@@ -440,6 +676,114 @@ def _run_tests(with_cache: bool = False) -> None:
         # Neutral count must be exactly 5
         neutral_count = sum(1 for v in natures.values() if v["increased"] is None)
         check("withcache: exactly 5 neutral natures", neutral_count == 5)
+
+    # ── _calc_stat ────────────────────────────────────────────────────────────
+
+    # Fake minimal natures dict for stat tests
+    _natures_test = {
+        "Modest": {"increased": "special-attack", "decreased": "attack"},
+        "Timid" : {"increased": "speed",           "decreased": "attack"},
+        "Hardy" : {"increased": None,              "decreased": None},
+    }
+
+    # HP formula: 2*78 + 31 + 63 + 110 = 360 (Charizard HP, 252 EVs)
+    hp_val = _calc_stat("hp", 78, 252, "Hardy", _natures_test)
+    check("_calc_stat: HP 252 EVs = 2*78+31+63+110=360", hp_val == 360)
+
+    # HP no EVs: 2*78 + 31 + 0 + 110 = 297
+    hp0 = _calc_stat("hp", 78, 0, "Hardy", _natures_test)
+    check("_calc_stat: HP 0 EVs = 297", hp0 == 297)
+
+    # Other stat neutral: 2*109 + 31 + 63 + 5 = 317 (Charizard SpA, 252 EVs, Hardy)
+    spa_neutral = _calc_stat("special-attack", 109, 252, "Hardy", _natures_test)
+    check("_calc_stat: SpA neutral 252 EVs = 317", spa_neutral == 317)
+
+    # Other stat +10% (Modest SpA): floor(317 * 1.1) = floor(348.7) = 348
+    spa_modest = _calc_stat("special-attack", 109, 252, "Modest", _natures_test)
+    check("_calc_stat: SpA +Modest 252 EVs = 348", spa_modest == 348)
+
+    # Other stat -10% (Timid Atk on base 84, 0 EVs): floor((2*84+31+5) * 0.9) = floor(204*0.9) = floor(183.6) = 183
+    atk_timid = _calc_stat("attack", 84, 0, "Timid", _natures_test)
+    check("_calc_stat: Atk -Timid 0 EVs = 183", atk_timid == 183)
+
+    # Speed +10% (Timid, 252 EVs, base 100): floor((2*100+31+63+5)*1.1) = floor(299*1.1) = floor(328.9) = 328
+    spe_timid = _calc_stat("speed", 100, 252, "Timid", _natures_test)
+    check("_calc_stat: Spe +Timid 252 EVs = 328", spe_timid == 328)
+
+    # ── build_profiles ────────────────────────────────────────────────────────
+
+    # Need a fuller natures dict — build minimal one covering all profile natures
+    _all_natures = {
+        "Jolly"  : {"increased": "speed",            "decreased": "special-attack"},
+        "Adamant": {"increased": "attack",            "decreased": "special-attack"},
+        "Brave"  : {"increased": "attack",            "decreased": "speed"},
+        "Timid"  : {"increased": "speed",             "decreased": "attack"},
+        "Modest" : {"increased": "special-attack",    "decreased": "attack"},
+        "Quiet"  : {"increased": "special-attack",    "decreased": "speed"},
+        "Hasty"  : {"increased": "speed",             "decreased": "defense"},
+        "Naive"  : {"increased": "speed",             "decreased": "special-defense"},
+        "Rash"   : {"increased": "special-attack",    "decreased": "special-defense"},
+        "Mild"   : {"increased": "special-attack",    "decreased": "defense"},
+        "Hardy"  : {"increased": None,                "decreased": None},
+    }
+
+    # Special fast Pokémon (Charizard: SpA 109 > Atk 84, Speed 100 ≥ 90)
+    _char_stats = {"hp": 78, "attack": 84, "defense": 78,
+                   "special-attack": 109, "special-defense": 85, "speed": 100}
+    profiles = build_profiles(_char_stats, _all_natures)
+
+    check("build_profiles: always returns exactly 2 profiles", len(profiles) == 2)
+
+    required_keys = {"label", "nature", "nature_inc", "nature_dec", "ev_spread", "stats"}
+    check("build_profiles: each profile has required keys",
+          all(required_keys <= set(p.keys()) for p in profiles))
+
+    check("build_profiles: each profile has 6 stat rows",
+          all(len(p["stats"]) == 6 for p in profiles))
+
+    # Special fast → Timid profile 1, Modest profile 2
+    check("build_profiles: special+fast profile 1 → Timid",
+          profiles[0]["nature"] == "Timid")
+    check("build_profiles: special+fast profile 2 → Modest",
+          profiles[1]["nature"] == "Modest")
+
+    # Physical fast Pokémon (Garchomp: Atk 130 > SpA 80, Speed 102 ≥ 90)
+    _garc_stats = {"hp": 108, "attack": 130, "defense": 95,
+                   "special-attack": 80, "special-defense": 85, "speed": 102}
+    profiles_g = build_profiles(_garc_stats, _all_natures)
+    check("build_profiles: physical+fast profile 1 → Jolly",
+          profiles_g[0]["nature"] == "Jolly")
+    check("build_profiles: physical+fast profile 2 → Adamant",
+          profiles_g[1]["nature"] == "Adamant")
+
+    # EV total per profile = 508 (252+252+4)
+    check("build_profiles: EV total = 508 per profile",
+          all(sum(p["ev_spread"].values()) == 508 for p in profiles))
+
+    # Timid profile 1 final SpA > Modest profile 1 final SpA (speed-safe has no +SpA)
+    sp1 = next(r["final"] for r in profiles[0]["stats"] if r["key"] == "special-attack")
+    sp2 = next(r["final"] for r in profiles[1]["stats"] if r["key"] == "special-attack")
+    check("build_profiles: Modest profile has higher SpA than Timid profile",
+          sp2 > sp1)
+
+    # Timid profile 1 final Speed > Modest profile 2 final Speed (more speed with +Spe)
+    spe1 = next(r["final"] for r in profiles[0]["stats"] if r["key"] == "speed")
+    spe2 = next(r["final"] for r in profiles[1]["stats"] if r["key"] == "speed")
+    check("build_profiles: Timid profile has higher Speed than Modest profile",
+          spe1 > spe2)
+
+    # ── _print_build_profiles (stdout capture) ────────────────────────────────
+    import io as _io3, contextlib as _cl3
+    buf_b = _io3.StringIO()
+    with _cl3.redirect_stdout(buf_b):
+        _print_build_profiles(profiles, "Charizard")
+    out_b = buf_b.getvalue()
+
+    check("_print_build_profiles: form name present", "Charizard" in out_b)
+    check("_print_build_profiles: Timid nature shown", "Timid" in out_b)
+    check("_print_build_profiles: Modest nature shown", "Modest" in out_b)
+    check("_print_build_profiles: assumption note shown", "31 IVs" in out_b)
+    check("_print_build_profiles: Sp. Attack shown in stat rows", "Sp. Attack" in out_b)
 
     print()
     if failed:

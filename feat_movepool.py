@@ -340,6 +340,10 @@ def run(pkm_ctx: dict, game_ctx: dict, constraints: list = None) -> None:
         input("\n  Press Enter to continue...")
         return
 
+    age = cache.get_learnset_age_days(variety_slug, game)
+    if age is not None and age > cache.LEARNSET_STALE_DAYS:
+        print(f"  [ learnset cached {age} days ago — press R to refresh ]")
+
     _display_learnset(learnset, pkm_ctx, game_ctx, constraints or [])
 
     choice = input("\n  Filter? (f to filter, Enter to return): ").strip().lower()

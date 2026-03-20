@@ -124,6 +124,26 @@ def _get(path):
         raise ConnectionError(f"Could not reach pokeapi.co: {e.reason}")
 
 
+def check_connectivity() -> bool:
+    """
+    Return True if PokeAPI is reachable, False on any network failure.
+
+    Makes a lightweight GET to the API root (small metadata response).
+    Uses a 3-second timeout — much faster than the normal 10s fetch timeout.
+    Intended for the startup offline-mode check in pokemain.py; not used in
+    normal data-fetching paths.
+    """
+    try:
+        req = urllib.request.Request(
+            f"{BASE_URL}/",
+            headers={"User-Agent": "pkm-toolkit/2.0 (connectivity check)"}
+        )
+        urllib.request.urlopen(req, timeout=3)
+        return True
+    except Exception:
+        return False
+
+
 # ── Name / slug helpers ───────────────────────────────────────────────────────
 
 def _name_to_slug(name: str) -> str:
@@ -517,6 +537,67 @@ def fetch_all_moves(dry_run: bool = False) -> dict:
     return results
 
 
+def fetch_missing_moves() -> dict:
+    """
+    Fetch only the moves not yet in moves.json.
+
+    Queries the full move list from PokeAPI, checks each slug against the
+    local cache (case-insensitive), and fetches only the missing ones.
+    Returns {display_name: [versioned_entry, ...]} for newly fetched moves only.
+    Returns an empty dict if the cache is already complete.
+
+    Raises ConnectionError if the initial move-list request fails.
+    Individual per-move failures are silently skipped (same behaviour as
+    fetch_all_moves).
+    """
+    import pkm_cache as _cache
+
+    all_data  = _get("move?limit=2000")
+    all_slugs = [e["name"] for e in all_data["results"]]
+    missing   = [s for s in all_slugs if _cache.get_move(s) is None]
+
+    if not missing:
+        return {}
+
+    total   = len(missing)
+    results = {}
+
+    for i, slug in enumerate(missing, start=1):
+        print(f"  Fetching moves: {i} / {total}   ", end="\r", flush=True)
+        try:
+            move_data    = _get(f"move/{slug}")
+            display_name = _en_name(move_data.get("names", []), None)
+            if not display_name:
+                display_name = slug.replace("-", " ").title()
+
+            meta   = move_data.get("meta") or {}
+            effect = ""
+            for eff_entry in move_data.get("effect_entries", []):
+                if eff_entry.get("language", {}).get("name") == "en":
+                    effect = eff_entry.get("short_effect", "").replace("\n", " ").strip()
+                    break
+            current = {
+                "type"         : _TYPE_NAMES.get(move_data["type"]["name"],
+                                                 move_data["type"]["name"].capitalize()),
+                "category"     : _CATEGORY_NAMES.get(move_data["damage_class"]["name"],
+                                                     move_data["damage_class"]["name"].capitalize()),
+                "power"        : move_data.get("power"),
+                "accuracy"     : move_data.get("accuracy"),
+                "pp"           : move_data.get("pp"),
+                "priority"     : move_data.get("priority", 0),
+                "drain"        : meta.get("drain", 0) or 0,
+                "effect_chance": move_data.get("effect_chance") or 0,
+                "ailment"      : (meta.get("ailment") or {}).get("name", "none"),
+                "effect"       : effect,
+            }
+            intro_gen = _gen_name_to_int(move_data["generation"]["name"])
+            past_vals = move_data.get("past_values", [])
+            results[display_name] = _build_versioned_entries(current, intro_gen, past_vals)
+        except (ValueError, ConnectionError):
+            pass
+
+    print(f"  Fetched {len(results)} missing move(s).                    ")
+    return results
 
 
 # ── Step 4: Learnset fetch ────────────────────────────────────────────────────
@@ -1303,6 +1384,57 @@ def _test_fetch_pokemon_offline():
     return True
 
 
+def _test_check_connectivity():
+    """
+    Offline tests for check_connectivity() using a mocked urlopen.
+    Temporarily replaces urllib.request.urlopen at the module level.
+    """
+    import urllib.request as _ureq
+    import urllib.error   as _uerr
+
+    orig_urlopen = _ureq.urlopen
+    results = []
+
+    def _chk(label, cond):
+        if cond:
+            print(f"  [PASS] check_connectivity: {label}")
+            results.append(True)
+        else:
+            print(f"  [FAIL] check_connectivity: {label}")
+            results.append(False)
+
+    try:
+        # T1: urlopen succeeds → True
+        class _MockResp:
+            def read(self): return b"{}"
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+
+        _ureq.urlopen = lambda req, timeout=None: _MockResp()
+        _chk("urlopen succeeds → True", check_connectivity() is True)
+
+        # T2: URLError → False
+        def _raise_url(*a, **kw):
+            raise _uerr.URLError("network unreachable")
+        _ureq.urlopen = _raise_url
+        _chk("URLError → False", check_connectivity() is False)
+
+        # T3: generic OSError → False
+        def _raise_os(*a, **kw):
+            raise OSError("timed out")
+        _ureq.urlopen = _raise_os
+        _chk("OSError → False", check_connectivity() is False)
+
+    finally:
+        _ureq.urlopen = orig_urlopen
+
+    if all(results):
+        print("  [PASS] All 3 check_connectivity tests passed")
+    else:
+        print(f"  [FAIL] {results.count(False)} check_connectivity test(s) failed")
+    return all(results)
+
+
 def main():
     verify  = "--verify"   in sys.argv
     dry_run = "--dry-run"  in sys.argv
@@ -1324,6 +1456,9 @@ def main():
 
     print("\nRunning fetch_pokemon offline unit tests...")
     _test_fetch_pokemon_offline()
+
+    print("\nRunning check_connectivity offline tests...")
+    _test_check_connectivity()
 
     if verify:
         print()

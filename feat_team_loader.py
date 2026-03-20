@@ -120,6 +120,116 @@ def print_team(team_ctx: list, game_ctx: dict = None) -> None:
 
 # ── Team management loop ──────────────────────────────────────────────────────
 
+# ── Batch team load helpers ───────────────────────────────────────────────────
+
+def _resolve_batch_name(raw: str, index: dict) -> str | None:
+    """
+    Resolve a raw name string to a pokemon slug via the local cache index.
+    Returns the slug, or None if unresolvable.
+    Ambiguous matches: picks first alphabetically and prints a warning.
+    """
+    from pkm_session import _index_search
+    needle  = raw.strip().lower()
+    matches = _index_search(needle, index)
+    if not matches:
+        return None
+    if len(matches) > 1:
+        print(f"  ?  '{raw}': multiple matches — using '{matches[0]}'.")
+    return matches[0]
+
+
+def _build_pkm_ctx_from_cache(slug: str) -> dict | None:
+    """
+    Build a pkm_ctx dict from cache for use in batch team load.
+    Uses the first (default) form. Returns None if not cached or incomplete.
+    """
+    import pkm_cache as cache
+    data = cache.get_pokemon(slug)
+    if not data or not data.get("forms"):
+        return None
+    form  = data["forms"][0]
+    types = form.get("types", [])
+    if not types:
+        return None
+    return {
+        "pokemon"           : slug,
+        "variety_slug"      : form.get("variety_slug", slug),
+        "form_name"         : form["name"],
+        "types"             : types,
+        "type1"             : types[0],
+        "type2"             : types[1] if len(types) > 1 else "None",
+        "species_gen"       : data.get("species_gen", 1),
+        "form_gen"          : data.get("species_gen", 1),
+        "base_stats"        : form.get("base_stats", {}),
+        "abilities"         : form.get("abilities", []),
+        "egg_groups"        : data.get("egg_groups", []),
+        "evolution_chain_id": data.get("evolution_chain_id"),
+    }
+
+
+def _fetch_and_build(slug: str) -> dict | None:
+    """
+    Fetch a Pokémon from PokeAPI, save to cache, and return a pkm_ctx dict.
+    Uses the default form. Returns None on network failure or unknown slug.
+    Separated as a module-level function so tests can patch it.
+    """
+    try:
+        import pkm_pokeapi as pokeapi
+        import pkm_cache as cache
+        data = pokeapi.fetch_pokemon(slug)
+        cache.save_pokemon(data["pokemon"], data)
+        return _build_pkm_ctx_from_cache(data["pokemon"])
+    except (ValueError, ConnectionError):
+        return None
+
+
+def _load_batch(raw: str, team_ctx: list) -> list:
+    """
+    Process a comma-separated name string, adding matched Pokémon to the team.
+
+    Resolution order for each name:
+      1. Local cache index (instant, no network)
+      2. PokeAPI fetch + cache on miss (lazy, with loading indicator)
+
+    Names that cannot be resolved even via PokeAPI are skipped with a note.
+    Always uses the default form for batch-loaded Pokémon.
+    """
+    import pkm_cache as cache
+    names = [n.strip() for n in raw.split(",") if n.strip()]
+    if not names:
+        return team_ctx
+    index = cache.get_index()
+    print(f"\n  Resolving {len(names)} Pokémon...")
+    for i, name in enumerate(names):
+        if team_size(team_ctx) >= MAX_SLOTS:
+            remaining = names[i:]
+            print(f"  —  Team full. Skipping: {', '.join(remaining)}.")
+            break
+
+        # Step 1: try local index + cache
+        slug = _resolve_batch_name(name, index)
+        pkm  = _build_pkm_ctx_from_cache(slug) if slug else None
+
+        # Step 2: fall back to PokeAPI on any miss
+        if pkm is None:
+            fetch_slug = slug or name.strip().lower()
+            print(f"  …  '{name}': not cached — fetching...", end=" ", flush=True)
+            pkm = _fetch_and_build(fetch_slug)
+            if pkm is None:
+                print("not found.")
+                continue
+            print(f"found ({pkm['form_name']}).")
+
+        try:
+            team_ctx, slot = add_to_team(team_ctx, pkm)
+            print(f"  ✓  {pkm['form_name']:<20} → slot {slot + 1}")
+        except TeamFullError:
+            remaining = names[i:]
+            print(f"  —  Team full. Skipping: {', '.join(remaining)}.")
+            break
+    return team_ctx
+
+
 def _team_menu(team_ctx: list, game_ctx: dict) -> list:
     """
     Interactive team management sub-menu.
@@ -139,7 +249,7 @@ def _team_menu(team_ctx: list, game_ctx: dict) -> list:
         print()
         hints = []
         if filled < MAX_SLOTS:
-            hints.append("type a name to add")
+            hints.append("name to add  |  name1, name2 to batch-add")
         if filled > 0:
             hints.append("-<n> to remove (e.g. -2)")
             hints.append("C to clear all")
@@ -175,6 +285,11 @@ def _team_menu(team_ctx: list, game_ctx: dict) -> list:
                 print(f"  Slot {idx+1} cleared.")
             except (ValueError, IndexError) as e:
                 print(f"\n  {e}")
+            continue
+
+        # ── Comma: batch load ────────────────────────────────────────────────
+        if "," in raw:
+            team_ctx = _load_batch(raw, team_ctx)
             continue
 
         # ── Otherwise: treat as Pokémon name to add ───────────────────────────
@@ -448,9 +563,181 @@ def _run_tests():
         ok("cmd: Dragonite → add (not remove)")
     else: fail("cmd Dragonite", f"({act2}, {val2})")
 
+    # ── _resolve_batch_name ───────────────────────────────────────────────────
+
+    batch_index = {
+        "charizard":   {"forms": [{"name": "Charizard",  "types": ["Fire","Flying"]}]},
+        "charmander":  {"forms": [{"name": "Charmander", "types": ["Fire"]}]},
+        "blastoise":   {"forms": [{"name": "Blastoise",  "types": ["Water"]}]},
+        "gengar":      {"forms": [{"name": "Gengar",     "types": ["Ghost","Poison"]}]},
+        "rotom-wash":  {"forms": [{"name": "Rotom-Wash", "types": ["Water","Electric"]}]},
+        "rotom-heat":  {"forms": [{"name": "Rotom-Heat", "types": ["Fire","Electric"]}]},
+    }
+
+    r = _resolve_batch_name("charizard", batch_index)
+    if r == "charizard":
+        ok("_resolve_batch_name: exact match → slug")
+    else: fail("_resolve_batch_name exact", str(r))
+
+    r = _resolve_batch_name("char", batch_index)
+    if r == "charizard":
+        ok("_resolve_batch_name: prefix match → first alpha result")
+    else: fail("_resolve_batch_name prefix", str(r))
+
+    r = _resolve_batch_name("xyz", batch_index)
+    if r is None:
+        ok("_resolve_batch_name: no match → None")
+    else: fail("_resolve_batch_name no match", str(r))
+
+    import io, contextlib
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        r = _resolve_batch_name("rotom", batch_index)
+    if r == "rotom-heat" and "multiple matches" in buf.getvalue():
+        ok("_resolve_batch_name: ambiguous → first alpha + warning printed")
+    else: fail("_resolve_batch_name ambiguous", f"r={r} out={buf.getvalue()[:60]}")
+
+    # ── _build_pkm_ctx_from_cache ─────────────────────────────────────────────
+
+    import sys as _sys, os as _os, tempfile as _tmp, json as _json
+    import pkm_cache as _cache
+
+    with _tmp.TemporaryDirectory() as _td:
+        _orig_base  = _cache._BASE
+        _orig_pkm   = _cache._POKEMON_DIR
+        _orig_idx   = _cache._INDEX_FILE
+        _cache._BASE        = _td
+        _cache._POKEMON_DIR = _os.path.join(_td, "pokemon")
+        _cache._INDEX_FILE  = _os.path.join(_td, "pokemon_index.json")
+        _os.makedirs(_cache._POKEMON_DIR, exist_ok=True)
+
+        try:
+            _cache.save_pokemon("charizard", {
+                "pokemon": "charizard", "species_gen": 1,
+                "egg_groups": ["monster", "dragon"], "evolution_chain_id": 1,
+                "forms": [{"name": "Charizard", "variety_slug": "charizard",
+                           "types": ["Fire","Flying"], "base_stats": {"hp":78},
+                           "abilities": [{"slug":"blaze","is_hidden":False}]}],
+            })
+            ctx = _build_pkm_ctx_from_cache("charizard")
+            required = {"pokemon","variety_slug","form_name","types","type1","type2",
+                        "species_gen","form_gen","base_stats","abilities",
+                        "egg_groups","evolution_chain_id"}
+            if ctx is not None and required <= set(ctx.keys()):
+                ok("_build_pkm_ctx_from_cache: valid cache → all required keys")
+            else: fail("_build_pkm_ctx_from_cache valid", str(ctx))
+
+            if ctx and ctx["type1"] == "Fire" and ctx["type2"] == "Flying":
+                ok("_build_pkm_ctx_from_cache: types populated correctly")
+            else: fail("_build_pkm_ctx_from_cache types", str(ctx))
+
+            ctx_miss = _build_pkm_ctx_from_cache("pikachu")
+            if ctx_miss is None:
+                ok("_build_pkm_ctx_from_cache: missing cache → None")
+            else: fail("_build_pkm_ctx_from_cache miss", str(ctx_miss))
+
+            # ── _load_batch ───────────────────────────────────────────────────
+
+            # Also cache blastoise so batch can resolve it
+            _cache.save_pokemon("blastoise", {
+                "pokemon": "blastoise", "species_gen": 1,
+                "egg_groups": ["monster"], "evolution_chain_id": 2,
+                "forms": [{"name": "Blastoise", "variety_slug": "blastoise",
+                           "types": ["Water"], "base_stats": {"hp":79},
+                           "abilities": [{"slug":"torrent","is_hidden":False}]}],
+            })
+
+            # 2 valid names → team_size == 2
+            t_empty = new_team()
+            buf2 = io.StringIO()
+            with contextlib.redirect_stdout(buf2):
+                t_result = _load_batch("charizard, blastoise", t_empty)
+            if team_size(t_result) == 2:
+                ok("_load_batch: 2 valid names → team_size == 2")
+            else: fail("_load_batch 2 names", f"size={team_size(t_result)}")
+
+            # 1 unresolvable + 1 valid → adds 1, skips 1
+            # Patch _fetch_and_build to simulate network failure (pikachu not cached)
+            import sys as _sys2
+            _self2 = _sys2.modules[__name__]
+            _orig_fab = _self2._fetch_and_build
+            _self2._fetch_and_build = lambda slug: None  # network always fails
+
+            t_empty2 = new_team()
+            buf3 = io.StringIO()
+            with contextlib.redirect_stdout(buf3):
+                t_result2 = _load_batch("pikachu, charizard", t_empty2)
+            _self2._fetch_and_build = _orig_fab  # restore
+
+            if team_size(t_result2) == 1:
+                ok("_load_batch: 1 miss + 1 hit (API fail) → team_size == 1")
+            else: fail("_load_batch miss+hit", f"size={team_size(t_result2)}")
+
+            # PokeAPI fallback: name not in index → _fetch_and_build called and succeeds
+            _pikachu_ctx = {
+                "pokemon": "pikachu", "variety_slug": "pikachu",
+                "form_name": "Pikachu", "types": ["Electric"],
+                "type1": "Electric", "type2": "None",
+                "species_gen": 1, "form_gen": 1,
+                "base_stats": {"hp": 35}, "abilities": [],
+                "egg_groups": [], "evolution_chain_id": None,
+            }
+            _fetch_calls = []
+            def _mock_fab(slug):
+                _fetch_calls.append(slug)
+                return _pikachu_ctx if slug == "pikachu" else None
+
+            _self2._fetch_and_build = _mock_fab
+            t_empty3 = new_team()
+            buf_fab = io.StringIO()
+            with contextlib.redirect_stdout(buf_fab):
+                t_result_fab = _load_batch("pikachu", t_empty3)
+            _self2._fetch_and_build = _orig_fab
+
+            if team_size(t_result_fab) == 1 and len(_fetch_calls) == 1:
+                ok("_load_batch: PokeAPI fallback called on cache miss, Pokémon added")
+            else: fail("_load_batch PokeAPI fallback", f"size={team_size(t_result_fab)} calls={_fetch_calls}")
+
+            if "fetching" in buf_fab.getvalue():
+                ok("_load_batch: 'fetching' loading indicator shown during API call")
+            else: fail("_load_batch fetching indicator", buf_fab.getvalue()[:80])
+
+            # Full team (5/6) + 2 names → adds 1, reports remaining skipped
+            t_full5 = new_team()
+            for _ in range(5):
+                t_full5, _ = add_to_team(t_full5, _build_pkm_ctx_from_cache("charizard"))
+            buf4 = io.StringIO()
+            with contextlib.redirect_stdout(buf4):
+                t_result3 = _load_batch("blastoise, charizard", t_full5)
+            if team_size(t_result3) == 6:
+                ok("_load_batch: 5/6 team + 2 names → fills to 6")
+            else: fail("_load_batch 5/6 team", f"size={team_size(t_result3)}")
+
+            # Full team → adds 0
+            buf5 = io.StringIO()
+            with contextlib.redirect_stdout(buf5):
+                t_result4 = _load_batch("charizard", t_result3)
+            if team_size(t_result4) == 6 and "full" in buf5.getvalue().lower():
+                ok("_load_batch: full team → 0 added, team-full note shown")
+            else: fail("_load_batch full team", f"size={team_size(t_result4)}")
+
+        finally:
+            _cache._BASE        = _orig_base
+            _cache._POKEMON_DIR = _orig_pkm
+            _cache._INDEX_FILE  = _orig_idx
+
+    # Comma detection: "char, blas" → batch path; "charizard" → single-name path
+    if "," in "char, blas":
+        ok("comma detection: 'char, blas' contains comma → batch path")
+    else: fail("comma detection batch")
+
+    if "," not in "charizard":
+        ok("comma detection: 'charizard' no comma → single-name path")
+    else: fail("comma detection single")
+
     # ── summary ───────────────────────────────────────────────────────────────
     print()
-    total = 28
+    total = 41
     if errors:
         print(f"  FAILED ({len(errors)}): {errors}")
         sys.exit(1)
