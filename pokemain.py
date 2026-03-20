@@ -76,13 +76,37 @@ def _format_stats(base_stats):
     spd  = base_stats.get("special-defense", "?")
     spe  = base_stats.get("speed", "?")
     try:    total = str(hp + atk + def_ + spa + spd + spe)
-    except: total = "?"
+    except (TypeError, ValueError): total = "?"
     return f"HP{hp} Atk{atk} Def{def_} SpA{spa} SpD{spd} Spe{spe}  Total {total}"
 
 
 # ── Menu renderers ────────────────────────────────────────────────────────────
 
-W = 52   # inner width of the menu box
+W = 52              # inner width of the menu box
+_CACHE_SEP_WIDTH = 46   # separator width in the --cache-info display
+
+# All valid menu choices.  Used as documentation and to keep the dispatcher
+# in sync; the elif chain in main() is the authoritative handler.
+_MENU_CHOICES = frozenset({
+    "q",    # quit
+    "p",    # load pokemon
+    "g",    # select game
+    "r",    # refresh pokemon
+    "t",    # team management
+    "v",    # team defensive analysis
+    "o",    # team offensive coverage
+    "s",    # team moveset synergy
+    "h",    # team builder suggestions
+    "m",    # move lookup
+    "b",    # type browser
+    "n",    # nature browser
+    "a",    # ability browser
+    "c",    # stat comparison
+    "l",    # learnset compare
+    "e",    # egg group browser
+    "move", # pre-load move table (multi-char key)
+    "w",    # pre-load TM/HM table
+})
 
 def _box_line(text=""):
     return f"│  {text:<{W}}│"
@@ -245,12 +269,12 @@ def _handle_diagnostic_flags(args: list) -> None:
         moves_val  = info.get("moves", 0)
         moves_note = f"  (schema v{cache.MOVES_CACHE_VERSION})" if moves_val > 0 else ""
         print("\n  Cache contents:")
-        print("  " + "─" * 46)
+        print("  " + "─" * _CACHE_SEP_WIDTH)
         for key, label in labels:
             val  = info.get(key, 0)
             note = moves_note if key == "moves" else ""
             print(f"  {label:<20}: {val:>5}{note}")
-        print("  " + "─" * 46)
+        print("  " + "─" * _CACHE_SEP_WIDTH)
         total = sum(info.values())
         print(f"  {'Total':<20}: {total:>5}")
         sys.exit(0)

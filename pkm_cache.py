@@ -1132,20 +1132,20 @@ def get_cache_info() -> dict:
     try:
         moves_data = get_moves() or {}
         moves_count = sum(1 for k in moves_data if not k.startswith("_"))
-    except Exception:
+    except (OSError, ValueError, TypeError):
         pass
 
     # natures / abilities_index: count dict entries
     natures_count = 0
     try:
         natures_count = len(get_natures() or {})
-    except Exception:
+    except (OSError, ValueError, TypeError):
         pass
 
     abilities_count = 0
     try:
         abilities_count = len(get_abilities_index() or {})
-    except Exception:
+    except (OSError, ValueError, TypeError):
         pass
 
     return {

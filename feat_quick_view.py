@@ -30,6 +30,8 @@ except ModuleNotFoundError as e:
 
 # ── Base stats display ───────────────────────────────────────────────────────
 
+_SEP_WIDTH = 46   # width of section separator lines throughout this module
+
 _STAT_LABELS = [
     ("hp",             "HP"),
     ("attack",         "Atk"),
@@ -53,14 +55,14 @@ def _print_base_stats(base_stats: dict, form_name: str) -> None:
     if not base_stats:
         return
     print(f"\n  Base stats — {form_name}")
-    print("  " + "─" * 46)
+    print("  " + "─" * _SEP_WIDTH)
     total = 0
     for key, label in _STAT_LABELS:
         val = base_stats.get(key, 0)
         total += val
         bar = _stat_bar(val)
         print(f"  {label:<4}  {val:>3}  {bar}")
-    print("  " + "─" * 46)
+    print("  " + "─" * _SEP_WIDTH)
     print(f"  {'Total':>8}  {total:>3}")
     from feat_stat_compare import infer_role, infer_speed_tier
     role = infer_role(base_stats)
@@ -80,11 +82,11 @@ def _print_abilities_section(abilities: list, form_name: str) -> None:
     try:
         import pkm_cache as _cache
         index = _cache.get_abilities_index()
-    except Exception:
+    except (ImportError, OSError, ValueError):
         index = None
 
     print(f"\n  Abilities — {form_name}")
-    print("  " + "─" * 46)
+    print("  " + "─" * _SEP_WIDTH)
     for ab in abilities:
         slug      = ab.get("slug", "")
         is_hidden = ab.get("is_hidden", False)
@@ -121,7 +123,7 @@ def run(pkm_ctx: dict, game_ctx: dict, constraints: list = None) -> None:
     if egg_groups:
         from feat_egg_group import format_egg_groups
         print(f"\n  Egg groups — {form_name}")
-        print("  " + "─" * 46)
+        print("  " + "─" * _SEP_WIDTH)
         print(f"  {format_egg_groups(egg_groups)}")
 
     calc.print_results(
@@ -137,8 +139,6 @@ def run(pkm_ctx: dict, game_ctx: dict, constraints: list = None) -> None:
     if paths is not None:
         display_evolution_block(pkm_ctx, paths,
                                 game_gen=game_ctx.get("game_gen"))
-
-    input("\n  Press Enter to continue...")
 
 
 # ── Standalone entry point ────────────────────────────────────────────────────
