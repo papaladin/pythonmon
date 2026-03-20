@@ -1,7 +1,7 @@
 name: Build executables
 
 # Runs automatically when you publish a GitHub Release,
-# OR manually from the Actions tab (useful for testing).
+# OR manually from the Actions tab (build only, no upload).
 on:
   release:
     types: [published]
@@ -41,16 +41,24 @@ jobs:
       - name: Build executable
         run: python build.py
 
-      - name: Rename artifact for release (Unix)
+      - name: Rename artifact (Unix)
         if: runner.os != 'Windows'
         run: mv dist/${{ matrix.artifact_name }} dist/${{ matrix.asset_name }}
 
-      - name: Rename artifact for release (Windows)
+      - name: Rename artifact (Windows)
         if: runner.os == 'Windows'
         run: Rename-Item dist\${{ matrix.artifact_name }} ${{ matrix.asset_name }}
         shell: pwsh
 
-      - name: Upload to GitHub Release
+      - name: Upload artifact (always — downloadable from Actions run page)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: dist/${{ matrix.asset_name }}
+          retention-days: 30
+
+      - name: Upload to GitHub Release (only when triggered by a release)
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: dist/${{ matrix.asset_name }}
