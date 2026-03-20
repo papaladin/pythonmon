@@ -40,6 +40,8 @@ jobs:
 
       - name: Build executable
         run: python build.py
+        env:
+          PYTHONUTF8: "1"
 
       - name: Rename artifact (Unix)
         if: runner.os != 'Windows'
