@@ -183,9 +183,11 @@ def _print_stat_header(pkm_a: dict, pkm_b: dict) -> None:
     for r in rows:
         ma = "★" if r["winner"] == "a" else ("•" if r["winner"] == "tie" else " ")
         mb = "★" if r["winner"] == "b" else ("•" if r["winner"] == "tie" else " ")
-        print(f"  {_LABELS.get(r['key'], r['key']):<8}  {r['val_a']:>3} {ma}    {r['val_b']:>3} {mb}")
+        left_val = f"{r['val_a']:>3} {ma}"
+        print(f"  {_LABELS.get(r['key'], r['key']):<8}  {left_val:<{_left_w}}  {r['val_b']:>3} {mb}")
     print("  " + "-" * _STAT_W)
-    print(f"  {'Total':<8}  {tot_a:>3} {mark_a}    {tot_b:>3} {mark_b}")
+    left_total = f"{tot_a:>3} {mark_a}"
+    print(f"  {'Total':<8}  {left_total:<{_left_w}}  {tot_b:>3} {mark_b}")
     print(f"  {'Role':<8}  {role_a:<{_left_w}}  {role_b}")
     print("  " + "=" * _STAT_W)
 

@@ -139,7 +139,7 @@ def run(pkm_ctx: dict, game_ctx: dict, constraints: list = None) -> None:
     if paths is not None:
         display_evolution_block(pkm_ctx, paths,
                                 game_gen=game_ctx.get("game_gen"))
-
+        
     input("\n  Press Enter to continue...")
 
 
