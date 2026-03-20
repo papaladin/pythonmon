@@ -141,6 +141,29 @@ def _print_stat_header(pkm_a: dict, pkm_b: dict) -> None:
     """Brief stat comparison header shown above the learnset sections."""
     bs_a  = pkm_a.get("base_stats", {})
     bs_b  = pkm_b.get("base_stats", {})
+
+    # Guard: base_stats must be a non-empty dict.  Old cache entries could store
+    # it as a list of PokeAPI stat objects, or pkm_ctx could arrive with an empty
+    # dict when the cache was read before the pokemon file was fully written
+    # (timing edge case on first load).  In either case, fall back to re-reading
+    # directly from the pokemon cache by form name.
+    def _ensure_stats(pkm: dict, bs: dict) -> dict:
+        if isinstance(bs, dict) and bs:
+            return bs
+        try:
+            data = cache.get_pokemon(pkm.get("pokemon", ""))
+            if data:
+                form_name = pkm.get("form_name", "")
+                form = next((f for f in data.get("forms", [])
+                             if f["name"] == form_name), None)
+                if form and isinstance(form.get("base_stats"), dict):
+                    return form["base_stats"]
+        except Exception:
+            pass
+        return {}
+
+    bs_a = _ensure_stats(pkm_a, bs_a)
+    bs_b = _ensure_stats(pkm_b, bs_b)
     tot_a = total_stats(bs_a)
     tot_b = total_stats(bs_b)
     role_a = f"{infer_role(bs_a).capitalize()} / {infer_speed_tier(bs_a).capitalize()}"

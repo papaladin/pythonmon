@@ -103,9 +103,22 @@ def _attacking_coverage(move_type: str, era_key: str):
 def _fmt(v, suffix=""):
     return f"{v}{suffix}" if v is not None else "--"
 
-def _display_move(name: str, entry: dict, game_ctx: dict):
+def _acc_fmt(v):
+    """Format accuracy: show 'always hits' for null accuracy moves."""
+    if v is None:
+        return "(always hits)"
+    return f"{v}%"
+
+def _pp_fmt(v):
+    """Format PP."""
+    if v is None:
+        return "--"
+    return str(v)
+
+def _display_move(name: str, entry: dict, game_ctx: dict, all_entries: list = None):
     era_key   = game_ctx["era_key"]
     game      = game_ctx["game"]
+    game_gen  = game_ctx["game_gen"]
     move_type = entry.get("type", "--")
     category  = entry.get("category", "--")
 
@@ -116,12 +129,35 @@ def _display_move(name: str, entry: dict, game_ctx: dict):
     print(f"  Type      : {move_type}")
     print(f"  Category  : {category}")
     print(f"  Power     : {_fmt(entry.get('power'))}")
-    print(f"  Accuracy  : {_fmt(entry.get('accuracy'), '%')}")
-    print(f"  PP        : {_fmt(entry.get('pp'))}")
+    print(f"  Accuracy  : {_acc_fmt(entry.get('accuracy'))}")
+    print(f"  PP        : {_pp_fmt(entry.get('pp'))}")
 
     effect = entry.get("effect", "")
     if effect:
         print(f"  Effect    : {effect}")
+
+    # Version history — show how stats changed across generations
+    if all_entries and len(all_entries) > 1:
+        print()
+        print("  Version history:")
+        for e in all_entries:
+            apps = e.get("applies_to_games")
+            if apps:
+                gen_range = f"  {', '.join(apps)}"
+            else:
+                fg = e.get("from_gen")
+                tg = e.get("to_gen")
+                if fg is None:
+                    continue
+                gen_range = f"  Gen {fg}–{tg if tg else 'now'}"
+                if fg == tg:
+                    gen_range = f"  Gen {fg}"
+            active = " ◄" if e is entry else ""
+            pwr = _fmt(e.get("power"))
+            acc = _acc_fmt(e.get("accuracy"))
+            pp  = _pp_fmt(e.get("pp"))
+            cat = e.get("category", "--")
+            print(f"  {gen_range:<18}  {cat:<10}  Pwr {pwr:<5}  Acc {acc:<16}  PP {pp}{active}")
 
     # Coverage only for damaging moves whose type exists in this era
     _, valid_types, _ = calc.CHARTS[era_key]
@@ -163,7 +199,7 @@ def _lookup_loop(game_ctx: dict):
         if entry is None:
             print(f"  '{canonical}' did not exist in {game_ctx['game']}.")
         else:
-            _display_move(canonical, entry, game_ctx)
+            _display_move(canonical, entry, game_ctx, all_entries=result)
 
 
 # ── Entry points ──────────────────────────────────────────────────────────────
