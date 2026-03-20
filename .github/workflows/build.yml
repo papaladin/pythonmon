@@ -1,0 +1,57 @@
+name: Build executables
+
+# Runs automatically when you publish a GitHub Release,
+# OR manually from the Actions tab (useful for testing).
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: pokemain.exe
+            asset_name: pokemain-windows.exe
+          - os: macos-latest
+            artifact_name: pokemain
+            asset_name: pokemain-macos
+          - os: ubuntu-latest
+            artifact_name: pokemain
+            asset_name: pokemain-linux
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install requests pyinstaller
+
+      - name: Build executable
+        run: python build.py
+
+      - name: Rename artifact for release (Unix)
+        if: runner.os != 'Windows'
+        run: mv dist/${{ matrix.artifact_name }} dist/${{ matrix.asset_name }}
+
+      - name: Rename artifact for release (Windows)
+        if: runner.os == 'Windows'
+        run: Rename-Item dist\${{ matrix.artifact_name }} ${{ matrix.asset_name }}
+        shell: pwsh
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ matrix.asset_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
