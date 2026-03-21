@@ -64,12 +64,24 @@ Schema:
       "title": "Champion",
       "order": 12,
       "party": [
-        {"name": "Spiritomb",  "types": ["Ghost", "Dark"],    "level": 61},
-        {"name": "Roserade",   "types": ["Grass", "Poison"],  "level": 60},
-        {"name": "Togekiss",   "types": ["Normal", "Flying"], "level": 60},
-        {"name": "Lucario",    "types": ["Fighting", "Steel"],"level": 63},
-        {"name": "Milotic",    "types": ["Water"],             "level": 63},
-        {"name": "Garchomp",   "types": ["Dragon", "Ground"],  "level": 66}
+        {
+          "name": "Spiritomb",
+          "types": ["Ghost", "Dark"],
+          "level": 61,
+          "moves": ["Psychic", "Dark Pulse", "Shadow Ball", "Embargo"]
+        },
+        {
+          "name": "Roserade",
+          "types": ["Grass", "Poison"],
+          "level": 60,
+          "moves": ["Grass Knot", "Sludge Bomb", "Shadow Ball", "Extrasensory"]
+        },
+        {
+          "name": "Garchomp",
+          "types": ["Dragon", "Ground"],
+          "level": 66,
+          "moves": ["Dragon Rush", "Earthquake", "Giga Impact", "Crunch"]
+        }
       ]
     }
   }
@@ -80,6 +92,7 @@ Key design decisions:
 - Keyed by game_slug (matches game_ctx["game_slug"]) then trainer name.
   The G key already filters to the right opponents automatically.
 - Types stored directly in the data file — no PokeAPI call needed at runtime.
+- Moves field includes the opponent Pokémon's moveset (typically 1–4 moves) for matchup analysis. Enables move-specific coverage calculations and strategy recommendations
 - Level included for display context only; not used in calculations.
 - "order" field controls picker sort order (gym 1 first, E4 after, Champion
   last). Falls back to alphabetical if absent.
@@ -144,6 +157,7 @@ def analyze_matchup(team_ctx, trainer, era_key) -> list[dict]
     #   threats  — team members weak to it (form_name, multiplier)
     #   resists  — team members that resist it (form_name, multiplier)
     #   counters — team members with SE type advantage (form_name, [types])
+    #   moveset  — opponent's moves, used for defensive/offensive coverage analysis
 
 def uncovered_threats(matchup_results) -> list[dict]
     # Trainer Pokemon that no team member can hit SE.
