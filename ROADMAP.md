@@ -32,6 +32,25 @@
 | Quick wins batch (Pythonmon 1–4, 16) | Loading indicator (S screen), fuzzy name search, batch move upserts, session pool cache, get_form_gen bug fix | §72–§76 |
 | Quick wins batch 2 (Pythonmon 5, 12, 13) | Cache integrity check (`--check-cache`), add-to-team prompt after P, partial move refresh (F option in MOVE) | §77–§79 |
 | Per-form learnset fix (Pythonmon-10) | `fetch_pokemon` stores `form_slug` as `variety_slug`; correct learnset for forms where form slug ≠ variety slug | §80 |
+| Move filter in pool (Pythonmon-6) | Filter learnable moves by type / category / power; full table shown first, prompt at bottom | §81 |
+| Stat comparison (Pythonmon-8) | Side-by-side bar chart comparison of two Pokemon; key C | §82 |
+| Role & speed tier display (Pythonmon-32) | Added to quick view and stat compare; pure inference from base stats | §83 |
+| Move effect description (Pythonmon-28) | Effect text from PokeAPI shown in move lookup (key M) | §84 |
+| Egg group browser (Pythonmon-27) | Full roster drill-in for all 15 egg groups; key E; per-variety learnset integration | §86–§88 |
+| Evolution chain display (Pythonmon-9) | Per-game filtered chain with trigger descriptions; generation-aware; inline block on quick view | §89–§91 |
+| Cache size report (Pythonmon-17) | `--cache-info` flag showing counts per cache layer | §92 |
+| Offline mode detection (Pythonmon-18) | PokeAPI connectivity probe at startup; clear warning when unreachable | §93 |
+| Learnset staleness flag (Pythonmon-19) | Shows cached age when learnset older than 30 days | §94 |
+| Move filter on scored pool (Pythonmon-20) | Extended filter from option 2 to option 3 (scored moveset) | §95 |
+| Batch team load (Pythonmon-22) | Comma-separated Pokemon names load multiple team slots at once | §96 |
+| Weakness overlap heatmap (Pythonmon-30) | V screen extended to show pairs of members with 2+ shared weaknesses | §97 |
+| Nature & EV build advisor (Pythonmon-24) | Four standard EV spreads with Lv100 stat calculations per role | §98 |
+| Learnset comparison (key L) | Side-by-side learnable moves; unique to each Pokemon highlighted | §99 |
+| Team builder / slot suggestion (Pythonmon-11, key H) | Given partial team, suggest 6 Pokemon to fill gaps; scored by coverage + intrinsic quality | §100 |
+| Menu cleanup (TD-1, TD-2, TD-5, TD-9) | Removed duplicates in menu display and constants; promoted _MENU_CHOICES to module level | §101–§102 |
+| PyInstaller packaging (PKG-1, PKG-2, PKG-3) | Standalone executables for Windows/macOS/Linux; sys.frozen guard; GitHub Actions build workflow | §103 |
+| Display bug fixes (4 fixes) | Move lookup accuracy/PP/version-history; quick view pause; learnset compare fallback | §104 |
+| Code quality sweep (TD-7, TD-8, TD-9) | Specific exception types; magic constants extracted; input validation improved | §105 |
 
 ---
 
