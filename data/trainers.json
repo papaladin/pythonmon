@@ -1,0 +1,819 @@
+{
+  "_meta": {
+    "version": 1,
+    "policy": "First encounter, normal difficulty, most feature-complete version of each game group (e.g. Platinum over Diamond/Pearl). Version differences and rematches are separate entries. Move names must match moves.json display names exactly.",
+    "sources": ["Bulbapedia", "Serebii"],
+    "coverage": {
+      "red-blue": "complete",
+      "yellow": "complete",
+      "platinum": "partial — Cynthia only"
+    }
+  },
+
+  "red-blue": {
+    "Brock": {
+      "title": "Gym Leader 1 — Rock",
+      "order": 1,
+      "party": [
+        {
+          "name": "Geodude",
+          "types": ["Rock", "Ground"],
+          "level": 12,
+          "moves": ["Tackle", "Defense Curl"]
+        },
+        {
+          "name": "Onix",
+          "types": ["Rock", "Ground"],
+          "level": 14,
+          "moves": ["Tackle", "Bind", "Screech"]
+        }
+      ]
+    },
+
+    "Misty": {
+      "title": "Gym Leader 2 — Water",
+      "order": 2,
+      "party": [
+        {
+          "name": "Staryu",
+          "types": ["Water"],
+          "level": 18,
+          "moves": ["Tackle", "Harden", "Water Gun", "Swift"]
+        },
+        {
+          "name": "Starmie",
+          "types": ["Water", "Psychic"],
+          "level": 21,
+          "moves": ["Tackle", "Harden", "Water Gun", "Bubblebeam"]
+        }
+      ]
+    },
+
+    "Lt. Surge": {
+      "title": "Gym Leader 3 — Electric",
+      "order": 3,
+      "party": [
+        {
+          "name": "Voltorb",
+          "types": ["Electric"],
+          "level": 21,
+          "moves": ["Tackle", "Screech", "Sonicboom"]
+        },
+        {
+          "name": "Pikachu",
+          "types": ["Electric"],
+          "level": 18,
+          "moves": ["Thundershock", "Growl", "Tail Whip", "Thunder Wave"]
+        },
+        {
+          "name": "Raichu",
+          "types": ["Electric"],
+          "level": 24,
+          "moves": ["Thundershock", "Growl", "Tail Whip", "Thunder Wave"]
+        }
+      ]
+    },
+
+    "Erika": {
+      "title": "Gym Leader 4 — Grass",
+      "order": 4,
+      "party": [
+        {
+          "name": "Victreebel",
+          "types": ["Grass", "Poison"],
+          "level": 29,
+          "moves": ["Razor Leaf", "Wrap", "Poison Powder", "Sleep Powder"]
+        },
+        {
+          "name": "Tangela",
+          "types": ["Grass"],
+          "level": 24,
+          "moves": ["Constrict", "Bind", "Absorb", "Growth"]
+        },
+        {
+          "name": "Vileplume",
+          "types": ["Grass", "Poison"],
+          "level": 29,
+          "moves": ["Acid", "Petal Dance", "Poison Powder", "Stun Spore"]
+        }
+      ]
+    },
+
+    "Koga": {
+      "title": "Gym Leader 5 — Poison",
+      "order": 5,
+      "party": [
+        {
+          "name": "Koffing",
+          "types": ["Poison"],
+          "level": 37,
+          "moves": ["Tackle", "Smog", "Smokescreen", "Self-Destruct"]
+        },
+        {
+          "name": "Muk",
+          "types": ["Poison"],
+          "level": 39,
+          "moves": ["Pound", "Disable", "Harden", "Minimize"]
+        },
+        {
+          "name": "Koffing",
+          "types": ["Poison"],
+          "level": 37,
+          "moves": ["Tackle", "Smog", "Smokescreen", "Self-Destruct"]
+        },
+        {
+          "name": "Weezing",
+          "types": ["Poison"],
+          "level": 43,
+          "moves": ["Tackle", "Smog", "Smokescreen", "Self-Destruct"]
+        }
+      ]
+    },
+
+    "Sabrina": {
+      "title": "Gym Leader 6 — Psychic",
+      "order": 6,
+      "party": [
+        {
+          "name": "Kadabra",
+          "types": ["Psychic"],
+          "level": 38,
+          "moves": ["Kinesis", "Disable", "Psybeam", "Recover"]
+        },
+        {
+          "name": "Mr. Mime",
+          "types": ["Psychic"],
+          "level": 37,
+          "moves": ["Barrier", "Confusion", "Psybeam", "Meditate"]
+        },
+        {
+          "name": "Venomoth",
+          "types": ["Bug", "Poison"],
+          "level": 38,
+          "moves": ["Disable", "Poison Powder", "Leech Life", "Psybeam"]
+        },
+        {
+          "name": "Alakazam",
+          "types": ["Psychic"],
+          "level": 43,
+          "moves": ["Kinesis", "Disable", "Psybeam", "Recover"]
+        }
+      ]
+    },
+
+    "Blaine": {
+      "title": "Gym Leader 7 — Fire",
+      "order": 7,
+      "party": [
+        {
+          "name": "Growlithe",
+          "types": ["Fire"],
+          "level": 42,
+          "moves": ["Ember", "Leer", "Roar", "Bite"]
+        },
+        {
+          "name": "Ponyta",
+          "types": ["Fire"],
+          "level": 40,
+          "moves": ["Ember", "Tail Whip", "Stomp", "Growl"]
+        },
+        {
+          "name": "Rapidash",
+          "types": ["Fire"],
+          "level": 42,
+          "moves": ["Ember", "Tail Whip", "Stomp", "Growl"]
+        },
+        {
+          "name": "Arcanine",
+          "types": ["Fire"],
+          "level": 47,
+          "moves": ["Ember", "Leer", "Roar", "Take Down"]
+        }
+      ]
+    },
+
+    "Giovanni": {
+      "title": "Gym Leader 8 — Ground",
+      "order": 8,
+      "party": [
+        {
+          "name": "Rhyhorn",
+          "types": ["Ground", "Rock"],
+          "level": 45,
+          "moves": ["Fury Attack", "Scary Face", "Stomp", "Tail Whip"]
+        },
+        {
+          "name": "Dugtrio",
+          "types": ["Ground"],
+          "level": 42,
+          "moves": ["Scratch", "Growl", "Dig", "Sand Attack"]
+        },
+        {
+          "name": "Nidoqueen",
+          "types": ["Poison", "Ground"],
+          "level": 44,
+          "moves": ["Scratch", "Tackle", "Tail Whip", "Poison Sting"]
+        },
+        {
+          "name": "Nidoking",
+          "types": ["Poison", "Ground"],
+          "level": 45,
+          "moves": ["Peck", "Focus Energy", "Double Kick", "Poison Sting"]
+        },
+        {
+          "name": "Rhydon",
+          "types": ["Ground", "Rock"],
+          "level": 50,
+          "moves": ["Fury Attack", "Scary Face", "Stomp", "Horn Drill"]
+        }
+      ]
+    },
+
+    "Lorelei": {
+      "title": "Elite Four 1 — Ice",
+      "order": 9,
+      "party": [
+        {
+          "name": "Dewgong",
+          "types": ["Water", "Ice"],
+          "level": 54,
+          "moves": ["Headbutt", "Aurora Beam", "Rest", "Take Down"]
+        },
+        {
+          "name": "Cloyster",
+          "types": ["Water", "Ice"],
+          "level": 53,
+          "moves": ["Clamp", "Aurora Beam", "Spike Cannon", "Supersonic"]
+        },
+        {
+          "name": "Slowbro",
+          "types": ["Water", "Psychic"],
+          "level": 54,
+          "moves": ["Disable", "Headbutt", "Withdraw", "Amnesia"]
+        },
+        {
+          "name": "Jynx",
+          "types": ["Ice", "Psychic"],
+          "level": 56,
+          "moves": ["Doubleslap", "Ice Punch", "Body Slam", "Lovely Kiss"]
+        },
+        {
+          "name": "Lapras",
+          "types": ["Water", "Ice"],
+          "level": 56,
+          "moves": ["Blizzard", "Body Slam", "Confuse Ray", "Sing"]
+        }
+      ]
+    },
+
+    "Bruno": {
+      "title": "Elite Four 2 — Fighting",
+      "order": 10,
+      "party": [
+        {
+          "name": "Onix",
+          "types": ["Rock", "Ground"],
+          "level": 53,
+          "moves": ["Tackle", "Screech", "Bide", "Slam"]
+        },
+        {
+          "name": "Hitmonchan",
+          "types": ["Fighting"],
+          "level": 55,
+          "moves": ["Comet Punch", "Agility", "Fire Punch", "Ice Punch"]
+        },
+        {
+          "name": "Hitmonlee",
+          "types": ["Fighting"],
+          "level": 55,
+          "moves": ["Double Kick", "Meditate", "Hi Jump Kick", "Rolling Kick"]
+        },
+        {
+          "name": "Onix",
+          "types": ["Rock", "Ground"],
+          "level": 54,
+          "moves": ["Tackle", "Screech", "Bide", "Slam"]
+        },
+        {
+          "name": "Machamp",
+          "types": ["Fighting"],
+          "level": 58,
+          "moves": ["Low Kick", "Leer", "Focus Energy", "Seismic Toss"]
+        }
+      ]
+    },
+
+    "Agatha": {
+      "title": "Elite Four 3 — Ghost",
+      "order": 11,
+      "party": [
+        {
+          "name": "Gengar",
+          "types": ["Ghost", "Poison"],
+          "level": 54,
+          "moves": ["Confuse Ray", "Night Shade", "Hypnosis", "Dream Eater"]
+        },
+        {
+          "name": "Haunter",
+          "types": ["Ghost", "Poison"],
+          "level": 53,
+          "moves": ["Lick", "Hypnosis", "Dream Eater", "Night Shade"]
+        },
+        {
+          "name": "Gengar",
+          "types": ["Ghost", "Poison"],
+          "level": 54,
+          "moves": ["Confuse Ray", "Night Shade", "Hypnosis", "Dream Eater"]
+        },
+        {
+          "name": "Arbok",
+          "types": ["Poison"],
+          "level": 58,
+          "moves": ["Wrap", "Screech", "Bite", "Glare"]
+        },
+        {
+          "name": "Gengar",
+          "types": ["Ghost", "Poison"],
+          "level": 58,
+          "moves": ["Confuse Ray", "Night Shade", "Hypnosis", "Dream Eater"]
+        }
+      ]
+    },
+
+    "Lance": {
+      "title": "Elite Four 4 — Dragon",
+      "order": 12,
+      "party": [
+        {
+          "name": "Gyarados",
+          "types": ["Water", "Flying"],
+          "level": 56,
+          "moves": ["Hydro Pump", "Bite", "Dragon Rage", "Leer"]
+        },
+        {
+          "name": "Dragonair",
+          "types": ["Dragon"],
+          "level": 54,
+          "moves": ["Wrap", "Leer", "Thunder Wave", "Agility"]
+        },
+        {
+          "name": "Dragonair",
+          "types": ["Dragon"],
+          "level": 54,
+          "moves": ["Wrap", "Leer", "Thunder Wave", "Agility"]
+        },
+        {
+          "name": "Aerodactyl",
+          "types": ["Rock", "Flying"],
+          "level": 58,
+          "moves": ["Wing Attack", "Agility", "Supersonic", "Bite"]
+        },
+        {
+          "name": "Dragonite",
+          "types": ["Dragon", "Flying"],
+          "level": 60,
+          "moves": ["Wrap", "Leer", "Agility", "Hyper Beam"]
+        }
+      ]
+    },
+
+    "Blue": {
+      "title": "Champion",
+      "order": 13,
+      "party": [
+        {
+          "name": "Pidgeot",
+          "types": ["Normal", "Flying"],
+          "level": 59,
+          "moves": ["Gust", "Sand Attack", "Quick Attack", "Whirlwind"]
+        },
+        {
+          "name": "Alakazam",
+          "types": ["Psychic"],
+          "level": 57,
+          "moves": ["Kinesis", "Disable", "Psybeam", "Recover"]
+        },
+        {
+          "name": "Rhydon",
+          "types": ["Ground", "Rock"],
+          "level": 59,
+          "moves": ["Fury Attack", "Stomp", "Tail Whip", "Horn Drill"]
+        },
+        {
+          "name": "Arcanine",
+          "types": ["Fire"],
+          "level": 59,
+          "moves": ["Ember", "Leer", "Roar", "Take Down"]
+        },
+        {
+          "name": "Exeggutor",
+          "types": ["Grass", "Psychic"],
+          "level": 61,
+          "moves": ["Barrage", "Hypnosis", "Confusion", "Stomp"]
+        },
+        {
+          "name": "Blastoise",
+          "types": ["Water"],
+          "level": 63,
+          "moves": ["Tackle", "Tail Whip", "Bubble", "Water Gun"]
+        }
+      ]
+    }
+  },
+
+  "yellow": {
+    "Brock": {
+      "title": "Gym Leader 1 — Rock",
+      "order": 1,
+      "party": [
+        {
+          "name": "Geodude",
+          "types": ["Rock", "Ground"],
+          "level": 12,
+          "moves": ["Tackle", "Defense Curl"]
+        },
+        {
+          "name": "Onix",
+          "types": ["Rock", "Ground"],
+          "level": 14,
+          "moves": ["Tackle", "Bind", "Screech"]
+        }
+      ]
+    },
+
+    "Misty": {
+      "title": "Gym Leader 2 — Water",
+      "order": 2,
+      "party": [
+        {
+          "name": "Staryu",
+          "types": ["Water"],
+          "level": 18,
+          "moves": ["Tackle", "Harden", "Water Gun", "Swift"]
+        },
+        {
+          "name": "Starmie",
+          "types": ["Water", "Psychic"],
+          "level": 21,
+          "moves": ["Tackle", "Harden", "Water Gun", "Bubblebeam"]
+        }
+      ]
+    },
+
+    "Lt. Surge": {
+      "title": "Gym Leader 3 — Electric",
+      "order": 3,
+      "party": [
+        {
+          "name": "Raichu",
+          "types": ["Electric"],
+          "level": 28,
+          "moves": ["Thundershock", "Growl", "Tail Whip", "Thunder Wave"]
+        }
+      ]
+    },
+
+    "Erika": {
+      "title": "Gym Leader 4 — Grass",
+      "order": 4,
+      "party": [
+        {
+          "name": "Tangela",
+          "types": ["Grass"],
+          "level": 30,
+          "moves": ["Constrict", "Bind", "Absorb", "Growth"]
+        },
+        {
+          "name": "Weepinbell",
+          "types": ["Grass", "Poison"],
+          "level": 32,
+          "moves": ["Vine Whip", "Wrap", "Poison Powder", "Sleep Powder"]
+        },
+        {
+          "name": "Gloom",
+          "types": ["Grass", "Poison"],
+          "level": 32,
+          "moves": ["Absorb", "Stun Spore", "Petal Dance", "Poison Powder"]
+        }
+      ]
+    },
+
+    "Koga": {
+      "title": "Gym Leader 5 — Poison",
+      "order": 5,
+      "party": [
+        {
+          "name": "Venonat",
+          "types": ["Bug", "Poison"],
+          "level": 37,
+          "moves": ["Disable", "Psybeam", "Poison Powder", "Leech Life"]
+        },
+        {
+          "name": "Venonat",
+          "types": ["Bug", "Poison"],
+          "level": 37,
+          "moves": ["Disable", "Psybeam", "Poison Powder", "Leech Life"]
+        },
+        {
+          "name": "Koffing",
+          "types": ["Poison"],
+          "level": 39,
+          "moves": ["Tackle", "Smog", "Smokescreen", "Self-Destruct"]
+        },
+        {
+          "name": "Venomoth",
+          "types": ["Bug", "Poison"],
+          "level": 43,
+          "moves": ["Disable", "Psybeam", "Poison Powder", "Leech Life"]
+        }
+      ]
+    },
+
+    "Sabrina": {
+      "title": "Gym Leader 6 — Psychic",
+      "order": 6,
+      "party": [
+        {
+          "name": "Abra",
+          "types": ["Psychic"],
+          "level": 50,
+          "moves": ["Teleport"]
+        },
+        {
+          "name": "Kadabra",
+          "types": ["Psychic"],
+          "level": 50,
+          "moves": ["Kinesis", "Disable", "Psybeam", "Recover"]
+        },
+        {
+          "name": "Alakazam",
+          "types": ["Psychic"],
+          "level": 50,
+          "moves": ["Kinesis", "Disable", "Psybeam", "Recover"]
+        }
+      ]
+    },
+
+    "Blaine": {
+      "title": "Gym Leader 7 — Fire",
+      "order": 7,
+      "party": [
+        {
+          "name": "Ninetales",
+          "types": ["Fire"],
+          "level": 48,
+          "moves": ["Ember", "Quick Attack", "Tail Whip", "Confuse Ray"]
+        },
+        {
+          "name": "Rapidash",
+          "types": ["Fire"],
+          "level": 50,
+          "moves": ["Ember", "Tail Whip", "Stomp", "Agility"]
+        },
+        {
+          "name": "Arcanine",
+          "types": ["Fire"],
+          "level": 54,
+          "moves": ["Ember", "Leer", "Roar", "Take Down"]
+        }
+      ]
+    },
+
+    "Giovanni": {
+      "title": "Gym Leader 8 — Ground",
+      "order": 8,
+      "party": [
+        {
+          "name": "Rhyhorn",
+          "types": ["Ground", "Rock"],
+          "level": 45,
+          "moves": ["Fury Attack", "Stomp", "Tail Whip", "Horn Drill"]
+        },
+        {
+          "name": "Nidoqueen",
+          "types": ["Poison", "Ground"],
+          "level": 44,
+          "moves": ["Scratch", "Tackle", "Tail Whip", "Poison Sting"]
+        },
+        {
+          "name": "Nidoking",
+          "types": ["Poison", "Ground"],
+          "level": 45,
+          "moves": ["Peck", "Focus Energy", "Double Kick", "Poison Sting"]
+        },
+        {
+          "name": "Rhydon",
+          "types": ["Ground", "Rock"],
+          "level": 50,
+          "moves": ["Fury Attack", "Stomp", "Tail Whip", "Horn Drill"]
+        }
+      ]
+    },
+
+    "Lorelei": {
+      "title": "Elite Four 1 — Ice",
+      "order": 9,
+      "party": [
+        {
+          "name": "Dewgong",
+          "types": ["Water", "Ice"],
+          "level": 54,
+          "moves": ["Headbutt", "Aurora Beam", "Rest", "Take Down"]
+        },
+        {
+          "name": "Cloyster",
+          "types": ["Water", "Ice"],
+          "level": 53,
+          "moves": ["Clamp", "Aurora Beam", "Spike Cannon", "Supersonic"]
+        },
+        {
+          "name": "Slowbro",
+          "types": ["Water", "Psychic"],
+          "level": 54,
+          "moves": ["Disable", "Headbutt", "Withdraw", "Amnesia"]
+        },
+        {
+          "name": "Jynx",
+          "types": ["Ice", "Psychic"],
+          "level": 56,
+          "moves": ["Doubleslap", "Ice Punch", "Body Slam", "Lovely Kiss"]
+        },
+        {
+          "name": "Lapras",
+          "types": ["Water", "Ice"],
+          "level": 56,
+          "moves": ["Blizzard", "Body Slam", "Confuse Ray", "Sing"]
+        }
+      ]
+    },
+
+    "Bruno": {
+      "title": "Elite Four 2 — Fighting",
+      "order": 10,
+      "party": [
+        {
+          "name": "Onix",
+          "types": ["Rock", "Ground"],
+          "level": 53,
+          "moves": ["Tackle", "Screech", "Bide", "Slam"]
+        },
+        {
+          "name": "Hitmonchan",
+          "types": ["Fighting"],
+          "level": 55,
+          "moves": ["Comet Punch", "Agility", "Fire Punch", "Ice Punch"]
+        },
+        {
+          "name": "Hitmonlee",
+          "types": ["Fighting"],
+          "level": 55,
+          "moves": ["Double Kick", "Meditate", "Hi Jump Kick", "Rolling Kick"]
+        },
+        {
+          "name": "Onix",
+          "types": ["Rock", "Ground"],
+          "level": 54,
+          "moves": ["Tackle", "Screech", "Bide", "Slam"]
+        },
+        {
+          "name": "Machamp",
+          "types": ["Fighting"],
+          "level": 58,
+          "moves": ["Low Kick", "Leer", "Focus Energy", "Seismic Toss"]
+        }
+      ]
+    },
+
+    "Agatha": {
+      "title": "Elite Four 3 — Ghost",
+      "order": 11,
+      "party": [
+        {
+          "name": "Gengar",
+          "types": ["Ghost", "Poison"],
+          "level": 54,
+          "moves": ["Confuse Ray", "Night Shade", "Hypnosis", "Dream Eater"]
+        },
+        {
+          "name": "Haunter",
+          "types": ["Ghost", "Poison"],
+          "level": 53,
+          "moves": ["Lick", "Hypnosis", "Dream Eater", "Night Shade"]
+        },
+        {
+          "name": "Gengar",
+          "types": ["Ghost", "Poison"],
+          "level": 54,
+          "moves": ["Confuse Ray", "Night Shade", "Hypnosis", "Dream Eater"]
+        },
+        {
+          "name": "Arbok",
+          "types": ["Poison"],
+          "level": 58,
+          "moves": ["Wrap", "Screech", "Bite", "Glare"]
+        },
+        {
+          "name": "Gengar",
+          "types": ["Ghost", "Poison"],
+          "level": 58,
+          "moves": ["Confuse Ray", "Night Shade", "Hypnosis", "Dream Eater"]
+        }
+      ]
+    },
+
+    "Lance": {
+      "title": "Elite Four 4 — Dragon",
+      "order": 12,
+      "party": [
+        {
+          "name": "Gyarados",
+          "types": ["Water", "Flying"],
+          "level": 56,
+          "moves": ["Hydro Pump", "Bite", "Dragon Rage", "Leer"]
+        },
+        {
+          "name": "Dragonair",
+          "types": ["Dragon"],
+          "level": 54,
+          "moves": ["Wrap", "Leer", "Thunder Wave", "Agility"]
+        },
+        {
+          "name": "Dragonair",
+          "types": ["Dragon"],
+          "level": 54,
+          "moves": ["Wrap", "Leer", "Thunder Wave", "Agility"]
+        },
+        {
+          "name": "Aerodactyl",
+          "types": ["Rock", "Flying"],
+          "level": 58,
+          "moves": ["Wing Attack", "Agility", "Supersonic", "Bite"]
+        },
+        {
+          "name": "Dragonite",
+          "types": ["Dragon", "Flying"],
+          "level": 60,
+          "moves": ["Wrap", "Leer", "Agility", "Hyper Beam"]
+        }
+      ]
+    },
+
+    "Blue": {
+      "title": "Champion",
+      "order": 13,
+      "party": [
+        {
+          "name": "Eevee",
+          "types": ["Normal"],
+          "level": 25,
+          "moves": ["Tackle", "Sand Attack", "Quick Attack", "Tail Whip"]
+        }
+      ]
+    }
+  },
+
+  "platinum": {
+    "Cynthia": {
+      "title": "Champion",
+      "order": 13,
+      "party": [
+        {
+          "name": "Spiritomb",
+          "types": ["Ghost", "Dark"],
+          "level": 58,
+          "moves": ["Psychic", "Dark Pulse", "Shadow Ball", "Embargo"]
+        },
+        {
+          "name": "Roserade",
+          "types": ["Grass", "Poison"],
+          "level": 58,
+          "moves": ["Grass Knot", "Sludge Bomb", "Shadow Ball", "Extrasensory"]
+        },
+        {
+          "name": "Togekiss",
+          "types": ["Normal", "Flying"],
+          "level": 60,
+          "moves": ["Air Slash", "Aura Sphere", "Extreme Speed", "Softboiled"]
+        },
+        {
+          "name": "Lucario",
+          "types": ["Fighting", "Steel"],
+          "level": 60,
+          "moves": ["Aura Sphere", "Dragon Pulse", "Earthquake", "Flash Cannon"]
+        },
+        {
+          "name": "Milotic",
+          "types": ["Water"],
+          "level": 58,
+          "moves": ["Surf", "Ice Beam", "Toxic", "Recover"]
+        },
+        {
+          "name": "Garchomp",
+          "types": ["Dragon", "Ground"],
+          "level": 62,
+          "moves": ["Dragon Rush", "Earthquake", "Giga Impact", "Crunch"]
+        }
+      ]
+    }
+  }
+}
