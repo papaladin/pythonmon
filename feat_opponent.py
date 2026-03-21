@@ -163,6 +163,156 @@ def validate_trainer_data(data: dict) -> list:
                             issues.append(f"{p}: invalid move entry {m!r}")
     return issues
 
+# ── Iteration B — Pure matchup logic ──────────────────────────────────────────
+
+def analyze_matchup(team_ctx, trainer, era_key):
+    """
+    Analyze how a player's team matches up against a trainer's party.
+    
+    For each trainer Pokemon, compute:
+      - threats:  team members weak to it (multiplier > 1.0)
+      - resists:  team members that resist it (multiplier < 1.0)
+      - counters: team members hitting it SE via their types (multiplier >= 2.0)
+    
+    Args:
+      team_ctx:  list of team member dicts with form_name, type1, type2
+      trainer:   trainer entry dict with 'party' key (list of opponent Pokemon)
+      era_key:   "era1", "era2", or "era3" (for type chart lookup)
+    
+    Returns:
+      list[dict] — one result dict per trainer Pokemon:
+        {
+          "name":     str,           # opponent Pokemon name
+          "types":    [str, str],    # [type1, type2]
+          "level":    int,
+          "threats":  [{
+            "form_name": str,
+            "multiplier": float      # > 1.0 means weak to this team member
+          }, ...],
+          "resists":  [{
+            "form_name": str,
+            "multiplier": float      # < 1.0 means resists this team member
+          }, ...],
+          "counters": [{
+            "form_name": str,
+            "types":    [str, ...]   # which of this member's types hit SE
+          }, ...]
+        }
+    """
+    results = []
+    
+    for opp_pkm in trainer.get("party", []):
+        opp_name = opp_pkm.get("name", "?")
+        opp_type1 = opp_pkm.get("types", ["None"])[0]
+        opp_type2 = opp_pkm.get("types", ["None"])[1] if len(opp_pkm.get("types", [])) > 1 else "None"
+        
+        # Compute defensive matchup: how much damage does each team member do?
+        threats = []
+        resists = []
+        counters = []
+        
+        for team_member in team_ctx:
+            member_form = team_member.get("form_name", "?")
+            member_t1 = team_member.get("type1", "None")
+            member_t2 = team_member.get("type2", "None")
+            
+            # Each of the team member's types attacking the opponent
+            hits_se = []
+            for member_type in [member_t1, member_t2]:
+                if member_type == "None":
+                    continue
+                mult = calc.get_multiplier(era_key, member_type, opp_type1)
+                mult *= calc.get_multiplier(era_key, member_type, opp_type2) if opp_type2 != "None" else 1.0
+                
+                if mult >= 2.0:
+                    hits_se.append(member_type)
+            
+            if hits_se:
+                counters.append({
+                    "form_name": member_form,
+                    "types": hits_se
+                })
+            
+            # Each of the opponent's types attacking the team member
+            def_mult_t1 = calc.get_multiplier(era_key, opp_type1, member_t1)
+            def_mult_t2 = calc.get_multiplier(era_key, opp_type1, member_t2) if member_t2 != "None" else 1.0
+            combined_from_t1 = def_mult_t1 * def_mult_t2
+            
+            def_mult_t1_from_t2 = calc.get_multiplier(era_key, opp_type2, member_t1) if opp_type2 != "None" else 1.0
+            def_mult_t2_from_t2 = calc.get_multiplier(era_key, opp_type2, member_t2) if opp_type2 != "None" else 1.0
+            combined_from_t2 = def_mult_t1_from_t2 * def_mult_t2_from_t2
+            
+            total_mult = combined_from_t1 * combined_from_t2
+            
+            if total_mult > 1.0:
+                threats.append({
+                    "form_name": member_form,
+                    "multiplier": total_mult
+                })
+            elif total_mult < 1.0:
+                resists.append({
+                    "form_name": member_form,
+                    "multiplier": total_mult
+                })
+        
+        results.append({
+            "name": opp_name,
+            "types": [opp_type1, opp_type2],
+            "level": opp_pkm.get("level", 0),
+            "threats": threats,
+            "resists": resists,
+            "counters": counters
+        })
+    
+    return results
+
+
+def uncovered_threats(matchup_results):
+    """
+    Filter matchup results to return only opponent Pokemon with zero counters.
+    
+    Args:
+      matchup_results: list returned from analyze_matchup()
+    
+    Returns:
+      list[dict] — subset of matchup_results where counters list is empty
+    """
+    return [r for r in matchup_results if not r["counters"]]
+
+
+def recommended_leads(matchup_results, team_ctx):
+    """
+    Rank team members by how many opponent Pokemon they can hit SE.
+    
+    Args:
+      matchup_results: list returned from analyze_matchup()
+      team_ctx: player's team (to preserve order and get form_name)
+    
+    Returns:
+      list[str] — team member form_names sorted by SE coverage (descending)
+               then by team order (as they appear in team_ctx)
+    """
+    # Count how many opponent Pokemon each team member hits SE
+    se_counts = {}
+    for team_member in team_ctx:
+        form_name = team_member.get("form_name", "?")
+        se_counts[form_name] = 0
+    
+    for result in matchup_results:
+        for counter in result["counters"]:
+            form_name = counter["form_name"]
+            if form_name in se_counts:
+                se_counts[form_name] += 1
+    
+    # Sort by count descending, then by team order (index in team_ctx)
+    team_order = {team_member.get("form_name", "?"): i for i, team_member in enumerate(team_ctx)}
+    
+    sorted_names = sorted(
+        se_counts.keys(),
+        key=lambda name: (-se_counts[name], team_order.get(name, 999))
+    )
+    
+    return sorted_names
 
 # ── Entry point stubs (Iterations B–D) ───────────────────────────────────────
 
