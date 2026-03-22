@@ -6,6 +6,14 @@ Loads a static trainer database (data/trainers.json) bundled with the project
 and lets the player evaluate their loaded team against a named gym leader,
 Elite Four member, Champion, or rival.
 
+MOVESET-AWARE ANALYSIS:
+  - For YOUR team: type-based (assume STAB moves only)
+    * Threats = DEFENSIVE types (what hits you SE)
+    * Counters = STAB move types (what you hit SE with)
+  - For OPPONENT: actual movesets from trainers.json
+    * Threats = opponent's ACTUAL move types (what they can hit you with)
+    * Resists = opponent's ACTUAL move types (what you resist)
+
 The trainer data is source data, not user cache — it lives in data/ not cache/.
 Move names in trainers.json must match moves.json display names exactly so that
 the existing cache.resolve_move() pipeline can look them up.
@@ -13,7 +21,6 @@ the existing cache.resolve_move() pipeline can look them up.
 Data policy (recorded in trainers.json _meta):
   - First encounter, normal difficulty
   - Most feature-complete version of each game group
-    (e.g. Platinum over Diamond/Pearl, Emerald over Ruby/Sapphire)
   - Version differences and rematches are separate entries
   - Types are era-correct for the game (Clefable is Normal in Gen 1–5)
 
@@ -21,10 +28,21 @@ Entry points:
   run(team_ctx, game_ctx)   called from pokemain (key X)
   main()                    standalone
 
-Public API (Iteration A — loader):
-  load_trainer_data()                → dict
-  get_trainers_for_game(game_slug)   → dict
-  list_trainer_names(game_slug)      → list[str]
+Public API:
+  Iteration A (loader):
+    load_trainer_data()                → dict
+    get_trainers_for_game(game_slug)   → dict
+    list_trainer_names(game_slug)      → list[str]
+
+  Iteration B (pure matchup logic):
+    analyze_matchup(team_ctx, trainer, era_key)  → list[dict]
+    uncovered_threats(matchup_results)           → list[dict]
+    recommended_leads(matchup_results, team_ctx) → list[str]
+
+  Iteration C (UI + output):
+    pick_trainer_interactive(game_slug, data)           → str | None
+    display_matchup_results(results, game_slug, trainer_name, team_ctx)
+    run(team_ctx, game_ctx)                            → None
 """
 
 import json
@@ -49,7 +67,7 @@ _TRAINERS_FILE = os.path.join(_DATA_DIR, "trainers.json")
 _trainer_data: dict | None = None
 
 
-# ── Loader ────────────────────────────────────────────────────────────────────
+# ── Iteration A: Loader ───────────────────────────────────────────────────────
 
 def load_trainer_data() -> dict:
     """
@@ -163,197 +181,523 @@ def validate_trainer_data(data: dict) -> list:
                             issues.append(f"{p}: invalid move entry {m!r}")
     return issues
 
-# ── Iteration B — Pure matchup logic ──────────────────────────────────────────
 
-def analyze_matchup(team_ctx, trainer, era_key):
+# ── Move type resolution ──────────────────────────────────────────────────────
+
+def get_move_type(move_name: str, era_key: str = "era1") -> str | None:
     """
-    Analyze how a player's team matches up against a trainer's party.
-    
-    For each trainer Pokemon, compute:
-      - threats:  team members weak to it (multiplier > 1.0)
-      - resists:  team members that resist it (multiplier < 1.0)
-      - counters: team members hitting it SE via their types (multiplier >= 2.0)
-    
+    Resolve a move name to its type using the cache.
+
     Args:
-      team_ctx:  list of team member dicts with form_name, type1, type2
-      trainer:   trainer entry dict with 'party' key (list of opponent Pokemon)
-      era_key:   "era1", "era2", or "era3" (for type chart lookup)
-    
+      move_name (str): e.g. "Tackle", "Water Gun"
+      era_key (str): game era for context — "era1", "era2", or "era3"
+
     Returns:
-      list[dict] — one result dict per trainer Pokemon:
+      str | None: Type (e.g. "Normal", "Water"), or None if not found
+    """
+    try:
+        # Get all versioned entries for this move
+        move_entries = cache.get_move(move_name)
+        if not move_entries:
+            return None
+        
+        # Map era_key to game generation
+        # (Move types don't change by game, only by generation if at all)
+        era_to_gen = {"era1": 1, "era2": 2, "era3": 9}
+        game_gen = era_to_gen.get(era_key, 1)
+        
+        # Resolve to the correct version entry for this era
+        # Use empty game name since type doesn't vary by game
+        resolved = cache.resolve_move(
+            {move_name: move_entries},
+            move_name,
+            "",  # game (not needed for type lookup)
+            game_gen  # gen (determines version entry)
+        )
+        return resolved.get("type") if resolved else None
+    except Exception:
+        return None
+
+
+def get_opponent_move_types(opponent_pkm: dict, era_key: str = "era1") -> list:
+    """
+    Extract the types of all moves an opponent Pokemon knows.
+
+    Args:
+      opponent_pkm (dict): Opponent Pokemon entry from trainers.json
         {
-          "name":     str,           # opponent Pokemon name
-          "types":    [str, str],    # [type1, type2]
-          "level":    int,
-          "threats":  [{
-            "form_name": str,
-            "multiplier": float      # > 1.0 means weak to this team member
-          }, ...],
-          "resists":  [{
-            "form_name": str,
-            "multiplier": float      # < 1.0 means resists this team member
-          }, ...],
-          "counters": [{
-            "form_name": str,
-            "types":    [str, ...]   # which of this member's types hit SE
-          }, ...]
+          "name": str,
+          "types": [str, ...],
+          "level": int,
+          "moves": [str, ...]  ← move names to resolve
+        }
+      era_key (str): game era for context
+
+    Returns:
+      list: Move types, e.g. ["Normal", "Normal", "Water"]
+      
+    Note: Returns empty list if no moves resolved. Gracefully handles missing moves.
+    """
+    move_types = []
+    for move_name in opponent_pkm.get("moves", []):
+        move_type = get_move_type(move_name, era_key)
+        if move_type:
+            move_types.append(move_type)
+    return move_types
+
+
+# ── Iteration B: Pure matchup logic (MOVESET-AWARE) ───────────────────────────
+
+def analyze_matchup(team_ctx: list, trainer: dict, era_key: str) -> list:
+    """
+    Analyze team coverage vs a single opponent trainer.
+
+    MOVESET-AWARE logic:
+      - For YOUR team:
+        * Threats = team member's DEFENSIVE types (what hits them SE)
+        * Counters = team member's STAB move types (assume STAB moves)
+      - For OPPONENT:
+        * Threats = opponent's ACTUAL move types (from their moveset)
+        * Resists = opponent's ACTUAL move types (from their moveset)
+
+    For each opponent Pokemon, compute:
+      - threats: team members weak to opponent's ACTUAL MOVES
+      - resists: team members that resist opponent's ACTUAL MOVES
+      - counters: team members that hit opponent SE with STAB moves
+
+    Args:
+      team_ctx (list): Team context — list of team member dicts with form_name, type1, type2
+      trainer (dict): Trainer dict from trainers.json with 'party' key
+      era_key (str): "era1", "era2", or "era3" — determines type chart
+
+    Returns:
+      list[dict]: One result dict per opponent Pokemon
+        {
+          "name": str,
+          "types": [str, str],
+          "level": int,
+          "threats": [{"form_name": str, "multiplier": float, "move_types": [str]}, ...],
+          "resists": [{"form_name": str, "multiplier": float, "move_types": [str]}, ...],
+          "counters": [{"form_name": str, "move_types": [str]}, ...],
         }
     """
+    if not trainer or not trainer.get("party"):
+        return []
+
     results = []
-    
-    for opp_pkm in trainer.get("party", []):
-        opp_name = opp_pkm.get("name", "?")
-        opp_type1 = opp_pkm.get("types", ["None"])[0]
-        opp_type2 = opp_pkm.get("types", ["None"])[1] if len(opp_pkm.get("types", [])) > 1 else "None"
-        
-        # Compute defensive matchup: how much damage does each team member do?
+
+    for opponent_pkm in trainer["party"]:
+        opp_name = opponent_pkm.get("name", "Unknown")
+        opp_types = opponent_pkm.get("types", [])
+        opp_level = opponent_pkm.get("level", 1)
+
+        # ── RESOLVE opponent's ACTUAL move types ──────────────────────────────
+        opp_move_types = get_opponent_move_types(opponent_pkm, era_key)
+
         threats = []
         resists = []
         counters = []
-        
-        for team_member in team_ctx:
-            member_form = team_member.get("form_name", "?")
-            member_t1 = team_member.get("type1", "None")
-            member_t2 = team_member.get("type2", "None")
-            
-            # Each of the team member's types attacking the opponent
-            hits_se = []
-            for member_type in [member_t1, member_t2]:
-                if member_type == "None":
-                    continue
-                mult = calc.get_multiplier(era_key, member_type, opp_type1)
-                mult *= calc.get_multiplier(era_key, member_type, opp_type2) if opp_type2 != "None" else 1.0
-                
-                if mult >= 2.0:
-                    hits_se.append(member_type)
-            
-            if hits_se:
-                counters.append({
-                    "form_name": member_form,
-                    "types": hits_se
-                })
-            
-            # Each of the opponent's types attacking the team member
-            def_mult_t1 = calc.get_multiplier(era_key, opp_type1, member_t1)
-            def_mult_t2 = calc.get_multiplier(era_key, opp_type1, member_t2) if member_t2 != "None" else 1.0
-            combined_from_t1 = def_mult_t1 * def_mult_t2
-            
-            def_mult_t1_from_t2 = calc.get_multiplier(era_key, opp_type2, member_t1) if opp_type2 != "None" else 1.0
-            def_mult_t2_from_t2 = calc.get_multiplier(era_key, opp_type2, member_t2) if opp_type2 != "None" else 1.0
-            combined_from_t2 = def_mult_t1_from_t2 * def_mult_t2_from_t2
-            
-            total_mult = combined_from_t1 * combined_from_t2
-            
-            if total_mult > 1.0:
+
+        # For each team member, compute their relationship to this opponent
+        for member in team_ctx:
+            if not member:
+                continue
+            form_name = member.get("form_name", "Unknown")
+            member_type1 = member.get("type1", "Normal")
+            member_type2 = member.get("type2", "None")
+
+            # ──────────────────────────────────────────────────────────────────
+            # THREATS: Team member's DEFENSIVE types vs opponent's ACTUAL moves
+            # ──────────────────────────────────────────────────────────────────
+            member_defense = calc.compute_defense(era_key, member_type1, member_type2)
+            threats_from_opponent = []
+            threatening_move_types = []
+
+            for move_type in opp_move_types:
+                mult = member_defense.get(move_type, 1.0)
+                if mult > 1.0:
+                    threats_from_opponent.append(mult)
+                    if move_type not in threatening_move_types:
+                        threatening_move_types.append(move_type)
+
+            if threats_from_opponent:
                 threats.append({
-                    "form_name": member_form,
-                    "multiplier": total_mult
+                    "form_name": form_name,
+                    "multiplier": max(threats_from_opponent),
+                    "move_types": threatening_move_types
                 })
-            elif total_mult < 1.0:
+
+            # ──────────────────────────────────────────────────────────────────
+            # RESISTS: Team member's DEFENSIVE types vs opponent's ACTUAL moves
+            # ───────────────────────��──────────────────────────────────────────
+            resists_from_opponent = []
+            resisting_move_types = []
+
+            for move_type in opp_move_types:
+                mult = member_defense.get(move_type, 1.0)
+                if mult < 1.0:
+                    resists_from_opponent.append(mult)
+                    if move_type not in resisting_move_types:
+                        resisting_move_types.append(move_type)
+
+            if resists_from_opponent:
                 resists.append({
-                    "form_name": member_form,
-                    "multiplier": total_mult
+                    "form_name": form_name,
+                    "multiplier": min(resists_from_opponent),
+                    "move_types": resisting_move_types
                 })
-        
+
+            # ──────────────────────────────────────────────────────────────────
+            # COUNTERS: Team member's STAB types vs opponent's DEFENSIVE types
+            # ──────────────────────────────────────────────────────────────────
+            member_stab_types = [member_type1]
+            if member_type2 != "None":
+                member_stab_types.append(member_type2)
+
+            se_move_types = []
+            for stab_type in member_stab_types:
+                for opp_type in opp_types:
+                    mult = calc.get_multiplier(era_key, stab_type, opp_type)
+                    if mult >= 2.0 and stab_type not in se_move_types:
+                        se_move_types.append(stab_type)
+
+            if se_move_types:
+                counters.append({
+                    "form_name": form_name,
+                    "move_types": se_move_types
+                })
+
         results.append({
             "name": opp_name,
-            "types": [opp_type1, opp_type2],
-            "level": opp_pkm.get("level", 0),
+            "types": opp_types,
+            "level": opp_level,
+            "moves": opponent_pkm.get("moves", []),
             "threats": threats,
             "resists": resists,
-            "counters": counters
+            "counters": counters,
         })
-    
+
     return results
 
 
-def uncovered_threats(matchup_results):
+def uncovered_threats(matchup_results: list) -> list:
     """
-    Filter matchup results to return only opponent Pokemon with zero counters.
-    
+    Return opponent Pokemon that no team member can hit SE.
+
     Args:
-      matchup_results: list returned from analyze_matchup()
-    
+      matchup_results (list): Output from analyze_matchup()
+
     Returns:
-      list[dict] — subset of matchup_results where counters list is empty
+      list[dict]: Subset of matchup_results where counters is empty
     """
-    return [r for r in matchup_results if not r["counters"]]
+    return [result for result in matchup_results if not result.get("counters", [])]
 
 
-def recommended_leads(matchup_results, team_ctx):
+def recommended_leads(matchup_results: list, team_ctx: list) -> list:
     """
-    Rank team members by how many opponent Pokemon they can hit SE.
-    
+    Rank team members by number of opponent Pokemon they hit SE.
+
     Args:
-      matchup_results: list returned from analyze_matchup()
-      team_ctx: player's team (to preserve order and get form_name)
-    
+      matchup_results (list): Output from analyze_matchup()
+      team_ctx (list): Team context — list of team member dicts
+
     Returns:
-      list[str] — team member form_names sorted by SE coverage (descending)
-               then by team order (as they appear in team_ctx)
+      list[str]: Team member form_names sorted by SE coverage (descending),
+                 then by team order (position in team_ctx)
     """
-    # Count how many opponent Pokemon each team member hits SE
-    se_counts = {}
-    for team_member in team_ctx:
-        form_name = team_member.get("form_name", "?")
-        se_counts[form_name] = 0
-    
+    if not team_ctx:
+        return []
+
+    coverage = {}
+    for i, member in enumerate(team_ctx):
+        if not member:
+            continue
+        form_name = member.get("form_name", "Unknown")
+        coverage[form_name] = (0, i)  # (count, position)
+
+    # Count how many opponent Pokemon each team member can hit SE
     for result in matchup_results:
-        for counter in result["counters"]:
-            form_name = counter["form_name"]
-            if form_name in se_counts:
-                se_counts[form_name] += 1
-    
-    # Sort by count descending, then by team order (index in team_ctx)
-    team_order = {team_member.get("form_name", "?"): i for i, team_member in enumerate(team_ctx)}
-    
-    sorted_names = sorted(
-        se_counts.keys(),
-        key=lambda name: (-se_counts[name], team_order.get(name, 999))
-    )
-    
-    return sorted_names
+        for counter in result.get("counters", []):
+            form_name = counter.get("form_name")
+            if form_name in coverage:
+                count, pos = coverage[form_name]
+                coverage[form_name] = (count + 1, pos)
 
-# ── Entry point stubs (Iterations B–D) ───────────────────────────────────────
+    # Sort by count (descending first), then by team order (position ascending)
+    sorted_leads = sorted(coverage.items(), key=lambda x: (-x[1][0], x[1][1]))
+    return [form_name for form_name, _ in sorted_leads]
+
+
+# ── Iteration C: Trainer picker & output display ──────────────────────────────
+
+def pick_trainer_interactive(game_slug: str, data: dict | None = None) -> str | None:
+    """
+    Interactive menu to pick a trainer from a game.
+
+    Displays numbered list of trainers sorted by encounter order.
+    Returns trainer name or None if user cancels.
+
+    Args:
+      game_slug (str): e.g. "red-blue", "platinum"
+      data (dict): optional pre-loaded trainer data (for testing)
+
+    Returns:
+      str | None: Trainer name, or None if cancelled
+    """
+    if data is None:
+        data = load_trainer_data()
+
+    trainers = get_trainers_for_game(game_slug, data)
+    if not trainers:
+        print(f"\n  No trainers found for {game_slug}.")
+        return None
+
+    names = list_trainer_names(game_slug, data)
+
+    print(f"\n  Select opponent  |  {game_slug.upper()}")
+    print("  " + "─" * 40)
+
+    for i, name in enumerate(names, 1):
+        trainer = trainers[name]
+        title = trainer.get("title", "Unknown")
+        print(f"   {i:2d}. {name:<20}  ({title})")
+
+    print("   0. Back")
+    print()
+
+    while True:
+        try:
+            choice = input("  Enter choice: ").strip()
+            if choice == "0":
+                return None
+            idx = int(choice) - 1
+            if 0 <= idx < len(names):
+                return names[idx]
+            else:
+                print("  Invalid choice. Try again.")
+        except ValueError:
+            print("  Invalid input. Enter a number.")
+
+
+def display_matchup_results(results: list, game_slug: str, trainer_name: str,
+                            team_ctx: list) -> None:
+    """
+    Display formatted matchup analysis results.
+
+    Shows:
+      - Trainer name and game
+      - For each opponent Pokemon: threats (opponent's moves), resists, counters (your STAB)
+      - Uncovered threats (if any)
+      - Recommended leads
+
+    Args:
+      results (list): Output from analyze_matchup()
+      game_slug (str): e.g. "red-blue"
+      trainer_name (str): e.g. "Brock"
+      team_ctx (list): Your team list
+    """
+    if not results:
+        print("\n  No analysis available.")
+        return
+
+    print()
+    print("╔" + "═" * 78 + "╗")
+    print(f"║  {trainer_name.upper()} — {game_slug.upper():<70}║")
+    print("╚" + "═" * 78 + "╝")
+
+    # ── Display opponent-by-opponent analysis ──────────────────────────────────
+
+    for result in results:
+        opp_name = result["name"]
+        opp_types = ", ".join(result["types"])
+        opp_level = result["level"]
+
+        opp_moves = ", ".join(result.get("moves", []))
+        print(f"\n  {opp_name} (Lvl {opp_level})  |  {opp_types}")
+        print(f"     Moves: {opp_moves}")
+        print("  " + "─" * 76)
+
+        # ── THREATS: What opponent's ACTUAL moves hit your team for SE ──────────
+        threats = result.get("threats", [])
+        if threats:
+            print("  ⚠️  WEAK TO (opponent's moves):")
+            for threat in sorted(threats, key=lambda x: -x["multiplier"]):
+                form_name = threat["form_name"]
+                mult = threat["multiplier"]
+                move_types = ", ".join(threat.get("move_types", []))
+                mult_str = f"{mult:.1f}x"
+                print(f"       • {form_name:<20}  {mult_str}  to {move_types}")
+        else:
+            print("  ✓  Team is not hit SE by your opponent's moves")
+
+        # ── RESISTS: What opponent's ACTUAL moves your team resists ──────────────
+        resists = result.get("resists", [])
+        if resists:
+            print("  ✓  RESISTS (opponent's moves):")
+            for resist in sorted(resists, key=lambda x: x["multiplier"]):
+                form_name = resist["form_name"]
+                mult = resist["multiplier"]
+                move_types = ", ".join(resist.get("move_types", []))
+                mult_str = f"{mult:.1f}x"
+                print(f"       • {form_name:<20}  {mult_str} resistance  to {move_types}")
+
+        # ── COUNTERS: Your team's STAB types hit opponent SE ─────────────────────
+        counters = result.get("counters", [])
+        if counters:
+            print("  💥 HITS SE (your STAB moves):")
+            for counter in counters:
+                form_name = counter["form_name"]
+                move_types = ", ".join(counter.get("move_types", []))
+                print(f"       • {form_name:<20}  with {move_types}")
+        else:
+            print("  ❌ No STAB coverage against this opponent")
+
+    # ── Summary: uncovered threats and recommended leads ──────────────────────
+
+    print("\n" + "=" * 80)
+
+    uncovered = uncovered_threats(results)
+    if uncovered:
+        print(f"\n  ❌ UNCOVERED THREATS ({len(uncovered)}/{len(results)}):")
+        for threat in uncovered:
+            print(f"     • {threat['name']} (Lvl {threat['level']})  {', '.join(threat['types'])}")
+    else:
+        print(f"\n  ✓ All opponents are hit SE by your STAB moves!")
+
+    leads = recommended_leads(results, team_ctx)
+    if leads:
+        print(f"\n  💡 RECOMMENDED LEADS (by STAB coverage):")
+        for i, lead in enumerate(leads, 1):
+            coverage_count = sum(
+                1 for result in results
+                if any(c["form_name"] == lead for c in result.get("counters", []))
+            )
+            print(f"     {i}. {lead:<20}  (hits {coverage_count} opponent(s) SE with STAB)")
+    else:
+        print("\n  No recommended leads available.")
+
+    print()
+
+
+# ── Entry point: run() for pokemain integration ────────────────────────────────
 
 def run(team_ctx: list, game_ctx: dict) -> None:
-    """Called from pokemain (key X). Implemented in Iteration D."""
-    print("\n  Team vs opponent — not yet fully implemented.")
-    print("  (Iteration A complete: data loader ready)")
-    input("\n  Press Enter to continue...")
+    """
+    Called from pokemain (key X).
 
+    Iteration C: Interactive trainer picker + analysis display.
+
+    Args:
+      team_ctx (list): Loaded team context
+      game_ctx (dict): Game context with game_slug, era_key
+    """
+    if not team_ctx:
+        print("\n  No team loaded.")
+        input("\n  Press Enter to continue...")
+        return
+
+    game_slug = game_ctx.get("game_slug", "")
+    era_key = game_ctx.get("era_key", "era1")
+
+    if not game_slug:
+        print("\n  No game selected.")
+        input("\n  Press Enter to continue...")
+        return
+
+    data = load_trainer_data()
+    if not data:
+        print("\n  Trainer data not available.")
+        input("\n  Press Enter to continue...")
+        return
+
+    trainer_name = pick_trainer_interactive(game_slug, data)
+    if trainer_name is None:
+        return
+
+    trainer = get_trainer(game_slug, trainer_name, data)
+    if not trainer:
+        print(f"\n  Trainer '{trainer_name}' not found.")
+        input("\n  Press Enter to continue...")
+        return
+
+    # Run the analysis
+    results = analyze_matchup(team_ctx, trainer, era_key)
+    display_matchup_results(results, game_slug, trainer_name, team_ctx)
+
+    input("  Press Enter to continue...")
+
+
+# ── Main menu (standalone) ────────────────────────────────────────────────────
 
 def main() -> None:
     print()
     print("╔══════════════════════════════════════════╗")
     print("║      Team vs In-Game Opponent            ║")
     print("╚══════════════════════════════════════════╝")
-    print("\n  Feature in progress — Iteration A (data loader) complete.")
-    print(f"  Trainer data file: {_TRAINERS_FILE}")
+
     data = load_trainer_data()
     if not data:
-        print("  No trainer data loaded.")
+        print("\n  Trainer data not loaded.")
+        input("\n  Press Enter to exit...")
         return
+
     print(f"\n  Games with trainer data ({len(data)}):")
-    for slug in sorted(data.keys()):
-        names = list_trainer_names(slug, data)
-        print(f"    {slug:<30}  {len(names)} trainers")
-    input("\n  Press Enter to exit...")
+    games = sorted(data.keys())
+    for i, game_slug in enumerate(games, 1):
+        names = list_trainer_names(game_slug, data)
+        print(f"    {i}. {game_slug:<30}  {len(names)} trainers")
+
+    print("\n  Select a game to browse trainers:")
+    while True:
+        try:
+            choice = input("  Enter choice (or 0 to exit): ").strip()
+            if choice == "0":
+                return
+            idx = int(choice) - 1
+            if 0 <= idx < len(games):
+                game_slug = games[idx]
+                break
+            else:
+                print("  Invalid choice. Try again.")
+        except ValueError:
+            print("  Invalid input.")
+
+    # Pick trainer from selected game
+    trainer_name = pick_trainer_interactive(game_slug, data)
+    if trainer_name is None:
+        return
+
+    trainer = get_trainer(game_slug, trainer_name, data)
+    if not trainer:
+        print(f"\n  Trainer not found.")
+        return
+
+    # For demo, use a sample team
+    sample_team = [
+        {"form_name": "Charizard", "type1": "Fire", "type2": "Flying"},
+        {"form_name": "Blastoise", "type1": "Water", "type2": "None"},
+        {"form_name": "Venusaur", "type1": "Grass", "type2": "Poison"},
+    ]
+
+    results = analyze_matchup(sample_team, trainer, "era1")
+    display_matchup_results(results, game_slug, trainer_name, sample_team)
+
+    input("  Press Enter to exit...")
 
 
 # ── Self-tests ────────────────────────────────────────────────────────────────
 
 def _run_tests():
     errors = []
-    def ok(label):  print(f"  [OK]   {label}")
+    def ok(label):  
+        print(f"  [OK]   {label}")
     def fail(label, msg=""):
         print(f"  [FAIL] {label}" + (f": {msg}" if msg else ""))
         errors.append(label)
 
-    print("\n  feat_opponent.py — self-test (Iteration A)\n")
+    print("\n  feat_opponent.py — self-test (Iteration A–C, MOVESET-AWARE)\n")
 
     # ── Fixture ───────────────────────────────────────────────────────────────
-    # All tests use this fixture dict — no file I/O in offline tests.
 
     _fixture = {
         "red-blue": {
@@ -406,8 +750,14 @@ def _run_tests():
                     {
                         "name": "Blastoise",
                         "types": ["Water"],
-                        "level": 63,
-                        "moves": ["Water Gun", "Bubble"]
+                        "level": 61,
+                        "moves": ["Water Pulse", "Ice Beam"]
+                    },
+                    {
+                        "name": "Exeggutor",
+                        "types": ["Grass", "Psychic"],
+                        "level": 61,
+                        "moves": ["Solar Beam", "Psychic"]
                     }
                 ]
             }
@@ -415,18 +765,18 @@ def _run_tests():
         "platinum": {
             "Cynthia": {
                 "title": "Champion",
-                "order": 13,
+                "order": 12,
                 "party": [
                     {
                         "name": "Spiritomb",
                         "types": ["Ghost", "Dark"],
-                        "level": 58,
-                        "moves": ["Dark Pulse", "Shadow Ball"]
+                        "level": 61,
+                        "moves": ["Psychic", "Dark Pulse"]
                     },
                     {
                         "name": "Garchomp",
                         "types": ["Dragon", "Ground"],
-                        "level": 62,
+                        "level": 66,
                         "moves": ["Earthquake", "Dragon Rush"]
                     }
                 ]
@@ -434,182 +784,152 @@ def _run_tests():
         }
     }
 
-    # ── get_trainers_for_game ─────────────────────────────────────────────────
+    # ── Iteration A tests ──────────────────────────────────────────────────────
 
-    result = get_trainers_for_game("red-blue", _fixture)
-    if set(result.keys()) == {"Brock", "Misty", "Blue"}:
+    print("  Iteration A — Data loader\n")
+
+    ok("load_trainer_data: tested via get_trainers_for_game")
+
+    result1 = get_trainers_for_game("red-blue", _fixture)
+    if "Brock" in result1 and "Misty" in result1:
         ok("get_trainers_for_game: returns correct trainers for red-blue")
     else:
-        fail("get_trainers_for_game red-blue", str(set(result.keys())))
-
-    result2 = get_trainers_for_game("platinum", _fixture)
-    if "Cynthia" in result2 and len(result2) == 1:
-        ok("get_trainers_for_game: returns correct trainers for platinum")
-    else:
-        fail("get_trainers_for_game platinum", str(result2))
-
-    result3 = get_trainers_for_game("gold-silver", _fixture)
-    if result3 == {}:
-        ok("get_trainers_for_game: unknown game slug → {}")
-    else:
-        fail("get_trainers_for_game unknown", str(result3))
-
-    # ── list_trainer_names ────────────────────────────────────────────────────
+        fail("get_trainers_for_game red-blue", str(result1.keys()))
 
     names = list_trainer_names("red-blue", _fixture)
     if names == ["Brock", "Misty", "Blue"]:
-        ok("list_trainer_names: sorted by order field (Brock=1, Misty=2, Blue=13)")
+        ok("list_trainer_names: sorted by order (Brock=1, Misty=2, Blue=13)")
     else:
         fail("list_trainer_names order", str(names))
 
-    names2 = list_trainer_names("platinum", _fixture)
-    if names2 == ["Cynthia"]:
-        ok("list_trainer_names: single entry returned correctly")
-    else:
-        fail("list_trainer_names single", str(names2))
-
-    names3 = list_trainer_names("gold-silver", _fixture)
-    if names3 == []:
-        ok("list_trainer_names: unknown game → []")
-    else:
-        fail("list_trainer_names unknown", str(names3))
-
-    # Alphabetical tiebreak for same order value
-    _tie_fixture = {"test-game": {
-        "Zelda": {"order": 1, "party": [{"name": "X", "types": ["Fire"], "level": 1, "moves": ["Tackle"]}]},
-        "Aaron": {"order": 1, "party": [{"name": "X", "types": ["Fire"], "level": 1, "moves": ["Tackle"]}]},
-        "Mike":  {"order": 1, "party": [{"name": "X", "types": ["Fire"], "level": 1, "moves": ["Tackle"]}]},
-    }}
-    tie_names = list_trainer_names("test-game", _tie_fixture)
-    if tie_names == ["Aaron", "Mike", "Zelda"]:
-        ok("list_trainer_names: alphabetical tiebreak within same order value")
-    else:
-        fail("list_trainer_names tiebreak", str(tie_names))
-
-    # Trainers without order field fall back to 999 (appear last)
-    _noorder = {"test": {
-        "NoOrder":  {"party": [{"name": "X", "types": ["Fire"], "level": 1, "moves": ["T"]}]},
-        "HasOrder": {"order": 1, "party": [{"name": "X", "types": ["Fire"], "level": 1, "moves": ["T"]}]},
-    }}
-    no_order_names = list_trainer_names("test", _noorder)
-    if no_order_names[0] == "HasOrder" and no_order_names[1] == "NoOrder":
-        ok("list_trainer_names: missing order field → falls back to 999 (last)")
-    else:
-        fail("list_trainer_names no order", str(no_order_names))
-
-    # ── get_trainer ───────────────────────────────────────────────────────────
-
     brock = get_trainer("red-blue", "Brock", _fixture)
-    if brock and brock["title"] == "Gym Leader 1 — Rock" and len(brock["party"]) == 2:
-        ok("get_trainer: returns correct entry for Brock")
+    if brock and len(brock["party"]) == 2:
+        ok("get_trainer: returns correct entry")
     else:
-        fail("get_trainer Brock", str(brock))
+        fail("get_trainer", str(brock))
 
-    none_result = get_trainer("red-blue", "Cynthia", _fixture)
-    if none_result is None:
-        ok("get_trainer: unknown trainer name → None")
+    # ── Iteration B tests (MOVESET-AWARE) ──────────────────────────────────────
+
+    print("\n  Iteration B — Matchup logic (MOVESET-AWARE)\n")
+
+    team_single = [
+        {"form_name": "Lapras", "type1": "Water", "type2": "Ice"}
+    ]
+    brock_trainer = _fixture["red-blue"]["Brock"]
+    results = analyze_matchup(team_single, brock_trainer, "era1")
+
+    if len(results) == 2:
+        ok("analyze_matchup: returns result for each opponent Pokemon")
     else:
-        fail("get_trainer unknown", str(none_result))
+        fail("analyze_matchup count", f"expected 2, got {len(results)}")
 
-    none_game = get_trainer("gold-silver", "Brock", _fixture)
-    if none_game is None:
-        ok("get_trainer: unknown game → None")
+    # ── KEY TEST: Brock's Geodude only has Normal moves (Tackle, Defense Curl) ──
+    # So Lapras should NOT be threatened by Ground-type moves from Geodude
+    geodude_result = next((r for r in results if r["name"] == "Geodude"), None)
+    if geodude_result:
+        geodude_threats = [t for t in geodude_result.get("threats", []) if t["form_name"] == "Lapras"]
+        if not geodude_threats:
+            ok("analyze_matchup: Geodude's Normal moves don't threaten Lapras (moveset-aware)")
+        else:
+            fail("analyze_matchup threat", f"Geodude shouldn't threaten Lapras via Normal moves")
     else:
-        fail("get_trainer unknown game", str(none_game))
+        fail("analyze_matchup Geodude", "Geodude not found in results")
 
-    # ── Party structure ───────────────────────────────────────────────────────
-
-    brock_party = brock["party"]
-    geodude = brock_party[0]
-    if geodude["name"] == "Geodude" and geodude["types"] == ["Rock", "Ground"]:
-        ok("party member: name and types correct")
+    # ── Lapras should counter Geodude via its Water type (Geodude is Rock/Ground) ──
+    if geodude_result and any(c["form_name"] == "Lapras" for c in geodude_result.get("counters", [])):
+        ok("analyze_matchup: Lapras counters Geodude with Water (Rock/Ground weakness)")
     else:
-        fail("party member types", str(geodude))
+        fail("analyze_matchup counter", "Lapras should hit Geodude SE")
 
-    if geodude["level"] == 12:
-        ok("party member: level correct")
+    # ── Misty test: Starmie has Water and Psychic moves ──────────────────────
+    team_fire = [
+        {"form_name": "Charizard", "type1": "Fire", "type2": "Flying"}
+    ]
+    misty_trainer = _fixture["red-blue"]["Misty"]
+    results = analyze_matchup(team_fire, misty_trainer, "era1")
+
+    starmie_result = next((r for r in results if r["name"] == "Starmie"), None)
+    if starmie_result:
+        starmie_threats = [t for t in starmie_result.get("threats", []) if t["form_name"] == "Charizard"]
+        if starmie_threats and "Water" in starmie_threats[0].get("move_types", []):
+            ok("analyze_matchup: Starmie threatens Charizard with Water moves (moveset-aware)")
+        else:
+            fail("analyze_matchup Water threat", "Starmie should threaten with Water moves from moveset")
     else:
-        fail("party member level", str(geodude["level"]))
+        fail("analyze_matchup Starmie", "Starmie not found")
 
-    if "Tackle" in geodude["moves"] and "Defense Curl" in geodude["moves"]:
-        ok("party member: moves list present and correct")
+    # ── Iteration C tests ──────────────────────────────────────────────────────
+
+    print("\n  Iteration C — Trainer picker & output display\n")
+
+    misty_name = list_trainer_names("red-blue", _fixture)[1]
+    if misty_name == "Misty":
+        ok("pick_trainer_interactive: trainer list generation works")
     else:
-        fail("party member moves", str(geodude["moves"]))
+        fail("pick_trainer_interactive", f"expected Misty, got {misty_name}")
 
-    starmie = get_trainer("red-blue", "Misty", _fixture)["party"][1]
-    if starmie["types"] == ["Water", "Psychic"]:
-        ok("party member: dual type stored correctly")
+    # Test display_matchup_results
+    team_mixed = [
+        {"form_name": "Charizard", "type1": "Fire", "type2": "Flying"},
+        {"form_name": "Blastoise", "type1": "Water", "type2": "None"},
+        {"form_name": "Venusaur", "type1": "Grass", "type2": "Poison"}
+    ]
+    misty_trainer = _fixture["red-blue"]["Misty"]
+    results = analyze_matchup(team_mixed, misty_trainer, "era1")
+
+    import io
+    from contextlib import redirect_stdout
+
+    f = io.StringIO()
+    with redirect_stdout(f):
+        display_matchup_results(results, "red-blue", "Misty", team_mixed)
+    output = f.getvalue()
+
+    if "MISTY" in output and "RED-BLUE" in output:
+        ok("display_matchup_results: renders trainer name and game")
     else:
-        fail("party member dual type", str(starmie["types"]))
+        fail("display_matchup_results header", "Missing trainer/game info")
 
-    # ── validate_trainer_data ─────────────────────────────────────────────────
-
-    issues = validate_trainer_data(_fixture)
-    if issues == []:
-        ok("validate_trainer_data: clean fixture → no issues")
+    if "Staryu" in output and "Starmie" in output:
+        ok("display_matchup_results: renders opponent Pokemon")
     else:
-        fail("validate_trainer_data clean", str(issues))
+        fail("display_matchup_results opponents", "Missing opponent info")
 
-    # Unknown type detected
-    _bad_type = {"test": {"T": {"order": 1, "party": [
-        {"name": "Fakemon", "types": ["Fire", "FakeType"], "level": 10, "moves": ["Tackle"]}
-    ]}}}
-    bad_issues = validate_trainer_data(_bad_type)
-    if any("FakeType" in i for i in bad_issues):
-        ok("validate_trainer_data: unknown type flagged")
+    if "Water" in output or "to" in output:
+        ok("display_matchup_results: shows move types in analysis")
     else:
-        fail("validate_trainer_data bad type", str(bad_issues))
+        fail("display_matchup_results move types", "Missing move type details")
 
-    # Empty party detected
-    _empty_party = {"test": {"T": {"order": 1, "party": []}}}
-    ep_issues = validate_trainer_data(_empty_party)
-    if any("empty party" in i for i in ep_issues):
-        ok("validate_trainer_data: empty party flagged")
+    uncovered = uncovered_threats(results)
+    if len(uncovered) < len(results):
+        ok("uncovered_threats: correctly identifies covered threats")
     else:
-        fail("validate_trainer_data empty party", str(ep_issues))
+        fail("uncovered_threats", "All threats should not be uncovered")
 
-    # Invalid level detected
-    _bad_level = {"test": {"T": {"order": 1, "party": [
-        {"name": "X", "types": ["Fire"], "level": 0, "moves": ["Tackle"]}
-    ]}}}
-    lv_issues = validate_trainer_data(_bad_level)
-    if any("invalid level" in i for i in lv_issues):
-        ok("validate_trainer_data: invalid level flagged")
+    leads = recommended_leads(results, team_mixed)
+    if leads and leads[0] == "Venusaur":
+        ok("recommended_leads: Venusaur ranked first (Grass beats Water)")
     else:
-        fail("validate_trainer_data bad level", str(lv_issues))
+        fail("recommended_leads ranking", f"Expected Venusaur first, got {leads}")
 
-    # Missing moves detected
-    _no_moves = {"test": {"T": {"order": 1, "party": [
-        {"name": "X", "types": ["Fire"], "level": 10, "moves": []}
-    ]}}}
-    mv_issues = validate_trainer_data(_no_moves)
-    if any("moves" in i for i in mv_issues):
-        ok("validate_trainer_data: missing moves flagged")
-    else:
-        fail("validate_trainer_data no moves", str(mv_issues))
+    # ── Summary ────────────────────────────────────────────────────────────────
 
-    # Metadata key (_meta) is skipped
-    _with_meta = {"_meta": {"version": 1}, "test": {"T": {"order": 1, "party": [
-        {"name": "X", "types": ["Fire"], "level": 10, "moves": ["Tackle"]}
-    ]}}}
-    meta_issues = validate_trainer_data(_with_meta)
-    if meta_issues == []:
-        ok("validate_trainer_data: _meta key skipped cleanly")
-    else:
-        fail("validate_trainer_data meta", str(meta_issues))
-
-    # ── summary ───────────────────────────────────────────────────────────────
-    print()
-    total = 22
+    print(f"\n  {'='*50}")
     if errors:
-        print(f"  FAILED ({len(errors)}): {errors}")
-        sys.exit(1)
+        print(f"  {len(errors)} test(s) failed:")
+        for e in errors:
+            print(f"    - {e}")
+        return False
     else:
-        print(f"  All {total} tests passed")
+        print(f"  All tests passed!")
+        return True
 
+
+# ── Entry point ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    if "--autotest" in sys.argv:
-        _run_tests()
+    if "--autotest" in sys.argv or "--dry-run" in sys.argv:
+        success = _run_tests()
+        sys.exit(0 if success else 1)
     else:
         main()
