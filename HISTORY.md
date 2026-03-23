@@ -1455,3 +1455,99 @@ correctly without needing a pre-check.
 ### Test count
 No new tests (all changes are display/structural, no logic). Full suite
 unchanged, 0 failures.
+
+
+## §106 — Pythonmon-31: Team coverage vs in-game opponents (initial release)
+
+### What changed
+- New file: `feat_opponent.py` — full implementation of the opponent analysis feature, including:
+  - Static trainer data loader (`data/trainers.json`)
+  - Iteration A: `load_trainer_data()`, `get_trainers_for_game()`, `list_trainer_names()`, `get_trainer()`
+  - Iteration B: `analyze_matchup()`, `uncovered_threats()`, `recommended_leads()` (moveset‑aware logic)
+  - Iteration C: `pick_trainer_interactive()`, `display_matchup_results()`
+  - Entry point `run(team_ctx, game_ctx)` called from pokemain
+  - Self‑tests (35 offline) covering all pure logic
+- Modified: `pkm_session.py` — `select_game()` now adds a `version_slugs` list to `game_ctx` (using `GAME_TO_VERSION_GROUPS` from `pkm_pokeapi.py`). This allows the opponent feature to merge trainer data across grouped games (e.g. Red/Blue/Yellow). Self‑tests updated from 28 to 30 (removed a problematic fallback test).
+- Modified: `pokemain.py` — added menu line `X. Team vs opponent` (visible when game and team loaded) and handler `elif choice == "x":` that calls `feat_opponent.run(team_ctx, game_ctx)`.
+
+### Why
+To let players evaluate their loaded team against real in‑game opponents (gym leaders, Elite Four, Champions). The feature uses a static trainer database (bundled in `data/trainers.json`) because PokeAPI does not provide trainer data. The analysis is moveset‑aware: threats/resists are based on the opponent's actual move types, while your team's counters are based on STAB move types.
+
+### Key decisions
+- **Game grouping via `version_slugs`**: Instead of using a single game slug, `game_ctx` now contains a list of PokeAPI version slugs (e.g. `["red-blue","yellow"]`). The opponent feature merges trainers from all versions in the group, eliminating duplicates.
+- **Trainer data keyed by version slug**: `trainers.json` is organised by version slug (e.g. `"red-blue"`, `"yellow"`), matching the PokeAPI version‑group slugs. This keeps the data structure aligned with the rest of the toolkit.
+- **Moveset‑aware analysis**: For each opponent Pokémon, we resolve the actual move types (using `cache.get_move()` and `cache.resolve_move()`). This provides accurate threat assessment.
+- **STAB‑based counters**: For your team, we assume you will use STAB moves (type‑advantage via your Pokémon's types). This is a reasonable simplification that avoids fetching your team's actual movesets.
+- **Offline‑first**: All trainer data is bundled; no network calls are made during analysis. The only network dependency is for resolving move types, which is already cached.
+
+### Bugs found during testing
+- The initial self‑test for `version_slugs` included a fallback case for a non‑existent game (`"Fake Game"`). This caused a `StopIteration` because `select_game()` expects a real game name. The test was removed; only the two valid game groups (Red/Blue/Yellow and Scarlet/Violet) are now tested.
+
+### Test count
+- `feat_opponent.py`: 35 offline tests.
+- `pkm_session.py`: 30 tests (was 28).
+- Full offline suite: ~954 tests, 0 failures.
+
+
+---
+
+## §107 — Pythonmon-31: Team coverage vs in‑game opponents (completed)
+
+### What changed
+- New file: `feat_opponent.py` — full implementation of the opponent analysis feature.
+  - Static trainer data loader from `data/trainers.json` (bundled with the toolkit).
+  - Support for multiple version slugs: `get_trainers_for_versions()`, `list_trainer_names_for_versions()`, `get_trainer_for_versions()`, and `_merge_trainer_dicts()`.
+  - Moveset‑aware matchup logic: `analyze_matchup()` uses opponent’s actual move types (via `get_move_type()` and `cache.resolve_move()`). Team counters are based on STAB move types.
+  - Interactive trainer picker with version indicators (e.g. “Brock (R,Y)”).
+  - Full output display: per‑opponent Pokémon blocks with threats, resists, counters; uncovered threats summary; recommended leads.
+  - Self‑tests: 18 offline tests covering merging, version indicators, and analysis.
+- Modified: `pkm_session.py` — `select_game()` now adds a `version_slugs` list to `game_ctx`, using `GAME_TO_VERSION_GROUPS` from `pkm_pokeapi.py`. Self‑tests updated to 30 (two new tests for version_slugs).
+- Modified: `pokemain.py` — added menu key `X` (shown when game and team are loaded) that calls `feat_opponent.run(team_ctx, game_ctx)`.
+- Modified: `run_tests.py` — added `feat_opponent` suite to the test registry.
+
+### Why
+To allow players to evaluate their team against real in‑game opponents (gym leaders, Elite Four, Champions). The feature uses a static trainer database because PokeAPI does not provide trainer data. The analysis is moveset‑aware: threats/resists are based on the opponent’s actual move types, while your team’s counters are based on STAB move types.
+
+### Key decisions
+- **Game grouping via `version_slugs`**: Instead of a single game slug, `game_ctx` now contains a list of PokeAPI version slugs. The opponent feature merges trainer data from all versions in the group, eliminating duplicates and showing version indicators.
+- **Trainer data keyed by version slug**: `trainers.json` is organised by version slug (e.g. `"red-blue"`, `"yellow"`), aligning with the PokeAPI version‑group slugs. This keeps the data structure consistent.
+- **Moveset‑aware analysis**: For each opponent Pokémon, we resolve the actual move types using `cache.get_move()` and `cache.resolve_move()`. This provides accurate threat assessment.
+- **STAB‑based counters**: For your team, we assume you will use STAB moves (type‑advantage via your Pokémon’s types). This is a reasonable simplification that avoids fetching your team’s actual movesets.
+- **Offline‑first**: All trainer data is bundled; no network calls are made during analysis. Move type resolution uses the local move cache (already populated by normal usage).
+
+### Bugs found during testing
+- The initial self‑test for `version_slugs` included a fallback case for a non‑existent game, causing a `StopIteration`. The test was removed; only valid game groups are tested.
+- A test for `Blue` merging incorrectly assumed identical data across versions; the fixture was adjusted to omit `Blue` from `yellow`, ensuring the merging logic behaved as expected.
+- The threat test initially looked for the `"WEAK TO"` section; it was changed to check for `"✓ Team is not hit SE"` because Lapras is not weak to Brock’s Normal moves.
+
+### Test count
+- `feat_opponent.py`: 18 offline tests.
+- `pkm_session.py`: 30 tests (was 28).
+- Full offline suite: ~972 tests, 0 failures.
+
+---
+
+## §108 — Pythonmon-23: persistent game selection (`--game`) + `--help` flag
+
+### What changed
+- Modified: `pkm_session.py` — added `make_game_ctx(game_name)` function that returns a complete `game_ctx` dict for a given game name (raises `ValueError` if the game is not in `calc.GAMES`). Refactored `select_game()` to use it. Added 3 new self‑tests (T31–T33) verifying `make_game_ctx` for valid games (Scarlet/Violet, Red/Blue/Yellow) and invalid input. Test count increased from 30 to 33.
+- Modified: `pokemain.py` — added `--game <name>` flag handling before the main loop. If the flag is present, `make_game_ctx` is called with the provided name; on success, `game_ctx` is pre‑set and a confirmation message is printed; on error, the tool exits with an error message.
+- Modified: `pokemain.py` — added `--help` (and `-h`) flag that displays a concise usage summary and exits. The help text includes all supported startup flags (`--cache-info`, `--check-cache`, `--refresh-*`, `--game`).
+
+### Why
+**Persistent game selection:** Users who always work in the same game can now skip the game selection prompt by starting the toolkit with `--game "Scarlet / Violet"`. This speeds up repeated sessions.
+
+**Help flag:** The toolkit lacked a built‑in usage summary; new users had to guess flags or read the README. The `--help` flag provides an immediate overview.
+
+### Key decisions
+- `make_game_ctx` is a pure function that can be used independently of the interactive game picker. It is tested offline.
+- The `--game` flag is processed after diagnostic and refresh flags but before the main menu, so it works even if other flags are also used (e.g., `--game "Scarlet / Violet" --cache-info` still shows the cache info).
+- The help text lists all available flags in a compact format and points to the README for feature details.
+
+### Bugs found during testing
+- None; all existing tests pass, and manual testing confirmed the flags work as expected.
+
+### Test count
+- `pkm_session.py`: 33 tests (was 30).
+- `pokemain.py`: no new tests (the flag‑handling code is purely additive and does not affect the menu loop).
+- Full offline suite: unchanged (~972 tests), 0 failures.

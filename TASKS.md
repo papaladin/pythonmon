@@ -1,242 +1,199 @@
 # TASKS.md
+# Current work — V2 Package 1: Core Library / Presentation Separation
 
-# Current work — Pythonmon-31: Team coverage vs in-game opponents
-
-**Status:** 🔄 ACTIVE
-**Complexity:** 🟡 Medium
-**New API call:** No — all data is static / locally bundled
-**Cache structure change:** No — trainer data lives in a bundled JSON file,
-  not in the user-facing cache layer
-
-## Background
-
-Pythonmon-31 was previously blocked on the absence of trainer data in PokeAPI
-(open issue since 2019, no endpoint exists). The feature as a plain type-combo
-input ("enter Water / Ground") was dismissed because it misses the core use
-case: "can my team beat Cynthia?". The decision was to revisit when either
-PokeAPI adds trainer data, or we build a static table ourselves.
-
-This task implements the static table approach.
+**Status:** 🔄 PLANNED  
+**Complexity:** 🟡 Medium  
+**Goal:** Extract all pure logic (no I/O, no print statements) from the existing feature modules into a set of core modules. The core modules will be independently testable and reusable by alternative frontends (e.g., a TUI). After this package, the existing CLI will remain unchanged, but its internal structure will be cleanly separated.
 
 ---
 
-## What we're building
+## Design decisions
 
-A new feature screen (key X) that lets the player select a named in-game
-opponent — gym leader, Elite Four member, or Champion — and see a full
-matchup breakdown of their loaded team against that opponent's known party.
-
-Example output:
-
-```
-  Team vs Cynthia  [Diamond / Pearl / Platinum — Sinnoh Champion]
-  ════════════════════════════════════════════════════════════
-
-  Spiritomb   [Ghost / Dark]   Lv 61
-    ✗  Lapras       — weak x4 (Ghost x2, Dark x2)
-    ✓  Snorlax      — neutral
-    ★  Gengar       — hits SE (Ghost)
-
-  Roserade    [Grass / Poison]  Lv 60
-    ★  Charizard    — hits SE (Fire, Flying)
-    ...
-
-  ── Summary ──────────────────────────────────────────────
-  Uncovered threats: Togekiss, Milotic
-  Best leads: Charizard (4 SE), Gengar (3 SE)
-```
+1. **Core modules will live in the same folder with a `core_` prefix** (e.g., `core_move.py`). This avoids import path changes and makes the separation visible.
+2. **The existing `feat_*.py` files will become thin UI wrappers** that fetch data via `pkm_cache`, call core functions, and display results. Display functions will stay in the `feat_*.py` files.
+3. **All pure logic will be moved to core modules**. Each core module will have its own `_run_tests()` for offline testing.
+4. **The data access layer (`pkm_cache.py`) remains the single gateway to cached data**. Core modules will **not** import `pkm_cache`; they will only operate on plain data structures passed from the UI layer.
+5. **After each step, run `python run_tests.py` to ensure no regression.** New tests for core modules will be added to `run_tests.py`.
 
 ---
 
-## Data design
+## Step 1: Core stat functions
 
-### Static trainer data file: data/trainers.json
+**Goal:** Extract stat‑related pure functions from `feat_stat_compare.py` and `feat_quick_view.py`.
 
-Bundled with the project (not in cache/ — this is source data, not fetched
-data). Lives in a data/ subdirectory at the project root.
+### 1.1 Create `core_stat.py`
+- Move pure functions:
+  - `compare_stats(stats_a, stats_b) → list[dict]`
+  - `total_stats(base_stats) → int`
+  - `infer_role(base_stats) → str`
+  - `infer_speed_tier(base_stats) → str`
+  - `_stat_bar(value) → str` (now public as `stat_bar(value)`)
+- Add docstrings and a `_run_tests()` function with tests for each function (reuse existing tests from `feat_stat_compare.py` and `feat_quick_view.py`).
+- Update `feat_stat_compare.py` to import from `core_stat` and remove the original definitions.
+- Update `feat_quick_view.py` to import `stat_bar`, `infer_role`, `infer_speed_tier` from `core_stat`.
+- Update `feat_nature_browser.py` to import `infer_role`, `infer_speed_tier` from `core_stat` (already done in §83, but ensure import is from core now).
+- Add `core_stat.py` to `run_tests.py` SUITES (offline suite, no cache needed).
 
-Schema:
-
-```json
-{
-  "diamond-pearl": {
-    "Cynthia": {
-      "title": "Champion",
-      "order": 12,
-      "party": [
-        {
-          "name": "Spiritomb",
-          "types": ["Ghost", "Dark"],
-          "level": 61,
-          "moves": ["Psychic", "Dark Pulse", "Shadow Ball", "Embargo"]
-        },
-        {
-          "name": "Roserade",
-          "types": ["Grass", "Poison"],
-          "level": 60,
-          "moves": ["Grass Knot", "Sludge Bomb", "Shadow Ball", "Extrasensory"]
-        },
-        {
-          "name": "Garchomp",
-          "types": ["Dragon", "Ground"],
-          "level": 66,
-          "moves": ["Dragon Rush", "Earthquake", "Giga Impact", "Crunch"]
-        }
-      ]
-    }
-  }
-}
-```
-
-Key design decisions:
-- Keyed by game_slug (matches game_ctx["game_slug"]) then trainer name.
-  The G key already filters to the right opponents automatically.
-- Types stored directly in the data file — no PokeAPI call needed at runtime.
-- Moves field includes the opponent Pokémon's moveset (typically 1–4 moves) for matchup analysis. Enables move-specific coverage calculations and strategy recommendations
-- Level included for display context only; not used in calculations.
-- "order" field controls picker sort order (gym 1 first, E4 after, Champion
-  last). Falls back to alphabetical if absent.
-- The file ships with the repository and is read-only at runtime.
-- Initial scope: all main-series games from Gen 1 to Gen 9 — gym leaders,
-  Elite Four, Champion, notable rival final battles.
-
-### Coverage scope for initial release
-
-Priority order for data entry:
-
-Phase 1 (ship with initial release):
-- Red / Blue / Yellow — 8 gyms + E4 + Blue
-- Diamond / Pearl / Platinum — 8 gyms + E4 + Cynthia + Barry final
-- Scarlet / Violet — 8 gyms + E4 + Geeta + Nemona final
-
-Phase 2 (follow-up, one game at a time):
-- Gen 2, Gen 3, Gen 5, Gen 6, Gen 7, Gen 8
-
-Data sources: Bulbapedia trainer pages. All types are era-correct for the
-game (e.g. Clefable is Normal in Gen 1–5, Fairy only from Gen 6).
+**Verify:** `python run_tests.py` passes; all stat‑related features (key C, option 1, nature browser) work as before.
 
 ---
 
-## Implementation — four iterations
+## Step 2: Core egg group functions
 
-### Iteration A — Data file + loader
+**Goal:** Extract pure egg‑group functions from `feat_egg_group.py`.
 
-Deliverable: data/trainers.json populated for Phase 1 games. Loader
-functions in new feat_opponent.py. No display yet.
+### 2.1 Create `core_egg.py`
+- Move pure functions:
+  - `egg_group_name(slug) → str`
+  - `format_egg_groups(egg_groups) → str`
+- Keep `_EGG_GROUP_NAMES` mapping as module‑level constant.
+- Add `_run_tests()` with tests for both functions.
+- Update `feat_egg_group.py` to import from `core_egg` and remove the original definitions.
+- Update `feat_quick_view.py` to import `format_egg_groups` from `core_egg`.
+- Add `core_egg.py` to `run_tests.py` SUITES.
 
-A1 — feat_opponent.py data loader:
-
-```python
-def load_trainer_data() -> dict
-    # Load the bundled trainers.json. Returns {} on missing file.
-
-def get_trainers_for_game(game_slug: str) -> dict
-    # Return {trainer_name: {title, order, party}} for the game slug.
-
-def list_trainer_names(game_slug: str) -> list[str]
-    # Return trainer names sorted by "order" field, then alphabetical.
-```
-
-Iteration A tests (pure, no I/O — use fixture dicts):
-- get_trainers_for_game with fixture → correct trainer dict returned
-- get_trainers_for_game with unknown slug → {}
-- list_trainer_names returns names sorted by order field
-- list_trainer_names on empty game → []
+**Verify:** `python run_tests.py` passes; egg group display in option 1 and key E unchanged.
 
 ---
 
-### Iteration B — Pure matchup logic
+## Step 3: Core evolution functions
 
-Deliverable: analyze_matchup() pure function. Fully testable offline.
+**Goal:** Extract pure evolution‑chain logic from `feat_evolution.py`.
 
-B1 — feat_opponent.py analysis engine:
+### 3.1 Create `core_evolution.py`
+- Move pure functions:
+  - `_parse_trigger(details) → str` (rename to `parse_trigger` in core)
+  - `_flatten_chain(node, max_depth=20) → list[list[dict]]` (rename to `flatten_chain`)
+- Create a new pure version of `filter_paths_for_game` that takes a `species_gen_map` dict (slug → generation) instead of using `_get_species_gen`:
+  ```python
+  def filter_paths_for_game(paths, game_gen, species_gen_map) -> list 
+  
+It will use the provided map to filter stages.
+- Add `_run_tests()` for these functions (reuse existing tests from `feat_evolution.py`).
+- Update `feat_evolution.py` to:
+  - Import core functions.
+  - In `get_or_fetch_chain`, keep the cache fetch (unchanged).
+  - In `display_evolution_block`, pre‑fetch the species generations for all slugs in the paths and build a `species_gen_map` before calling `filter_paths_for_game`.
+- Remove the original pure functions from `feat_evolution.py`.
+- Add `core_evolution.py` to `run_tests.py` SUITES.
 
-```python
-def analyze_matchup(team_ctx, trainer, era_key) -> list[dict]
-    # For each trainer Pokemon, compute:
-    #   threats  — team members weak to it (form_name, multiplier)
-    #   resists  — team members that resist it (form_name, multiplier)
-    #   counters — team members with SE type advantage (form_name, [types])
-    #   moveset  — opponent's moves, used for defensive/offensive coverage analysis
-
-def uncovered_threats(matchup_results) -> list[dict]
-    # Trainer Pokemon that no team member can hit SE.
-
-def recommended_leads(matchup_results, team_ctx) -> list[str]
-    # Team members sorted by number of trainer Pokemon they cover SE.
-```
-
-Iteration B tests (pure):
-- Single team member vs known trainer party → correct threats/resists/counters
-- Dual-type trainer Pokemon: combined defensive multiplier applied correctly
-- uncovered_threats correctly identifies Pokemon with zero SE coverage
-- recommended_leads returns highest-coverage member first
-- Empty team → all trainer Pokemon uncovered, no leads
-- Era-awareness: Fairy absent in era1/era2, present in era3
+**Verify:** `python run_tests.py` passes; evolution chain display (option 1) works correctly for all games.
 
 ---
 
-### Iteration C — Display
+## Step 4: Core move scoring functions
 
-Deliverable: display_opponent_analysis() prints full matchup screen.
+**Goal:** Extract pure move‑scoring and combo‑selection logic from `feat_moveset_data.py`.
 
-Per-trainer-Pokemon block format:
-```
-  Spiritomb   [Ghost / Dark]   Lv 61
-    ✗  Lapras     — weak x4 (Ghost x2, Dark x2)
-    ✓  Snorlax    — neutral
-    ★  Gengar     — hits SE (Ghost)
-```
+### 4.1 Create `core_move.py`
+- Move pure functions:
+  - `score_move(move_entry, pkm_ctx, game_ctx) → float`
+  - `rank_status_moves(status_pool, top_n=3) → list`
+  - `_uncovered_weaknesses(combo, weakness_types) → int` (rename to `uncovered_weaknesses`)
+  - `_combo_score(combo, weakness_types, era_key, mode) → float` (rename to `combo_score`)
+  - `_build_counter_pool(eligible, weakness_types) → list` (rename to `build_counter_pool`)
+  - `_build_coverage_pool(eligible) → list` (rename to `build_coverage_pool`)
+  - `select_combo(damage_pool, mode, weakness_types, era_key, locked=None) → list`
+- Also move `_score_learnset` as a pure function that takes:
+  - `form_data` (learnset dict with move names)
+  - `move_entries_map` (dict mapping move name → resolved versioned entry dict)
+  - `pkm_ctx`, `game_ctx`, `weakness_types`, `era_key`
+  Returns `(damage_pool, status_pool)`.
+- Add `_run_tests()` for all functions (reuse existing tests).
+- Update `feat_moveset_data.py` to import core functions; keep data‑fetching logic.
+- Update `feat_moveset.py` and `feat_team_moveset.py` to continue using the same public API.
+- Add `core_move.py` to `run_tests.py` SUITES.
 
-Summary block:
-```
-  ── Summary ──────────────────────────────
-  Uncovered: Togekiss, Milotic
-  Best leads: Gengar (4 SE), Charizard (3 SE)
-```
-
-Iteration C tests (stdout capture):
-- All trainer Pokemon names present in output
-- Star markers present for SE coverage entries
-- X markers present for threat entries
-- Summary section present with "Uncovered" and "Best leads" lines
-
----
-
-### Iteration D — Menu wiring + trainer picker
-
-Deliverable: Key X in pokemain. Interactive trainer picker. End-to-end.
-
-D1 — Trainer picker:
-```
-  Select opponent  |  Diamond / Pearl / Platinum
-  ──────────────────────────────────────────────
-   1. Roark          (Gym Leader 1 — Rock)
-   2. Gardenia        (Gym Leader 2 — Grass)
-   ...
-  12. Cynthia         (Champion)
-  13. Barry           (Rival — final)
-```
-
-D2 — pokemain.py:
-- Import feat_opponent
-- Menu line: "X. Team vs opponent" — shown when has_game and team_size > 0
-- Handler: show picker, run analysis, wait for Enter
-
-D3 — run_tests.py: add feat_opponent to SUITES (offline)
+**Verify:** `python run_tests.py` passes; moveset recommendation (options 3 and 4) and team moveset synergy (key S) unchanged.
 
 ---
 
-## Completion criteria
+## Step 5: Core team analysis functions
 
-Pythonmon-31 is complete when:
+**Goal:** Extract pure team‑related logic from multiple files into `core_team.py`.
 
-* data/trainers.json populated for all Phase 1 games
-* feat_opponent.py implements all four iteration deliverables
-* Key X accessible from pokemain when team + game are loaded
-* Trainer picker shows trainers filtered to selected game, sorted by order
-* Matchup display shows per-trainer-Pokemon blocks + summary
-* Era-aware: type chart matches game_ctx["era_key"]
-* All offline tests pass (python run_tests.py --offline)
-* HISTORY.md, ROADMAP.md, ARCHITECTURE.md updated
-* data/ directory documented in ARCHITECTURE.md file layout
+### 5.1 Create `core_team.py`
+- Move pure functions:
+
+  **From `feat_team_analysis.py`:**
+  - `build_team_defense(team_ctx, era_key) → dict`
+  - `build_unified_rows(team_defense, era_key) → list`
+  - `gap_label(weak_count, cover_count) → str`
+  - `build_weakness_pairs(team_ctx, era_key) → list`
+  - `gap_pair_label(shared_count) → str`
+
+  **From `feat_team_offense.py`:**
+  - `_hitting_types(era_key, type1, type2, target) → list` (rename to `hitting_types`)
+  - `build_team_offense(team_ctx, era_key) → dict`
+  - `build_offense_rows(team_offense, era_key) → list`
+  - `coverage_gaps(rows) → list`
+
+  **From `feat_team_moveset.py`:**
+  - `_weakness_types(pkm_ctx, era_key) → list` (rename to `weakness_types`)
+  - `_se_types(combo, era_key) → list` (rename to `se_types`)
+  - `build_offensive_coverage(member_results, era_key) → dict`
+  - `_empty_member_result(form_name) → dict` (rename to `empty_member_result`)
+  - `_format_weak_line(weakness_types) → str` (rename to `format_weak_line`)
+  - `_format_move_pair(left, right) → str` (rename to `format_move_pair`)
+  - `_format_se_line(se_types, era_key) → str` (rename to `format_se_line`)
+
+  **From `feat_team_builder.py`:**
+  - `team_offensive_gaps(team_ctx, era_key) → list`
+  - `team_defensive_gaps(team_ctx, era_key) → list`
+  - `candidate_passes_filter(candidate_types, off_gaps, def_gaps, era_key) → bool`
+  - `patchability_score(remaining_off_gaps, era_key) → float`
+  - `_shared_weakness_count(candidate_types, team_ctx, era_key) → int` (rename to `shared_weakness_count`)
+  - `_new_weak_pairs(candidate_types, team_ctx, era_key) → list` (rename to `new_weak_pairs`)
+  - `score_candidate(candidate_types, team_ctx, era_key, off_gaps, def_gaps, slots_remaining, base_stats=None) → float`
+  - `rank_candidates(candidates, team_ctx, era_key, off_gaps, def_gaps, slots_remaining, top_n=6) → list`
+
+- Add `_run_tests()` in `core_team.py` with tests for all functions.
+- Update original files to import from `core_team` and remove definitions.
+- Add `core_team.py` to `run_tests.py` SUITES.
+
+**Verify:** `python run_tests.py` passes; all team features (V, O, S, H) work unchanged.
+
+--- 
+
+## Step 6: Core opponent analysis functions
+
+**Goal:** Extract pure opponent‑analysis logic from `feat_opponent.py`.
+
+### 6.1 Create `core_opponent.py`
+- Move pure functions:
+  - `analyze_matchup(team_ctx, opponent_team, era_key) → list` – where `opponent_team` is a list of dicts, each containing `name`, `types`, `level`, `move_types` (list of type strings). This makes it pure.
+  - `uncovered_threats(matchup_results) → list`
+  - `recommended_leads(matchup_results, team_ctx) → list`
+- Add `_run_tests()` with tests (reuse from `feat_opponent.py`, adjusting to the new signature).
+- Update `feat_opponent.py` to:
+  - Keep data loading and trainer selection.
+  - Resolve move types for each opponent Pokémon using `get_move_type` and build `opponent_team`.
+  - Call `core_opponent.analyze_matchup` with resolved data.
+  - Keep display functions in `feat_opponent.py`.
+- Add `core_opponent.py` to `run_tests.py` SUITES.
+
+**Verify:** `python run_tests.py` passes; opponent analysis (key X) unchanged.
+
+--- 
+
+## Step 7: Consolidate data access (optional)
+
+**Goal:** Move remaining I/O‑intensive code into a dedicated module, leaving core modules pure.
+
+**Decision:** Postpone to a later V2 package (e.g., SQLite migration). The `feat_*.py` files already act as thin UI layers after steps 1–6, so they are acceptable for now.
+
+No implementation in this step.
+
+---
+
+## Step 8: Update `run_tests.py` and documentation
+
+- Ensure all new core modules are added to the SUITES list in `run_tests.py`.
+- Verify that all offline tests pass.
+- Update `ARCHITECTURE.md`:
+  - Add a new section describing core modules and their responsibilities.
+  - Update file list and module descriptions.
+- Update `README.md` if any user‑visible changes occurred (none expected, but verify).
+- Update `HISTORY.md` with a new section (e.g., §109) describing the refactoring.
+
+**Verify:** All tests pass; documentation is up to date.

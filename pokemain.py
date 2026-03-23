@@ -45,6 +45,7 @@ try:
     import feat_egg_group
     import feat_evolution
     import feat_team_builder
+    import feat_opponent
     import pkm_cache as cache
     import pkm_pokeapi
 except ModuleNotFoundError as e:
@@ -97,6 +98,7 @@ _MENU_CHOICES = frozenset({
     "o",    # team offensive coverage
     "s",    # team moveset synergy
     "h",    # team builder suggestions
+    "x",    # opponent analysis
     "m",    # move lookup
     "b",    # type browser
     "n",    # nature browser
@@ -206,6 +208,7 @@ def _print_menu(pkm_ctx, game_ctx, team_ctx=None):
         lines.append("S. Team moveset synergy")
         if has_game:
             lines.append("H. Team builder  (suggest next slot)")
+            lines.append("X. Team vs in-game opponent")
 
     lines.append("MOVE. Pre-load move table  (stats for all ~920 moves)")
     lines.append("W.    Pre-load TM/HM table (TM numbers in move lists)")
@@ -252,6 +255,27 @@ def _handle_diagnostic_flags(args: list) -> None:
     Handle flags that print information and exit immediately.
     Calls sys.exit(0) if a diagnostic flag is present; returns normally otherwise.
     """
+    if "--help" in args or "-h" in args:
+        print("""
+Pokemon Toolkit — Command-line interface for in-game Pokemon analysis
+
+Usage: python pokemain.py [OPTIONS]
+
+Options:
+  --help, -h            Show this help message and exit
+  --cache-info          Show count of cached Pokémon, moves, learnsets, etc.
+  --check-cache         Scan all cache files and report issues
+  --refresh-moves       Force-refresh the full move table
+  --refresh-pokemon <n> Force-refresh one Pokemon's cached data
+  --refresh-learnset <n> <game>  Force-refresh one learnset
+  --refresh-all <n>     Force-refresh all data for a Pokemon
+  --refresh-evolution <n>  Force-refresh one Pokemon's evolution chain
+  --game <name>         Pre-select a game (e.g., "Scarlet / Violet")
+
+Run without arguments to start the interactive menu.
+""")
+        sys.exit(0)
+
     if "--cache-info" in args:
         info = cache.get_cache_info()
         labels = [
@@ -351,6 +375,21 @@ def main():
     team_ctx   = feat_team_loader.new_team()
     pool_cache = {}   # session-level damage pool cache shared by O and S screens
 
+    # ── --game flag: pre-select game ──────────────────────────────────────────
+    if "--game" in sys.argv:
+        idx = sys.argv.index("--game")
+        if idx + 1 >= len(sys.argv):
+            print("  ERROR: --game requires a game name argument.")
+            sys.exit(1)
+        game_name = sys.argv[idx + 1]
+        try:
+            from pkm_session import make_game_ctx
+            game_ctx = make_game_ctx(game_name)
+            print(f"  Pre-selected game: {game_name}")
+        except ValueError as e:
+            print(f"  ERROR: {e}")
+            sys.exit(1)
+
     while True:
         _print_menu(pkm_ctx, game_ctx, team_ctx)
         choice = input("\n  Choice: ").strip().lower()
@@ -426,6 +465,14 @@ def main():
                 print("\n  Load a team first (press T).")
             else:
                 feat_team_builder.run(team_ctx, game_ctx)
+
+        elif choice == "x":
+            if game_ctx is None:
+                print("\n  Select a game first (press G).")
+            elif feat_team_loader.team_size(team_ctx) == 0:
+                print("\n  Load a team first (press T).")
+            else:
+                feat_opponent.run(team_ctx, game_ctx)
 
         elif choice == "move":
             existing   = cache.get_moves()

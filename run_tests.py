@@ -120,6 +120,7 @@ SUITES = [
     ("feat_evolution",            "feat_evolution.py",       ["--autotest"],               []),
     ("feat_learnset_compare",     "feat_learnset_compare.py", ["--autotest"],               []),
     ("feat_team_builder",         "feat_team_builder.py",     ["--autotest"],               []),
+    ("feat_opponent",             "feat_opponent.py",        ["--autotest"],               []),
     # ── cache-dependent suites ────────────────────────────────────────────────
     ("feat_moveset (cache)",
         "feat_moveset.py",     ["--autotest", "--withcache"],

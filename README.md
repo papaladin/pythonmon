@@ -25,6 +25,8 @@ python pokemain.py --refresh-pokemon <name>   # force-refresh one Pokemon's cach
 python pokemain.py --refresh-learnset <name> <game>  # force-refresh one learnset
 python pokemain.py --refresh-all <name>       # force-refresh all data for a Pokemon
 python pokemain.py --refresh-evolution <n>      # force-refresh one Pokemon's evolution chain
+python pokemain.py --help                     # show usage summary and exit
+python pokemain.py --game "Scarlet / Violet"  # pre-select a game, skipping the selection prompt
 ```
 
 First run requires a network connection to populate the cache. After that, all
@@ -57,6 +59,7 @@ machine tables in bulk — recommended before first moveset run.
   O   Offensive coverage   (needs team + game)
   S   Team moveset synergy (needs team + game)
   H   Team builder         (needs team + game)
+  X   Team vs opponent     (needs team + game)
   ─────────────────────────────────────────────
   MOVE  Pre-load move table
   W     Pre-load TM/HM table
@@ -433,6 +436,29 @@ Up to 6 candidates are shown, ranked by a composite score:
 
 ---
 
+### X — Team vs in‑game opponent
+
+**Needs:** team (at least 1 member) + game
+
+Select a named opponent (gym leader, Elite Four member, Champion) from the chosen game.
+The toolkit analyses your loaded team against that opponent’s party, showing:
+
+- **Per‑opponent Pokémon blocks**:  
+  *Name, type, level, and moveset*  
+  - ⚠️ **WEAK TO** – team members that are hit super‑effectively by the opponent’s moves (moveset‑aware)  
+  - ✓ **RESISTS** – team members that resist the opponent’s moves  
+  - 💥 **HITS SE** – team members that can hit the opponent super‑effectively with their own STAB moves
+
+- **Uncovered threats** – opponents that no team member can hit SE with STAB moves  
+- **Recommended leads** – team members sorted by how many opponent Pokémon they can cover with STAB
+
+**Data source:** static `data/trainers.json` bundled with the toolkit. The file is updated manually as new games are added. Move types are resolved from the local move cache (no network needed after first run).
+
+**Era‑aware:** the type chart used for calculating resistances and weaknesses matches the selected game’s era (Gen 1, Gen 2–5, Gen 6+). Moves that changed type or category across generations are resolved correctly for the chosen game.
+
+
+---
+
 ## Supported games
 
 17 games across 3 type chart eras:
@@ -503,6 +529,7 @@ Every module with testable logic has an `--autotest` flag (offline unless noted)
 | `python feat_egg_group.py --autotest` | 18 — name mapping, formatting, display browser, graceful edge cases |
 | `python feat_evolution.py --autotest` | 35 — trigger parsing, chain flattening, gen filter, display (mock) |
 | `python feat_team_builder.py --autotest` | 57 — gap analysis, scoring, pool building, display, run() guards |
+| `python feat_opponent.py --autotest` | 14 — offline trainer data loading, matchup logic, display helpers |
 | `python pkm_pokeapi.py --autotest` | 14 — versioned entry builder, mapping tables, fetch_pokemon offline, egg_groups, evolution_chain_id, check_connectivity |
 
 Run all suites at once:
@@ -540,6 +567,7 @@ python run_tests.py --quiet   # summary table only
 | `feat_team_offense.py`  | Key O: team offensive type coverage |
 | `feat_team_moveset.py` | Key S: team-level moveset recommendations + coverage summary |
 | `feat_team_builder.py` | Key H: team slot suggestion — gap analysis + ranked candidates |
+| `feat_opponent.py`     | Feature: team coverage vs in‑game opponents (key X)
 | `run_tests.py` | Test runner for all suites |
 | `build.py` | Build script — produces a single-file executable via PyInstaller |
 

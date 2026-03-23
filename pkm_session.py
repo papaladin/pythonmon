@@ -2,7 +2,7 @@
 """
 pkm_session.py  Game and Pokemon are two fully independent contexts.
 
-  game_ctx  keys: game, era_key, game_gen
+  game_ctx  keys: game, era_key, game_gen, game_slug, version_slugs
   pkm_ctx   keys: pokemon, variety_slug, form_name, types, type1, type2, abilities,
                   species_gen, form_gen, base_stats
 
@@ -145,9 +145,28 @@ def select_form(forms):
 
 # ── Game selection ────────────────────────────────────────────────────────────
 
+def make_game_ctx(game_choice: str) -> dict:
+    """
+    Return a game_ctx dict for the given game name.
+    Raises ValueError if the game name is not in calc.GAMES.
+    """
+    entry = next((g for g in calc.GAMES if g[0] == game_choice), None)
+    if entry is None:
+        raise ValueError(f"Game '{game_choice}' not found in GAMES list.")
+    game_slug = cache.game_to_slug(game_choice)
+    version_slugs = pkm_pokeapi.GAME_TO_VERSION_GROUPS.get(game_choice, [game_slug])
+    return {
+        "game": entry[0],
+        "era_key": entry[1],
+        "game_gen": entry[2],
+        "game_slug": game_slug,
+        "version_slugs": version_slugs,
+    }
+
+
 def select_game(pkm_ctx=None):
     """
-    Returns {game, era_key, game_gen}.
+    Returns {game, era_key, game_gen, game_slug, version_slugs}.
 
     If pkm_ctx is provided, validates that the loaded Pokemon/form existed
     in the selected game (form_gen <= game_gen). Loops until a compatible
@@ -156,8 +175,11 @@ def select_game(pkm_ctx=None):
     game_names = [g[0] for g in calc.GAMES]
     while True:
         game_choice = select_from_list("  Select GAME:", game_names)
-        entry    = next(g for g in calc.GAMES if g[0] == game_choice)
-        game_ctx = {"game": entry[0], "era_key": entry[1], "game_gen": entry[2]}
+        try:
+            game_ctx = make_game_ctx(game_choice)
+        except ValueError as e:
+            print(f"\n  {e}")
+            continue
 
         if pkm_ctx is not None:
             form_gen  = pkm_ctx.get("form_gen")
@@ -667,9 +689,58 @@ if __name__ == "__main__":
         if g == 1: ok("T28 get_form_gen: Sandslash → species_gen 1")
         else: fail("T28", f"got {g}")
 
+        # ── version_slugs tests ───────────────────────────────────────────────────
+        orig_sfl = _self.select_from_list
+
+        # Test for Red / Blue / Yellow (multiple slugs)
+        def _mock_sfl(*a, **kw):
+            return "Red / Blue / Yellow"
+        _self.select_from_list = _mock_sfl
+        gctx = _self.select_game()
+        if gctx and gctx["version_slugs"] == ["red-blue", "yellow"]:
+            ok("T29 version_slugs: Red/Blue/Yellow → ['red-blue','yellow']")
+        else:
+            fail("T29 version_slugs RBY", str(gctx.get("version_slugs") if gctx else None))
+
+        # Test for Scarlet / Violet (single slug)
+        def _mock_sfl2(*a, **kw):
+            return "Scarlet / Violet"
+        _self.select_from_list = _mock_sfl2
+        gctx2 = _self.select_game()
+        if gctx2 and gctx2["version_slugs"] == ["scarlet-violet"]:
+            ok("T30 version_slugs: Scarlet/Violet → ['scarlet-violet']")
+        else:
+            fail("T30 version_slugs SV", str(gctx2.get("version_slugs") if gctx2 else None))
+
+        _self.select_from_list = orig_sfl
+
+        # ── make_game_ctx tests ───────────────────────────────────────────────────
+        from pkm_session import make_game_ctx
+
+        # Valid game
+        ctx = make_game_ctx("Scarlet / Violet")
+        if ctx and ctx["game"] == "Scarlet / Violet" and ctx["game_gen"] == 9:
+            ok("T31 make_game_ctx: Scarlet/Violet returns correct game_ctx")
+        else:
+            fail("T31 make_game_ctx Scarlet/Violet", str(ctx))
+
+        # Valid game with version_slugs
+        ctx = make_game_ctx("Red / Blue / Yellow")
+        if ctx and ctx["version_slugs"] == ["red-blue", "yellow"]:
+            ok("T32 make_game_ctx: Red/Blue/Yellow includes version_slugs")
+        else:
+            fail("T32 make_game_ctx RBY version_slugs", str(ctx))
+
+        # Invalid game -> ValueError
+        try:
+            ctx = make_game_ctx("Fake Game")
+            fail("T33 make_game_ctx invalid game", "should have raised ValueError")
+        except ValueError:
+            ok("T33 make_game_ctx invalid game raises ValueError")
+
     print()
     if errors:
         print(f"  FAILED ({len(errors)}): {errors}")
         sys.exit(1)
     else:
-        print(f"  All {28} tests passed\n")
+        print(f"  All 33 tests passed\n")

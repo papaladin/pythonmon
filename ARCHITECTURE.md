@@ -29,6 +29,7 @@ pokemon-toolkit/
   feat_evolution.py         Feature: evolution chain display (embedded in option 1)
   feat_learnset_compare.py  Feature: learnset comparison between two Pokémon (key L)
   feat_team_builder.py      Feature: team slot suggestion — gap analysis + ranked candidates (key H)
+  feat_opponent.py          Feature: team coverage vs in‑game opponents (key X)
   run_tests.py              Test runner (calls --autotest on each module)
   cache/                    Local JSON cache (see section 4)
 ```
@@ -78,6 +79,8 @@ in module-level globals.
     "era_key"  : str,   # "era1" | "era2" | "era3"
     "game_gen" : int,   # Generation number 1–9
     "game_slug": str,   # PokeAPI slug  e.g. "scarlet-violet"
+	"version_slugs": list[str],  # All PokeAPI version slugs for this game group
+                                 # e.g. ["red-blue", "yellow"] for Red/Blue/Yello
 }
 ```
 
@@ -230,6 +233,10 @@ Has almost no logic of its own. Wires features together.
 Key internal functions:
 - `_print_menu(pkm_ctx, game_ctx, team_ctx)` — builds the visible menu
 - `_print_context_lines(pkm_ctx, game_ctx, team_ctx)` — header block
+
+**Command‑line flags:** Supports `--help` (or `-h`), `--game <name>`, `--cache-info`, 
+`--check-cache`, `--refresh-moves`, `--refresh-pokemon <name>`, `--refresh-learnset <name> <game>`,
+`--refresh-all <name>`, and `--refresh-evolution <n>`.
 
 ### pkm_session.py
 Handles all interactive context selection.
@@ -450,6 +457,29 @@ cache reads); fetches missing type rosters on demand before pool build.
 
 ---
 
+### feat_opponent.py
+Team coverage vs in‑game opponents (key X). Loads a static trainer database
+(`data/trainers.json`) and analyses how the current team fares against a selected
+opponent (gym leader, Elite Four, Champion). The analysis is moveset‑aware:
+threats/resists are based on the opponent's actual move types, while your team's
+counters are based on STAB move types.
+
+- `load_trainer_data() → dict` — loads and caches the bundled `trainers.json`
+- `get_trainers_for_game(game_slug) → dict` — returns trainer dict for a game slug
+- `list_trainer_names(game_slug) → list[str]` — sorted trainer names by encounter order
+- `analyze_matchup(team_ctx, trainer, era_key) → list[dict]` — pure matchup logic
+- `uncovered_threats(matchup_results) → list[dict]` — opponents with zero STAB coverage
+- `recommended_leads(matchup_results, team_ctx) → list[str]` — rank team members by coverage
+- `pick_trainer_interactive(game_slug, data) → str | None` — interactive trainer picker
+- `display_matchup_results(results, game_slug, trainer_name, team_ctx)` — full screen output
+- `run(team_ctx, game_ctx)` — entry point called from pokemain
+
+Depends on: `matchup_calculator`, `pkm_cache`, `pkm_pokeapi` (for move type resolution).
+No external network calls during analysis (trainer data is static).
+
+
+---
+
 ## 8. Interface contracts
 
 These are the cross-module contracts that must not be broken silently.
@@ -504,3 +534,125 @@ This is the display contract for all team analysis tables.
 - **Python 3.10+ required.** This is the minimum supported version; do not use syntax or stdlib features introduced after 3.10.
 - **Atomic writes.** All cache writes: write to .tmp, then shutil.move().
 - **Defensive reads.** All cache reads return None on any error, never raise.
+
+---
+
+## 10. Embedded Data Tables and Constants
+
+This section lists all static data that is **hard‑coded** in the source files (not fetched from PokeAPI or generated at runtime). It is a single‑source inventory to help with refactoring, migration to a database, or understanding where configuration values reside.
+
+### 10.1 Game and generation data
+
+| File | Constant | Purpose |
+|------|----------|---------|
+| `matchup_calculator.py` | `GENERATIONS` | Maps generation number → label and era key. |
+| `matchup_calculator.py` | `GAMES` | Ordered list of all supported games, each as `(display_name, era_key, gen)`. |
+| `matchup_calculator.py` | `TYPES_ERA1`, `TYPES_ERA2`, `TYPES_ERA3` | Lists of type names valid in each era. |
+| `matchup_calculator.py` | `ERA1_CHART`, `ERA2_CHART`, `ERA3_CHART` | Type‑effectiveness matrices (attacker × defender). |
+| `matchup_calculator.py` | `CHARTS` | Dictionary mapping era key → (chart, type list, column map). |
+| `matchup_calculator.py` | `_COL1`, `_COL2`, `_COL3` | Column index maps for each era (used internally). |
+| `matchup_calculator.py` | `ERA_LABELS` | Human‑readable labels for each era. |
+| `pkm_pokeapi.py` | `GAME_TO_VERSION_GROUPS` | Maps game display name → list of PokeAPI version‑group slugs. |
+| `pkm_pokeapi.py` | `VERSION_GROUP_TO_GEN` | Reverse mapping: version‑group slug → generation number (built from above). |
+| `pkm_pokeapi.py` | `_ROMAN` | Maps Roman numerals to integers (e.g., `"iv"` → 4). |
+
+### 10.2 Move scoring and recommendation data
+
+| File | Constant | Purpose |
+|------|----------|---------|
+| `feat_moveset_data.py` | `TWO_TURN_MOVES` | Dictionary of moves with charge/recharge penalties (`"invulnerable"`, `"penalty"`). |
+| `feat_moveset_data.py` | `COMBO_EXCLUDED` | Frozenset of move names never auto‑suggested by `select_combo()`. |
+| `feat_moveset_data.py` | `CONDITIONAL_PENALTY` | Penalty factors for moves that require a specific condition (e.g., Dream Eater). |
+| `feat_moveset_data.py` | `POWER_OVERRIDE` | Overrides for moves whose base power is not stored in PokeAPI (e.g., Wring Out). |
+| `feat_moveset_data.py` | `STATUS_MOVE_TIERS` | Hand‑curated tier and quality for status moves (over 130 entries). |
+| `feat_moveset_data.py` | `STATUS_CATEGORIES` | Static mapping of PokeAPI move‑meta‑categories to display labels and tiers. |
+| `feat_moveset_data.py` | `LOW_ACCURACY_THRESHOLD` | Display flag: moves with accuracy ≤ this value are marked `(!)`. |
+| `feat_moveset_data.py` | `_COVERAGE_BONUS_PER_TYPE`, `_COUNTER_BONUS_PER_WEAK`, `_STAB_BONUS_PER_MOVE`, `_REDUNDANCY_PENALTY` | Weights used in `_combo_score()`. |
+| `feat_moveset_data.py` | `_STAB_POOL_CAP` | Maximum number of moves considered in STAB mode (25). |
+| `feat_moveset_data.py` | `_COUNTER_FILLER_K` | Number of non‑covering moves kept in counter mode (8). |
+| `feat_moveset.py` | `MAX_CONSTRAINTS` | Maximum number of locked moves (4). |
+| `feat_moveset.py` | `_MODE_LABELS` | Human‑readable labels for the three recommendation modes. |
+
+### 10.3 Team builder and analysis constants
+
+| File | Constant | Purpose |
+|------|----------|---------|
+| `feat_team_builder.py` | `_W_OFFENSIVE`, `_W_DEFENSIVE`, `_W_WEAK_PAIR`, `_W_ROLE`, `_LOOKAHEAD_END` | Scoring weights for candidate suggestions. |
+| `feat_team_builder.py` | `_GEN_RANGES` | List of `(max_dex_id, generation)` for mapping species IDs to gen (duplicated in `feat_type_browser.py` and `feat_evolution.py`). |
+| `feat_team_analysis.py` | `_NAME_ABBREV` | Number of characters to keep when abbreviating Pokémon names in tables (4). |
+| `feat_team_analysis.py` | `_COL_TYPE`, `_COL_CNT`, `_COL_WNAMES`, `_COL_RNAMES`, `_COL_INAMES`, `_GAP_WIDTH` | Column widths for the unified type table. |
+| `feat_team_loader.py` | `MAX_SLOTS` | Maximum team size (6). |
+| `feat_team_offense.py` | `_COL_TYPE`, `_COL_HITTERS`, `_NAME_LEN`, `_MOVE_NAME_LEN` | Column widths for the offensive coverage table. |
+| `feat_team_moveset.py` | `_COL_MOVE`, `_BLOCK_SEP` | Layout constants for team moveset synergy. |
+| `feat_learnset_compare.py` | `_COL_NAME`, `_COL_TYPE`, `_COL_CAT`, `_COL_PWR`, `_COL_ACC`, `_SEP_W`, `_STAT_W` | Column widths for learnset comparison. |
+
+### 10.4 Nature and EV advisor
+
+| File | Constant | Purpose |
+|------|----------|---------|
+| `feat_nature_browser.py` | `STAT_SHORT` | Maps stat slugs (e.g., `"special-attack"`) to short labels (`"SpA"`). |
+| `feat_nature_browser.py` | `_NATURE_ORDER` | Ordered list of 25 nature names (used for display grouping). |
+| `feat_nature_browser.py` | `_NATURE_MIN_GEN` | Generation in which natures were introduced (3). |
+| `feat_nature_browser.py` | `_PROFILE_NATURES` | Mapping of `(role, speed_tier)` → list of two (label, nature_name) pairs for EV profiles. |
+
+### 10.5 Egg groups and forms
+
+| File | Constant | Purpose |
+|------|----------|---------|
+| `feat_egg_group.py` | `_EGG_GROUP_NAMES` | Maps PokeAPI egg‑group slugs to in‑game display names (e.g., `"ground"` → `"Field"`). |
+| `pkm_session.py` | `_FORM_GEN_KEYWORDS` | Keywords used to detect form generation (e.g., `"alolan"` → 7). |
+| `pkm_session.py` | `_MAX_SUGGESTIONS` | Maximum number of suggestions shown during fuzzy name search (8). |
+
+### 10.6 Type browser and stat comparison
+
+| File | Constant | Purpose |
+|------|----------|---------|
+| `feat_type_browser.py` | `_GEN_RANGES` | Same mapping as in `feat_team_builder.py` and `feat_evolution.py`. |
+| `feat_type_browser.py` | `_COL_NAME`, `_COL_T1`, `_COL_T2`, `_COL_GEN`, `_TABLE_W` | Column widths for the type‑browser table. |
+| `feat_stat_compare.py` | `_BAR_MAX`, `_BAR_WIDTH` | Maximum base stat (255) and bar length (18) for the stat bars (also duplicated in `feat_quick_view.py`). |
+| `feat_stat_compare.py` | `_STAT_KEYS` | Ordered list of `(slug, label)` for the six stats. |
+| `feat_quick_view.py` | `_STAT_LABELS` | Same as above (duplicated). |
+
+### 10.7 Cache and network
+
+| File | Constant | Purpose |
+|------|----------|---------|
+| `pkm_cache.py` | `MOVES_CACHE_VERSION` | Schema version for `moves.json` (currently 3). |
+| `pkm_cache.py` | `LEARNSET_STALE_DAYS` | Age threshold for showing a staleness note (30). |
+| `pkm_cache.py` | `_BASE`, `_POKEMON_DIR`, etc. | Directory paths for cache files (derived at runtime). |
+| `pkm_pokeapi.py` | `_TYPE_NAMES` | Maps PokeAPI type slugs to display names (e.g., `"normal"` → `"Normal"`). |
+| `pkm_pokeapi.py` | `_CATEGORY_NAMES` | Maps PokeAPI damage‑class slugs to display names. |
+| `pkm_pokeapi.py` | `_SPECIAL_TYPES_GEN1_3` | Set of type names that were Special in Generations 1–3. |
+| `pkm_pokeapi.py` | `_LEARN_METHODS_KEPT` | Set of learn method slugs that we display (level‑up, machine, tutor, egg). |
+
+### 10.8 User interface layout
+
+| File | Constant | Purpose |
+|------|----------|---------|
+| `pokemain.py` | `W` | Inner width of the main menu box (52). |
+| `pokemain.py` | `_MENU_CHOICES` | Frozenset of all valid menu keys (used for documentation). |
+| `pokemain.py` | `PKM_FEATURES` | Registry of single‑Pokemon features (label, module, entry, flags). |
+| `pokemain.py` | `_CACHE_SEP_WIDTH` | Separator width for `--cache-info` display (46). |
+| `feat_movepool.py` | `_COL_LABEL`, `_COL_NAME`, `_COL_TYPE`, `_COL_CAT`, `_COL_PWR`, `_COL_ACC`, `_COL_PP`, `_SEP_WIDTH` | Column widths for the move list. |
+| `feat_movepool.py` | `_CAT_MAP` | Shortcut mapping for category input (e.g., `"p"` → `"Physical"`). |
+| `feat_move_lookup.py` | (No dedicated constants; uses inline formatting) | – |
+| `feat_evolution.py` | `_SEP_WIDTH` | Separator width for evolution chain display (46). |
+| `feat_egg_group.py` | `_W`, `_COLS`, `_COL_WIDTH` | Layout for egg group roster grid. |
+| `feat_ability_browser.py` | `_C_NAME`, `_C_GEN`, `_C_EFFECT`, `_GAP` | Column widths for ability browser. |
+
+### 10.9 Duplicated constants (to be unified)
+
+Several constants are defined in multiple files and should eventually be moved to a central location if a database migration is planned:
+
+| Constant | Files | Notes |
+|----------|-------|-------|
+| `_GEN_RANGES` (dex ID → generation) | `feat_type_browser.py`, `feat_team_builder.py`, `feat_evolution.py` | Identical mapping; used for different purposes. |
+| `_BAR_MAX`, `_BAR_WIDTH` | `feat_stat_compare.py`, `feat_quick_view.py` | Used for stat bars in different screens. |
+| `_STAT_KEYS` / `_STAT_LABELS` | `feat_stat_compare.py`, `feat_quick_view.py` | Similar lists of stat keys/labels. |
+| `W` (menu width) | `pokemain.py`, `feat_moveset.py` | Both use the same width value. |
+
+These duplications are harmless but should be addressed if the data is moved to a database, at which point a single source of truth can be created.
+
+---
+
+This inventory will be updated as new static data is added to the codebase. It serves as a roadmap for future migrations and helps ensure all hard‑coded data is accounted for when changing data storage.
