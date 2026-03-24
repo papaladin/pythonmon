@@ -8,11 +8,9 @@ Surfaces egg group data in two places:
 
 Egg group slugs from PokeAPI differ from in-game display names in two
 important cases: "ground" → Field, "plant" → Grass.  All 15 known groups
-are mapped in _EGG_GROUP_NAMES.
+are mapped in core_egg.
 
 Entry points:
-  egg_group_name(slug)          → str   (used by feat_quick_view)
-  format_egg_groups(egg_groups) → str   (used by feat_quick_view)
   run(pkm_ctx)                  → None  called from pokemain; key E
   main()                        → None  standalone
 """
@@ -21,50 +19,11 @@ import sys
 
 try:
     from pkm_session import select_game, select_pokemon
+    from core_egg import egg_group_name, format_egg_groups
 except ModuleNotFoundError as e:
     print(f"\n  ERROR: {e}")
     print("  Make sure all files are in the same folder.\n")
     sys.exit(1)
-
-
-# ── Egg group name mapping ────────────────────────────────────────────────────
-
-_EGG_GROUP_NAMES: dict[str, str] = {
-    "monster"      : "Monster",
-    "water1"       : "Water 1",
-    "water2"       : "Water 2",
-    "water3"       : "Water 3",
-    "bug"          : "Bug",
-    "flying"       : "Flying",
-    "ground"       : "Field",        # PokeAPI slug "ground" ≠ in-game "Field"
-    "fairy"        : "Fairy",
-    "plant"        : "Grass",        # PokeAPI slug "plant" ≠ in-game "Grass"
-    "humanshape"   : "Human-Like",
-    "mineral"      : "Mineral",
-    "indeterminate": "Amorphous",
-    "ditto"        : "Ditto",
-    "dragon"       : "Dragon",
-    "no-eggs"      : "Undiscovered",
-}
-
-
-# ── Pure helpers (used by feat_quick_view and browser) ──────────────────────
-
-def egg_group_name(slug: str) -> str:
-    """
-    Return the in-game display name for a PokeAPI egg group slug.
-    Falls back to title-cased slug for unknown groups.
-    """
-    return _EGG_GROUP_NAMES.get(slug, slug.replace("-", " ").title())
-
-
-def format_egg_groups(egg_groups: list) -> str:
-    """
-    Return a formatted string of egg group display names.
-    e.g. ["monster", "dragon"] → "Monster  /  Dragon"
-    Returns "" for an empty list.
-    """
-    return "  /  ".join(egg_group_name(s) for s in egg_groups)
 
 
 # ── Roster fetch (cache-aware) ────────────────────────────────────────────────
@@ -187,72 +146,6 @@ def _run_tests():
 
     print("\n  feat_egg_group.py — self-test\n")
 
-    # ── _EGG_GROUP_NAMES coverage ─────────────────────────────────────────────
-
-    if len(_EGG_GROUP_NAMES) == 15:
-        ok("_EGG_GROUP_NAMES: exactly 15 groups")
-    else:
-        fail("_EGG_GROUP_NAMES count", str(len(_EGG_GROUP_NAMES)))
-
-    # ── egg_group_name ────────────────────────────────────────────────────────
-
-    if egg_group_name("monster") == "Monster":
-        ok("egg_group_name: monster → Monster")
-    else:
-        fail("egg_group_name monster", egg_group_name("monster"))
-
-    if egg_group_name("ground") == "Field":
-        ok("egg_group_name: ground → Field (slug ≠ in-game name)")
-    else:
-        fail("egg_group_name ground", egg_group_name("ground"))
-
-    if egg_group_name("plant") == "Grass":
-        ok("egg_group_name: plant → Grass (slug ≠ in-game name)")
-    else:
-        fail("egg_group_name plant", egg_group_name("plant"))
-
-    if egg_group_name("no-eggs") == "Undiscovered":
-        ok("egg_group_name: no-eggs → Undiscovered")
-    else:
-        fail("egg_group_name no-eggs", egg_group_name("no-eggs"))
-
-    if egg_group_name("humanshape") == "Human-Like":
-        ok("egg_group_name: humanshape → Human-Like")
-    else:
-        fail("egg_group_name humanshape", egg_group_name("humanshape"))
-
-    if egg_group_name("indeterminate") == "Amorphous":
-        ok("egg_group_name: indeterminate → Amorphous")
-    else:
-        fail("egg_group_name indeterminate", egg_group_name("indeterminate"))
-
-    # Unknown slug → title-cased fallback
-    result = egg_group_name("some-new-group")
-    if result == "Some New Group":
-        ok("egg_group_name: unknown slug → title-cased fallback")
-    else:
-        fail("egg_group_name fallback", result)
-
-    # ── format_egg_groups ─────────────────────────────────────────────────────
-
-    r = format_egg_groups(["monster", "dragon"])
-    if r == "Monster  /  Dragon":
-        ok("format_egg_groups: two groups formatted correctly")
-    else:
-        fail("format_egg_groups two", repr(r))
-
-    r = format_egg_groups(["ground"])
-    if r == "Field":
-        ok("format_egg_groups: single group with name mapping")
-    else:
-        fail("format_egg_groups single", repr(r))
-
-    r = format_egg_groups([])
-    if r == "":
-        ok("format_egg_groups: empty list → empty string")
-    else:
-        fail("format_egg_groups empty", repr(r))
-
     # ── display_egg_group_browser (stdout capture) ────────────────────────────
     import io, contextlib
 
@@ -333,7 +226,7 @@ def _run_tests():
 
     # ── summary ───────────────────────────────────────────────────────────────
     print()
-    total = 18
+    total = 8
     if errors:
         print(f"  FAILED ({len(errors)}): {errors}")
         sys.exit(1)

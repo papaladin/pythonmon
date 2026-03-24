@@ -22,6 +22,7 @@ import sys
 try:
     import matchup_calculator as calc
     from pkm_session import select_game, select_pokemon, select_from_list, print_session_header
+    from core_stat import stat_bar, infer_role, infer_speed_tier
 except ModuleNotFoundError as e:
     print(f"\n  ERROR: {e}")
     print("  Make sure all files are in the same folder.\n")
@@ -40,14 +41,6 @@ _STAT_LABELS = [
     ("special-defense","SpD"),
     ("speed",          "Spe"),
 ]
-_BAR_MAX   = 255   # maximum possible base stat
-_BAR_WIDTH = 20    # visual bar width in chars
-
-
-def _stat_bar(value: int) -> str:
-    """Return a simple ASCII progress bar for a base stat value."""
-    filled = round(value / _BAR_MAX * _BAR_WIDTH)
-    return "[" + "█" * filled + "·" * (_BAR_WIDTH - filled) + "]"
 
 
 def _print_base_stats(base_stats: dict, form_name: str) -> None:
@@ -60,11 +53,10 @@ def _print_base_stats(base_stats: dict, form_name: str) -> None:
     for key, label in _STAT_LABELS:
         val = base_stats.get(key, 0)
         total += val
-        bar = _stat_bar(val)
+        bar = stat_bar(val)
         print(f"  {label:<4}  {val:>3}  {bar}")
     print("  " + "─" * _SEP_WIDTH)
     print(f"  {'Total':>8}  {total:>3}")
-    from feat_stat_compare import infer_role, infer_speed_tier
     role = infer_role(base_stats)
     tier = infer_speed_tier(base_stats)
     spe  = base_stats.get("speed", 0)
@@ -121,7 +113,7 @@ def run(pkm_ctx: dict, game_ctx: dict, constraints: list = None) -> None:
     # Egg groups — shown when egg_groups field is present (Pythonmon-27A)
     egg_groups = pkm_ctx.get("egg_groups", [])
     if egg_groups:
-        from feat_egg_group import format_egg_groups
+        from core_egg import format_egg_groups
         print(f"\n  Egg groups — {form_name}")
         print("  " + "─" * _SEP_WIDTH)
         print(f"  {format_egg_groups(egg_groups)}")
@@ -139,7 +131,7 @@ def run(pkm_ctx: dict, game_ctx: dict, constraints: list = None) -> None:
     if paths is not None:
         display_evolution_block(pkm_ctx, paths,
                                 game_gen=game_ctx.get("game_gen"))
-        
+
     input("\n  Press Enter to continue...")
 
 

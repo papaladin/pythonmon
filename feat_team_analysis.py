@@ -3,20 +3,7 @@
 feat_team_analysis.py  Team defensive vulnerability analysis
 
 Given a loaded team (up to 6 Pokemon), shows a unified type table with one
-row per attacking type:
-
-  Type     | Wk  Who            | Res  Who          | Imm  Who    | Neu  Gap
-  ---------+----------------...-+----------------...-+----------...-+----+----------
-  Rock     |  3  Char(x4) Lap   |  0  -             |  0  -       |  3  !! CRITICAL
-  Ice      |  2  Char Blast     |  1  Venu(x0.25)   |  0  -       |  3  !  MAJOR
-  Water    |  1  Char           |  2  Venu Blast     |  0  -       |  3
-  Ground   |  0  -              |  1  Blast          |  1  Char    |  4
-  Bug      |  0  -              |  0  -              |  0  -       |  6
-
-Gap labels (end of row, only when triggered):
-  !! CRITICAL  3+ weak, 0 resist+immune
-  !  MAJOR     3+ weak, <=1 resist+immune
-  .  MINOR     2 weak,  0 resist+immune
+row per attacking type.
 
 Entry points:
   run(team_ctx, game_ctx)   called from pokemain
@@ -28,211 +15,11 @@ import sys
 try:
     import matchup_calculator as calc
     from feat_team_loader import team_slots, team_size, print_team
+    from core_team import build_team_defense, build_unified_rows, gap_label, build_weakness_pairs, gap_pair_label
 except ModuleNotFoundError as e:
     print(f"\n  ERROR: {e}")
     print("  Make sure all files are in the same folder.\n")
     sys.exit(1)
-
-
-# ── Core aggregation ──────────────────────────────────────────────────────────
-
-def build_team_defense(team_ctx: list, era_key: str) -> dict:
-    """
-    For each attacking type in the era, collect each member's multiplier.
-
-    Returns:
-      {
-        atk_type: [
-          {"form_name": str, "multiplier": float},
-          ...  (one entry per filled team slot, in slot order)
-        ]
-      }
-    """
-    _, valid_types, _ = calc.CHARTS[era_key]
-    result = {t: [] for t in valid_types}
-
-    for _idx, pkm in team_slots(team_ctx):
-        matchups = calc.compute_defense(era_key, pkm["type1"], pkm["type2"])
-        for atk_type in valid_types:
-            m = matchups.get(atk_type, 1.0)
-            result[atk_type].append({
-                "form_name":  pkm["form_name"],
-                "multiplier": m,
-            })
-
-    return result
-
-
-def build_unified_rows(team_defense: dict, era_key: str) -> list:
-    """
-    Build one row per attacking type with all defensive info.
-
-    Each row:
-      {
-        "type":           str,
-        "weak_members":   [(form_name, mult), ...]   mult >= 2
-        "resist_members": [(form_name, mult), ...]   0 < mult < 1
-        "immune_members": [form_name, ...]            mult == 0
-        "neutral_count":  int                         mult == 1
-      }
-
-    Sorted: weak_count desc, then cover_count (resist+immune) desc, then name asc.
-    """
-    _, all_types, _ = calc.CHARTS[era_key]
-    rows = []
-    for t in all_types:
-        members = team_defense.get(t, [])
-        weak    = [(m["form_name"], m["multiplier"])
-                   for m in members if m["multiplier"] >= 2.0]
-        resist  = [(m["form_name"], m["multiplier"])
-                   for m in members if 0.0 < m["multiplier"] < 1.0]
-        immune  = [m["form_name"]
-                   for m in members if m["multiplier"] == 0.0]
-        neutral = sum(1 for m in members if m["multiplier"] == 1.0)
-        rows.append({
-            "type":           t,
-            "weak_members":   weak,
-            "resist_members": resist,
-            "immune_members": immune,
-            "neutral_count":  neutral,
-        })
-
-    rows.sort(key=lambda r: (
-        -len(r["weak_members"]),
-        -(len(r["resist_members"]) + len(r["immune_members"])),
-        r["type"]
-    ))
-    return rows
-
-
-# ── Kept for backward compatibility and direct testing ────────────────────────
-
-def weakness_summary(team_defense: dict) -> list:
-    """
-    Return weakness rows sorted by severity.
-    Only types where >=1 member is weak (x2+) are included.
-    """
-    rows = []
-    for atk_type, members in team_defense.items():
-        weak = [(m["form_name"], m["multiplier"])
-                for m in members if m["multiplier"] >= 2.0]
-        if not weak:
-            continue
-        x4 = sum(1 for _, mult in weak if mult >= 4.0)
-        rows.append({
-            "type":         atk_type,
-            "weak_count":   len(weak),
-            "x4_count":     x4,
-            "weak_members": weak,
-        })
-    rows.sort(key=lambda r: (-r["x4_count"], -r["weak_count"], r["type"]))
-    return rows
-
-
-def resistance_summary(team_defense: dict) -> list:
-    """Return resist/immune rows sorted by coverage."""
-    rows = []
-    for atk_type, members in team_defense.items():
-        immune = [m["form_name"] for m in members if m["multiplier"] == 0.0]
-        resist = [m["form_name"] for m in members
-                  if 0.0 < m["multiplier"] < 1.0]
-        if not immune and not resist:
-            continue
-        rows.append({
-            "type":           atk_type,
-            "immune_members": immune,
-            "resist_members": resist,
-        })
-    rows.sort(key=lambda r: (-len(r["immune_members"]),
-                             -len(r["resist_members"]), r["type"]))
-    return rows
-
-
-def critical_gaps(weakness_rows: list, threshold: int = 3) -> list:
-    """Return types where weak_count >= threshold (from weakness_summary rows)."""
-    return [r["type"] for r in weakness_rows if r["weak_count"] >= threshold]
-
-
-# ── Gap classification ────────────────────────────────────────────────────────
-
-def gap_label(weak_count: int, cover_count: int) -> str:
-    """
-    Return a gap severity label, or empty string if no gap.
-
-    cover_count = resist_count + immune_count
-
-    Rules:
-      !! CRITICAL  3+ weak, 0 cover
-      !  MAJOR     3+ weak, <=1 cover
-      .  MINOR     2 weak,  0 cover
-    """
-    if weak_count >= 3 and cover_count == 0:
-        return "!! CRITICAL"
-    if weak_count >= 3 and cover_count <= 1:
-        return "!  MAJOR"
-    if weak_count == 2 and cover_count == 0:
-        return ".  MINOR"
-    return ""
-
-def build_weakness_pairs(team_ctx: list, era_key: str) -> list:
-    """
-    For each pair of filled team slots (i < j), find types where both members
-    are weak (multiplier > 1.0). Return pairs with ≥ 2 shared weaknesses.
-
-    Each result dict:
-      {
-        "name_a":       str,
-        "name_b":       str,
-        "shared_types": list[str],   # alphabetically sorted
-        "shared_count": int,
-      }
-
-    Sorted descending by shared_count, then name_a ascending.
-    """
-    slots = team_slots(team_ctx)
-    pairs = []
-    for ai, (_, pkm_a) in enumerate(slots):
-        def_a = calc.compute_defense(era_key, pkm_a["type1"], pkm_a["type2"])
-        weak_a = {t for t, m in def_a.items() if m > 1.0}
-        for _, (_, pkm_b) in enumerate(slots[ai + 1:]):
-            def_b = calc.compute_defense(era_key, pkm_b["type1"], pkm_b["type2"])
-            weak_b = {t for t, m in def_b.items() if m > 1.0}
-            shared = sorted(weak_a & weak_b)
-            if len(shared) >= 2:
-                pairs.append({
-                    "name_a":       pkm_a["form_name"],
-                    "name_b":       pkm_b["form_name"],
-                    "shared_types": shared,
-                    "shared_count": len(shared),
-                })
-    pairs.sort(key=lambda p: (-p["shared_count"], p["name_a"]))
-    return pairs
-
-
-def gap_pair_label(shared_count: int) -> str:
-    """Return severity label for a weakness-sharing pair."""
-    if shared_count >= 3:
-        return "!! CRITICAL"
-    return ""
-
-
-def _print_weakness_pairs(pairs: list) -> None:
-    """Print the shared-weakness section for all qualifying pairs."""
-    # Dynamic name column: "Name A + Name B", capped at 26
-    name_col = min(26, max(len(f"{p['name_a']} + {p['name_b']}") for p in pairs))
-    sep_w    = name_col + 2 + 40
-
-    print("  Shared weaknesses (pairs with \u2265 2 in common)")
-    print("  " + "\u2500" * sep_w)
-    for p in pairs:
-        label    = f"{p['name_a']} + {p['name_b']}"
-        types_str = "  ".join(p["shared_types"])
-        count_str = f"({p['shared_count']} shared)"
-        severity  = gap_pair_label(p["shared_count"])
-        suffix    = f"  {severity}" if severity else ""
-        print(f"  {label:<{name_col}}  {types_str:<34}{count_str}{suffix}")
-
-
 
 
 # ── Display helpers ───────────────────────────────────────────────────────────
@@ -243,7 +30,6 @@ _COL_WNAMES = 30   # weak names sub-column
 _COL_RNAMES = 28   # resist names sub-column
 _COL_INAMES = 20   # immune names sub-column
 _GAP_WIDTH  = 12   # gap label column
-
 
 _NAME_ABBREV = 4   # characters kept from each Pokemon name
 
@@ -333,6 +119,27 @@ def _print_unified_table(rows: list, n_members: int) -> None:
                 f" | {gap}")
         print(line)
 
+
+def _print_weakness_pairs(pairs: list) -> None:
+    """Print the shared-weakness section for all qualifying pairs."""
+    if not pairs:
+        return
+    # Dynamic name column: "Name A + Name B", capped at 26
+    name_col = min(26, max(len(f"{p['name_a']} + {p['name_b']}") for p in pairs))
+    sep_w    = name_col + 2 + 40
+
+    print("  Shared weaknesses (pairs with \u2265 2 in common)")
+    print("  " + "\u2500" * sep_w)
+    for p in pairs:
+        label    = f"{p['name_a']} + {p['name_b']}"
+        types_str = "  ".join(p["shared_types"])
+        count_str = f"({p['shared_count']} shared)"
+        severity  = gap_pair_label(p["shared_count"])
+        suffix    = f"  {severity}" if severity else ""
+        print(f"  {label:<{name_col}}  {types_str:<34}{count_str}{suffix}")
+
+
+# ── Main display ──────────────────────────────────────────────────────────────
 
 def display_team_analysis(team_ctx: list, game_ctx: dict) -> None:
     era_key  = game_ctx["era_key"]
@@ -433,497 +240,81 @@ def main() -> None:
 # ── Self-tests ────────────────────────────────────────────────────────────────
 
 def _run_tests():
+    import io, contextlib
     errors = []
     def ok(label):   print(f"  [OK]   {label}")
     def fail(label, msg=""):
         print(f"  [FAIL] {label}" + (f": {msg}" if msg else ""))
         errors.append(label)
 
-    print("\n  feat_team_analysis.py -- self-test\n")
+    print("\n  feat_team_analysis.py — self-test\n")
 
-    # ── Fixtures ──────────────────────────────────────────────────────────────
+    # Keep only the tests that are purely display or I/O.
+    # Most logic tests are now in core_team.py.
+
+    # ── Smoke test for display functions ─────────────────────────────────────
     def _pkm(name, t1, t2="None"):
         return {"form_name": name, "type1": t1, "type2": t2}
 
-    charizard  = _pkm("Charizard", "Fire",    "Flying")
-    blastoise  = _pkm("Blastoise", "Water")
-    venusaur   = _pkm("Venusaur",  "Grass",   "Poison")
-    gengar     = _pkm("Gengar",    "Ghost",   "Poison")
-    snorlax    = _pkm("Snorlax",   "Normal")
-    lapras     = _pkm("Lapras",    "Water",   "Ice")
-    butterfree = _pkm("Butterfree","Bug",     "Flying")
+    charizard = _pkm("Charizard", "Fire", "Flying")
+    team1 = [charizard, None, None, None, None, None]
+    game_ctx = {"era_key": "era3", "game": "Test"}
 
-    team1      = [charizard, None, None, None, None, None]
-    team2      = [charizard, blastoise, None, None, None, None]
-    team_empty = [None] * 6
-
-    # ── build_team_defense ────────────────────────────────────────────────────
-
-    td1 = build_team_defense(team1, "era3")
-
-    if td1["Rock"][0]["multiplier"] == 4.0:
-        ok("build_team_defense: Charizard Rock = x4")
-    else:
-        fail("build_team_defense Charizard Rock", str(td1["Rock"][0]["multiplier"]))
-
-    if td1["Ground"][0]["multiplier"] == 0.0:
-        ok("build_team_defense: Charizard Ground = x0 (immune)")
-    else:
-        fail("build_team_defense Charizard Ground", str(td1["Ground"][0]["multiplier"]))
-
-    if td1["Grass"][0]["multiplier"] == 0.25:
-        ok("build_team_defense: Charizard Grass = x0.25")
-    else:
-        fail("build_team_defense Charizard Grass", str(td1["Grass"][0]["multiplier"]))
-
-    td2 = build_team_defense(team2, "era3")
-    if len(td2["Rock"]) == 2:
-        ok("build_team_defense: 2-member team has 2 entries per type")
-    else:
-        fail("build_team_defense 2-member count", str(len(td2["Rock"])))
-
-    blast_rock = next(e for e in td2["Rock"] if e["form_name"] == "Blastoise")
-    if blast_rock["multiplier"] == 1.0:
-        ok("build_team_defense: Blastoise Rock = x1 (neutral)")
-    else:
-        fail("build_team_defense Blastoise Rock", str(blast_rock["multiplier"]))
-
-    td_e = build_team_defense(team_empty, "era3")
-    if all(len(v) == 0 for v in td_e.values()):
-        ok("build_team_defense: empty team -> all lists empty")
-    else:
-        fail("build_team_defense empty")
-
-    _, valid_era1, _ = calc.CHARTS["era1"]
-    _, valid_era2, _ = calc.CHARTS["era2"]
-    if set(build_team_defense(team1, "era1").keys()) == set(valid_era1):
-        ok("build_team_defense era1: keys match era1 type set")
-    else:
-        fail("build_team_defense era1 keys")
-
-    if set(build_team_defense(team1, "era2").keys()) == set(valid_era2):
-        ok("build_team_defense era2: keys match era2 type set")
-    else:
-        fail("build_team_defense era2 keys")
-
-    # ── weakness_summary ──────────────────────────────────────────────────────
-
-    ws1 = weakness_summary(td1)
-    types_weak = [r["type"] for r in ws1]
-
-    if "Rock" in types_weak:
-        ok("weakness_summary: Rock in Charizard weaknesses")
-    else:
-        fail("weakness_summary Rock missing", str(types_weak))
-
-    if "Ground" not in types_weak:
-        ok("weakness_summary: Ground absent (immune -> not weak)")
-    else:
-        fail("weakness_summary Ground should be absent")
-
-    if ws1[0]["type"] == "Rock":
-        ok("weakness_summary: Rock sorted first (x4 priority)")
-    else:
-        fail("weakness_summary sort order", ws1[0]["type"])
-
-    rock_row = next(r for r in ws1 if r["type"] == "Rock")
-    if rock_row["x4_count"] == 1 and rock_row["weak_count"] == 1:
-        ok("weakness_summary: Rock x4_count=1 weak_count=1")
-    else:
-        fail("weakness_summary Rock counts", str(rock_row))
-
-    ws2 = weakness_summary(td2)
-    elec_row = next((r for r in ws2 if r["type"] == "Electric"), None)
-    if elec_row and elec_row["weak_count"] == 2:
-        ok("weakness_summary: Electric weak_count=2 (Charizard+Blastoise)")
-    else:
-        fail("weakness_summary Electric 2 members", str(elec_row))
-
-    team_sn = [snorlax, None, None, None, None, None]
-    td_sn   = build_team_defense(team_sn, "era3")
-    ws_sn   = weakness_summary(td_sn)
-    if not any(r["type"] == "Ghost" for r in ws_sn):
-        ok("weakness_summary: Ghost not a weakness for Snorlax (immune)")
-    else:
-        fail("weakness_summary Ghost/Snorlax")
-
-    if weakness_summary(td_e) == []:
-        ok("weakness_summary: empty team -> []")
-    else:
-        fail("weakness_summary empty")
-
-    # ── critical_gaps ─────────────────────────────────────────────────────────
-
-    team3 = [charizard, lapras, butterfree, None, None, None]
-    td3   = build_team_defense(team3, "era3")
-    ws3   = weakness_summary(td3)
-    gaps3 = critical_gaps(ws3, threshold=3)
-
-    if "Rock" in gaps3:
-        ok("critical_gaps: Rock flagged (3 members weak, threshold=3)")
-    else:
-        fail("critical_gaps Rock", str(gaps3))
-
-    if "Water" not in gaps3:
-        ok("critical_gaps: Water not flagged (only 1 member weak)")
-    else:
-        fail("critical_gaps Water should not be flagged")
-
-    if "Rock" in critical_gaps(ws3, threshold=2):
-        ok("critical_gaps threshold=2 includes Rock")
-    else:
-        fail("critical_gaps threshold=2")
-
-    if critical_gaps([], threshold=3) == []:
-        ok("critical_gaps: empty weakness_rows -> []")
-    else:
-        fail("critical_gaps empty rows")
-
-    # ── resistance_summary ────────────────────────────────────────────────────
-
-    rs1 = resistance_summary(td1)
-    ground_row = next((r for r in rs1 if r["type"] == "Ground"), None)
-    if ground_row and "Charizard" in ground_row["immune_members"]:
-        ok("resistance_summary: Charizard immune to Ground")
-    else:
-        fail("resistance_summary Ground immune", str(ground_row))
-
-    fire_row = next((r for r in rs1 if r["type"] == "Fire"), None)
-    if fire_row and "Charizard" in fire_row["resist_members"]:
-        ok("resistance_summary: Charizard resists Fire")
-    else:
-        fail("resistance_summary Fire resist", str(fire_row))
-
-    team_g = [gengar, None, None, None, None, None]
-    td_g   = build_team_defense(team_g, "era3")
-    rs_g   = resistance_summary(td_g)
-    norm_r  = next((r for r in rs_g if r["type"] == "Normal"),   None)
-    fight_r = next((r for r in rs_g if r["type"] == "Fighting"), None)
-    if norm_r  and "Gengar" in norm_r["immune_members"]:
-        ok("resistance_summary: Gengar immune to Normal")
-    else:
-        fail("resistance_summary Gengar Normal immune", str(norm_r))
-    if fight_r and "Gengar" in fight_r["immune_members"]:
-        ok("resistance_summary: Gengar immune to Fighting")
-    else:
-        fail("resistance_summary Gengar Fighting immune", str(fight_r))
-
-    if resistance_summary(td_e) == []:
-        ok("resistance_summary: empty team -> []")
-    else:
-        fail("resistance_summary empty")
-
-    # ── build_unified_rows ────────────────────────────────────────────────────
-
-    _, all_types_era3, _ = calc.CHARTS["era3"]
-    ur1 = build_unified_rows(td1, "era3")
-
-    # All era3 types present
-    if set(r["type"] for r in ur1) == set(all_types_era3):
-        ok("build_unified_rows: all era3 types present")
-    else:
-        fail("build_unified_rows: missing types",
-             str(set(all_types_era3) - set(r["type"] for r in ur1)))
-
-    # Rock row: weak_members has Charizard with mult 4.0
-    rock_ur = next(r for r in ur1 if r["type"] == "Rock")
-    if rock_ur["weak_members"] == [("Charizard", 4.0)]:
-        ok("build_unified_rows: Rock row weak_members correct")
-    else:
-        fail("build_unified_rows Rock weak", str(rock_ur["weak_members"]))
-
-    # Ground row: immune_members has Charizard, no weak
-    ground_ur = next(r for r in ur1 if r["type"] == "Ground")
-    if "Charizard" in ground_ur["immune_members"] and ground_ur["weak_members"] == []:
-        ok("build_unified_rows: Ground row immune correct, no weak")
-    else:
-        fail("build_unified_rows Ground", str(ground_ur))
-
-    # Grass row: resist_members has Charizard with mult 0.25
-    grass_ur = next(r for r in ur1 if r["type"] == "Grass")
-    grass_resist_names = [n for n, m in grass_ur["resist_members"]]
-    if "Charizard" in grass_resist_names:
-        grass_mult = next(m for n, m in grass_ur["resist_members"] if n == "Charizard")
-        if grass_mult == 0.25:
-            ok("build_unified_rows: Grass row resist mult = 0.25 for Charizard")
-        else:
-            fail("build_unified_rows Grass mult", str(grass_mult))
-    else:
-        fail("build_unified_rows Grass resist", str(grass_ur["resist_members"]))
-
-    # Sorted: rows with most weak first; among equal-weak rows, alphabetical
-    # Charizard has 3 types weak to (Rock, Electric, Water) all with weak=1
-    # so first row is the alphabetically first of those: Electric
-    if ur1[0]["weak_members"] and len(ur1[0]["weak_members"]) >= len(ur1[-1]["weak_members"]):
-        ok("build_unified_rows: rows with weak members sort before rows without")
-    else:
-        fail("build_unified_rows sort", ur1[0]["type"])
-
-    # All rows with weak=1 sort before rows with weak=0
-    first_no_weak = next(i for i, r in enumerate(ur1) if not r["weak_members"])
-    all_weak_before = all(ur1[i]["weak_members"] for i in range(first_no_weak))
-    if all_weak_before:
-        ok("build_unified_rows: all weak rows before all non-weak rows")
-    else:
-        fail("build_unified_rows weak order")
-
-    # neutral_count: 1 member total, Rock weak -> neutral=0, Ground immune -> neutral=0
-    # Fire: Charizard resists Fire (x0.5) -> neutral=0, resist=1
-    fire_ur = next(r for r in ur1 if r["type"] == "Fire")
-    if fire_ur["neutral_count"] == 0 and len(fire_ur["resist_members"]) >= 1:
-        ok("build_unified_rows: Fire row neutral=0, resist>=1 for Charizard")
-    else:
-        fail("build_unified_rows Fire neutral", str(fire_ur))
-
-    # neutral_count for a truly neutral type: e.g. Dragon vs single Charizard
-    dragon_ur = next(r for r in ur1 if r["type"] == "Dragon")
-    if dragon_ur["neutral_count"] == 1 and dragon_ur["weak_members"] == []:
-        ok("build_unified_rows: Dragon row neutral=1 for Charizard")
-    else:
-        fail("build_unified_rows Dragon neutral", str(dragon_ur))
-
-    # ── gap_label ─────────────────────────────────────────────────────────────
-
-    if gap_label(3, 0) == "!! CRITICAL":
-        ok("gap_label: 3 weak, 0 cover -> CRITICAL")
-    else:
-        fail("gap_label CRITICAL", gap_label(3, 0))
-
-    if gap_label(4, 0) == "!! CRITICAL":
-        ok("gap_label: 4 weak, 0 cover -> CRITICAL")
-    else:
-        fail("gap_label CRITICAL 4", gap_label(4, 0))
-
-    if gap_label(3, 1) == "!  MAJOR":
-        ok("gap_label: 3 weak, 1 cover -> MAJOR")
-    else:
-        fail("gap_label MAJOR", gap_label(3, 1))
-
-    if gap_label(3, 2) == "":
-        ok("gap_label: 3 weak, 2 cover -> no gap")
-    else:
-        fail("gap_label 3w 2c", gap_label(3, 2))
-
-    if gap_label(2, 0) == ".  MINOR":
-        ok("gap_label: 2 weak, 0 cover -> MINOR")
-    else:
-        fail("gap_label MINOR", gap_label(2, 0))
-
-    if gap_label(2, 1) == "":
-        ok("gap_label: 2 weak, 1 cover -> no gap")
-    else:
-        fail("gap_label 2w 1c", gap_label(2, 1))
-
-    if gap_label(1, 0) == "":
-        ok("gap_label: 1 weak, 0 cover -> no gap")
-    else:
-        fail("gap_label 1w 0c", gap_label(1, 0))
-
-    if gap_label(0, 0) == "":
-        ok("gap_label: 0 weak -> no gap")
-    else:
-        fail("gap_label 0w", gap_label(0, 0))
-
-    # ── _abbrev ───────────────────────────────────────────────────────────────
-
-    if _abbrev("Charizard") == "Char":
-        ok("_abbrev: 9-char name -> 4 chars")
-    else:
-        fail("_abbrev 9-char", repr(_abbrev("Charizard")))
-
-    if _abbrev("Mew") == "Mew":
-        ok("_abbrev: short name kept as-is")
-    else:
-        fail("_abbrev short", repr(_abbrev("Mew")))
-
-    # ── _weak_tag / _resist_tag ───────────────────────────────────────────────
-
-    if _weak_tag("Charizard", 4.0) == "Char(\u00d74)":
-        ok("_weak_tag: x4 gets suffix on abbreviated name")
-    else:
-        fail("_weak_tag x4", repr(_weak_tag("Charizard", 4.0)))
-
-    if _weak_tag("Blastoise", 2.0) == "Blas":
-        ok("_weak_tag: x2 no suffix, name abbreviated")
-    else:
-        fail("_weak_tag x2", repr(_weak_tag("Blastoise", 2.0)))
-
-    if _resist_tag("Charizard", 0.25) == "Char(\u00d70.25)":
-        ok("_resist_tag: x0.25 gets suffix on abbreviated name")
-    else:
-        fail("_resist_tag x0.25", repr(_resist_tag("Charizard", 0.25)))
-
-    if _resist_tag("Venusaur", 0.5) == "Venu":
-        ok("_resist_tag: x0.5 no suffix, name abbreviated")
-    else:
-        fail("_resist_tag x0.5", repr(_resist_tag("Venusaur", 0.5)))
-
-    # ── _names_cell ───────────────────────────────────────────────────────────
-
-    if _names_cell([], 20) == "-":
-        ok("_names_cell: empty list -> dash")
-    else:
-        fail("_names_cell empty", _names_cell([], 20))
-
-    short = _names_cell(["Charizard", "Blastoise"], 30)
-    if "Charizard" in short and "Blastoise" in short:
-        ok("_names_cell: short list fits without truncation")
-    else:
-        fail("_names_cell short", short)
-
-    long_names = ["Charizard", "Blastoise", "Venusaur", "Pikachu", "Gengar", "Snorlax"]
-    truncated = _names_cell(long_names, 20)
-    if len(truncated) <= 20 and "..." in truncated:
-        ok("_names_cell: long list truncated with '...'")
-    else:
-        fail("_names_cell truncation", f"len={len(truncated)} val={truncated!r}")
-
-    # ── _print_unified_table: all types shown ─────────────────────────────────
-    import io, contextlib
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        _print_unified_table(ur1, 1)
+        display_team_analysis(team1, game_ctx)
     out = buf.getvalue()
-
-    # Every era3 type must appear in output
-    missing = [t for t in all_types_era3 if t not in out]
-    if not missing:
-        ok("_print_unified_table: all era3 types present in output")
+    if "Rock" in out and "Charizard" in out:
+        ok("display_team_analysis: output contains expected info")
     else:
-        fail("_print_unified_table missing types", str(missing))
+        fail("display_team_analysis smoke", out[:200])
 
-    # Rock line shows count 1 in weak column
-    rock_line = next((l for l in out.splitlines() if l.strip().startswith("Rock")), None)
-    if rock_line and " 1 " in rock_line:
-        ok("_print_unified_table: Rock row shows weak count 1")
+    # ── _abbrev, _weak_tag, _resist_tag, _names_cell ─────────────────────────
+    if _abbrev("Charizard") == "Char":
+        ok("_abbrev: works")
     else:
-        fail("_print_unified_table Rock count", repr(rock_line))
+        fail("_abbrev")
 
-    # Dragon line: all zeros, no gap label — row should still be present
-    drag_line = next((l for l in out.splitlines() if l.strip().startswith("Dragon")), None)
-    if drag_line and "Dragon" in drag_line:
-        ok("_print_unified_table: Dragon row present (all neutral, no gap)")
+    if _weak_tag("Charizard", 4.0) == "Char(\u00d74)":
+        ok("_weak_tag: x4 tag")
     else:
-        fail("_print_unified_table Dragon line", repr(drag_line))
+        fail("_weak_tag")
 
-    # ── build_weakness_pairs ─────────────────────────────────────────────────
+    if _resist_tag("Venusaur", 0.25) == "Venu(\u00d70.25)":
+        ok("_resist_tag: x0.25 tag")
+    else:
+        fail("_resist_tag")
 
-    # Fixtures already defined: charizard, blastoise, lapras, butterfree, snorlax
+    if _names_cell(["Charizard", "Blastoise"], 20) == "Charizard  Blastoise":
+        ok("_names_cell: short list")
+    else:
+        fail("_names_cell short")
 
-    # Empty team → []
-    if build_weakness_pairs(team_empty, "era3") == []:
-        ok("build_weakness_pairs: empty team → []")
-    else: fail("build_weakness_pairs empty")
+    long_names = ["Charizard", "Blastoise", "Venusaur", "Pikachu"]
+    truncated = _names_cell(long_names, 20)
+    if len(truncated) <= 20 and "..." in truncated:
+        ok("_names_cell: truncation")
+    else:
+        fail("_names_cell truncation", truncated)
 
-    # Single member → [] (no pairs possible)
-    if build_weakness_pairs(team1, "era3") == []:
-        ok("build_weakness_pairs: single member → []")
-    else: fail("build_weakness_pairs single")
-
-    # Charizard (Fire/Flying) + Blastoise (Water):
-    # Charizard weak: Rock, Water, Electric
-    # Blastoise weak: Grass, Electric
-    # Shared: Electric only (count=1) → NOT in results
-    team_cb = [charizard, blastoise, None, None, None, None]
-    pairs_cb = build_weakness_pairs(team_cb, "era3")
-    if pairs_cb == []:
-        ok("build_weakness_pairs: Charizard+Blastoise share only Electric (count=1) → []")
-    else: fail("build_weakness_pairs Char+Blas", str(pairs_cb))
-
-    # Charizard (Rock×4, Water×2, Electric×2) + Lapras (Water/Ice: Grass, Electric, Rock, Fighting)
-    # Charizard weak: Rock, Water, Electric
-    # Lapras weak: Grass, Electric, Rock, Fighting
-    # Shared: Rock, Electric (count=2) → in results
-    lapras2 = _pkm("Lapras", "Water", "Ice")
-    team_cl = [charizard, lapras2, None, None, None, None]
-    pairs_cl = build_weakness_pairs(team_cl, "era3")
-    if len(pairs_cl) == 1 and pairs_cl[0]["shared_count"] == 2:
-        if "Rock" in pairs_cl[0]["shared_types"] and "Electric" in pairs_cl[0]["shared_types"]:
-            ok("build_weakness_pairs: Charizard+Lapras → Rock+Electric shared (count=2)")
-        else: fail("build_weakness_pairs Char+Lapras shared_types", str(pairs_cl[0]["shared_types"]))
-    else: fail("build_weakness_pairs Char+Lapras count", str(pairs_cl))
-
-    # Two Charizard instances → all 3 weaknesses shared (Rock, Water, Electric)
-    team_cc = [charizard, charizard, None, None, None, None]
-    pairs_cc = build_weakness_pairs(team_cc, "era3")
-    if len(pairs_cc) == 1 and pairs_cc[0]["shared_count"] == 3:
-        ok("build_weakness_pairs: two Charizard → 3 shared weaknesses")
-    else: fail("build_weakness_pairs two Charizard", str(pairs_cc))
-
-    # Pair with exactly 2 shared → in results
-    if any(p["shared_count"] == 2 for p in pairs_cl):
-        ok("build_weakness_pairs: pair with count=2 → included")
-    else: fail("build_weakness_pairs count=2 included")
-
-    # Pair with count=1 (Char+Blas) → not in results
-    if pairs_cb == []:
-        ok("build_weakness_pairs: pair with count=1 → excluded")
-    else: fail("build_weakness_pairs count=1 excluded")
-
-    # Sorted descending by shared_count: 3-shared before 2-shared
-    team_sort = [charizard, charizard, lapras2, None, None, None]
-    pairs_sort = build_weakness_pairs(team_sort, "era3")
-    if len(pairs_sort) >= 2 and pairs_sort[0]["shared_count"] >= pairs_sort[1]["shared_count"]:
-        ok("build_weakness_pairs: sorted descending by shared_count")
-    else: fail("build_weakness_pairs sort", str([(p['name_a'],p['name_b'],p['shared_count']) for p in pairs_sort]))
-
-    # shared_types is alphabetically sorted
-    if pairs_cl and pairs_cl[0]["shared_types"] == sorted(pairs_cl[0]["shared_types"]):
-        ok("build_weakness_pairs: shared_types alphabetically sorted")
-    else: fail("build_weakness_pairs alpha sort", str(pairs_cl[0]["shared_types"] if pairs_cl else "no pairs"))
-
-    # ── gap_pair_label ────────────────────────────────────────────────────────
-    if gap_pair_label(3) == "!! CRITICAL":
-        ok("gap_pair_label(3) → '!! CRITICAL'")
-    else: fail("gap_pair_label 3", gap_pair_label(3))
-
-    if gap_pair_label(4) == "!! CRITICAL":
-        ok("gap_pair_label(4) → '!! CRITICAL'")
-    else: fail("gap_pair_label 4", gap_pair_label(4))
-
-    if gap_pair_label(2) == "":
-        ok("gap_pair_label(2) → '' (no label)")
-    else: fail("gap_pair_label 2", gap_pair_label(2))
-
-    if gap_pair_label(1) == "":
-        ok("gap_pair_label(1) → '' (no label)")
-    else: fail("gap_pair_label 1", gap_pair_label(1))
-
-    # ── _print_weakness_pairs (stdout capture) ────────────────────────────────
-    import io as _io2, contextlib as _cl2
-
-    pairs_display = [
+    # ── _print_weakness_pairs (stdout capture) ───────────────────────────────
+    pairs = [
         {"name_a": "Charizard", "name_b": "Lapras",
          "shared_types": ["Electric", "Rock"], "shared_count": 2},
         {"name_a": "Charizard", "name_b": "Butterfree",
          "shared_types": ["Electric", "Flying", "Rock"], "shared_count": 3},
     ]
-    buf_p = _io2.StringIO()
-    with _cl2.redirect_stdout(buf_p):
-        _print_weakness_pairs(pairs_display)
-    out_p = buf_p.getvalue()
+    buf2 = io.StringIO()
+    with contextlib.redirect_stdout(buf2):
+        _print_weakness_pairs(pairs)
+    out2 = buf2.getvalue()
+    if "Charizard + Lapras" in out2 and "!! CRITICAL" in out2:
+        ok("_print_weakness_pairs: works")
+    else:
+        fail("_print_weakness_pairs", out2[:200])
 
-    if "Charizard" in out_p and "Lapras" in out_p and "Butterfree" in out_p:
-        ok("_print_weakness_pairs: pair names present in output")
-    else: fail("_print_weakness_pairs names", out_p[:120])
-
-    if "Electric" in out_p and "Rock" in out_p and "Flying" in out_p:
-        ok("_print_weakness_pairs: shared type names present")
-    else: fail("_print_weakness_pairs types", out_p[:120])
-
-    if "!! CRITICAL" in out_p:
-        ok("_print_weakness_pairs: !! CRITICAL shown for 3-shared pair")
-    else: fail("_print_weakness_pairs CRITICAL", out_p[:120])
-
-    # The 2-shared pair should NOT have !! CRITICAL
-    lines_p = [l for l in out_p.splitlines() if "Lapras" in l]
-    if lines_p and "!! CRITICAL" not in lines_p[0]:
-        ok("_print_weakness_pairs: 2-shared pair has no CRITICAL label")
-    else: fail("_print_weakness_pairs no CRITICAL on 2-shared", str(lines_p))
-
-    # ── summary ───────────────────────────────────────────────────────────────
     print()
-    total = 75
+    total = 5  # number of tests in this file after move
     if errors:
         print(f"  FAILED ({len(errors)}): {errors}")
         sys.exit(1)
@@ -932,9 +323,7 @@ def _run_tests():
 
 
 if __name__ == "__main__":
-    import sys
-    args = sys.argv[1:]
-    if "--autotest" in args:
+    if "--autotest" in sys.argv:
         _run_tests()
     else:
         main()

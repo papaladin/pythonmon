@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['C:\\Users\\GPALADI\\Dropbox\\Python\\pythonmon tools\\v1.0 - team builder\\pokemain.py'],
+    ['/Users/gregory/Dropbox/Python/pythonmon tools/main/pokemain.py'],
     pathex=[],
     binaries=[],
     datas=[],

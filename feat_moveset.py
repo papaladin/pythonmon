@@ -20,14 +20,13 @@ try:
     import matchup_calculator as calc
     import pkm_cache as cache
     from pkm_session import select_game, select_pokemon, print_session_header
-    from feat_moveset_data import (
-        build_candidate_pool, select_combo, rank_status_moves,
-        TWO_TURN_MOVES, LOW_ACCURACY_THRESHOLD,
-    )
+    from feat_moveset_data import build_candidate_pool
+    from core_move import select_combo, rank_status_moves, TWO_TURN_MOVES, LOW_ACCURACY_THRESHOLD
 except ModuleNotFoundError as e:
     print(f"\n  ERROR: {e}")
     print("  Make sure all files are in the same folder.\n")
     sys.exit(1)
+
 
 
 # ── Display constants ─────────────────────────────────────────────────────────

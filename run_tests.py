@@ -99,6 +99,7 @@ def _cache_items():
 #   cache_keys — list of _cache_items() keys that must exist before this suite.
 #                Empty list = always run (offline suite).
 
+
 SUITES = [
     ("matchup_calculator",       "matchup_calculator.py",  ["--autotest"],               []),
     ("pkm_cache",                "pkm_cache.py",            [],                            []),
@@ -121,6 +122,13 @@ SUITES = [
     ("feat_learnset_compare",     "feat_learnset_compare.py", ["--autotest"],               []),
     ("feat_team_builder",         "feat_team_builder.py",     ["--autotest"],               []),
     ("feat_opponent",             "feat_opponent.py",        ["--autotest"],               []),
+    ("core_stat",                 "core_stat.py",            ["--autotest"],               []),
+    ("core_egg",                  "core_egg.py",             ["--autotest"],               []),
+    ("core_evolution",            "core_evolution.py",             ["--autotest"],         []),
+    ("core_move",                 "core_move.py",            ["--autotest"],               []),
+    ("core_team",                 "core_team.py",            ["--autotest"],               []),
+    ("core_opponent",             "core_opponent.py",        ["--autotest"],               []),
+
     # ── cache-dependent suites ────────────────────────────────────────────────
     ("feat_moveset (cache)",
         "feat_moveset.py",     ["--autotest", "--withcache"],

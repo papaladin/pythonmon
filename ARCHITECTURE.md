@@ -12,6 +12,18 @@ pokemon-toolkit/
   pkm_cache.py              All cache reads and writes (single gateway)
   pkm_pokeapi.py            PokeAPI adapter (fetch + translate raw data)
   matchup_calculator.py     Type chart data + multiplier logic (pure library)
+  run_tests.py              Test runner (calls --autotest on each module)
+  cache/                    Local JSON cache (see section 4)
+  Data/trainers.json	   Local JSON file with notorious trainers data (gym&league)
+  
+**Core logic modules (no I/O, no display)**
+  core_stat.py 		Pure stat functions (compare_stats, total_stats, infer_role, etc.)
+  core_egg.py 		Pure egg group functions (egg_group_name, format_egg_groups)
+  core_evolution.py 	Pure evolution chain logic (parse_trigger, flatten_chain, filter)
+  core_move.py 		Pure move scoring and combo selection (score_move, select_combo, etc.)
+  core_team.py 		Pure team analysis and builder logic
+  core_opponent.py 	Pure opponent analysis logic
+**Feature modules (thin UI wrappers)**
   feat_quick_view.py        Feature: quick view (stats / abilities / egg groups / type chart)
   feat_move_lookup.py       Feature: move lookup by name
   feat_movepool.py          Feature: learnable move list with learn conditions
@@ -30,8 +42,8 @@ pokemon-toolkit/
   feat_learnset_compare.py  Feature: learnset comparison between two Pokémon (key L)
   feat_team_builder.py      Feature: team slot suggestion — gap analysis + ranked candidates (key H)
   feat_opponent.py          Feature: team coverage vs in‑game opponents (key X)
-  run_tests.py              Test runner (calls --autotest on each module)
-  cache/                    Local JSON cache (see section 4)
+**Others**
+
 ```
 
 All files live in a **single flat folder**. No package structure, no `__init__.py`.
@@ -43,17 +55,19 @@ All cross-module imports use plain `import <module>` (no relative imports).
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  pokemain.py  (entry point, menu loop, context wiring)   │
-├──────────┬───────────────────────────────────────────────┤
-│ feat_*.py│  Display features (one screen each)           │
-├──────────┴──────────────┬────────────────────────────────┤
-│  pkm_session.py         │  matchup_calculator.py         │
-│  (context selection)    │  (type chart library)          │
+│ pokemain.py (entry point, menu loop, context wiring)     │
+├────────────────┬─────────────────────────────────────────┤
+│ feat_.py.      │ Display features (thin UI wrappers).    │
+│ pkm_session.py │ (context selection)                     │
+├────────────────┴──────────────┬──────────────────────────┤
+│ core_.py                │ matchup_calculator.py          │
+│ (pure logic)            │ (type chart library)           │
 ├─────────────────────────┴────────────────────────────────┤
-│  pkm_cache.py  (all cache reads and writes)              │
+│ pkm_cache.py (all cache reads and writes)                │
 ├──────────────────────────────────────────────────────────┤
-│  pkm_pokeapi.py  (network calls, data translation)       │
+│ pkm_pokeapi.py (network calls, data translation)         │
 └──────────────────────────────────────────────────────────┘
+
 ```
 
 **Strict layering rule:** lower layers must not import from upper layers.
@@ -73,16 +87,31 @@ in module-level globals.
 
 ### game_ctx
 
+
+**Strict layering rule:** lower layers must not import from upper layers.
+`pkm_cache.py` never imports `feat_*.py` or `core_*.py`. `pkm_pokeapi.py` never imports `pkm_cache.py` directly (cache calls it). `matchup_calculator.py` imports nothing from this project.
+
+The one intentional exception: `feat_moveset_data.py` is a thin I/O layer that uses `core_move` for scoring. All other feature modules import core modules as needed.
+
+---
+
+## 3. Context objects
+
+Context objects are plain Python dicts. No classes. They are created in
+`pkm_session.py` and threaded through function arguments. Never store them
+in module-level globals.
+
+### game_ctx
+
 ```python
 {
-    "game"     : str,   # Display name  e.g. "Scarlet / Violet"
-    "era_key"  : str,   # "era1" | "era2" | "era3"
-    "game_gen" : int,   # Generation number 1–9
-    "game_slug": str,   # PokeAPI slug  e.g. "scarlet-violet"
-	"version_slugs": list[str],  # All PokeAPI version slugs for this game group
-                                 # e.g. ["red-blue", "yellow"] for Red/Blue/Yello
+    "game"        : str,   # Display name  e.g. "Scarlet / Violet"
+    "era_key"     : str,   # "era1" | "era2" | "era3"
+    "game_gen"    : int,   # Generation number 1–9
+    "game_slug"   : str,   # PokeAPI slug  e.g. "scarlet-violet"
+    "version_slugs": list[str],  # All PokeAPI version slugs for this game group
+                                 # e.g. ["red-blue", "yellow"] for Red/Blue/Yellow
 }
-```
 
 ### pkm_ctx
 
@@ -192,7 +221,7 @@ Key functions:
 This module is a pure library. It has no imports from this project.
 `matchup_calculator.py` is imported by: `pkm_session.py`, `pokemain.py`,
 `feat_quick_view.py`, `feat_team_analysis.py`, `feat_team_offense.py`,
-`feat_team_moveset.py`, `feat_moveset_data.py`.
+`feat_team_moveset.py`, `feat_moveset_data.py`, and core_*.py.
 
 ---
 
@@ -234,16 +263,15 @@ Key internal functions:
 - `_print_menu(pkm_ctx, game_ctx, team_ctx)` — builds the visible menu
 - `_print_context_lines(pkm_ctx, game_ctx, team_ctx)` — header block
 
-**Command‑line flags:** Supports `--help` (or `-h`), `--game <name>`, `--cache-info`, 
-`--check-cache`, `--refresh-moves`, `--refresh-pokemon <name>`, `--refresh-learnset <name> <game>`,
-`--refresh-all <name>`, and `--refresh-evolution <n>`.
+**Command‑line flags:** Supports `--help` (or `-h`), `--game <name>`, `--cache-info`, `--check-cache`, `--refresh-moves`, `--refresh-pokemon <name>`, `--refresh-learnset <name> <game>`, `--refresh-all <name>`, and `--refresh-evolution <n>`.
 
 ### pkm_session.py
 Handles all interactive context selection.
 
-- `select_game(preselect=None) → game_ctx | None`
-- `select_pokemon(game_ctx=None, preselect=None) → pkm_ctx | None`
-- `build_session(game_ctx=None) → (pkm_ctx, game_ctx) | (None, None)`
+- `select_game(pkm_ctx=None) → game_ctx | None`
+- `select_pokemon(game_ctx=None) → pkm_ctx | None`
+- `make_game_ctx(game_name) → game_ctx` (raises ValueError if game not found)
+- `refresh_pokemon(pkm_ctx, game_ctx) → pkm_ctx`
 
 Called by feature standalone `main()` functions and by pokemain.
 
@@ -275,212 +303,72 @@ Never called directly by feature files — always called by pkm_cache.py or pkm_
 ### matchup_calculator.py
 Pure type chart library. No project imports. See section 5.
 
-### feat_moveset_data.py
-Pure scoring logic. No print statements, no input() calls.
+### Core library modules
 
-- `score_move(move, pkm_ctx, game_ctx) → float`
-- `build_candidate_pool(pkm_ctx, game_ctx) → list`
-- `select_combo(pool, mode, constraints) → list`
-- `rank_status_moves(pool) → list`
+These modules contain pure logic with no I/O, no print statements, and no user input.
+They are imported by feature modules.
 
-### feat_team_loader.py
-Team context management.
+| Module | Public API | Purpose |
+|--------|------------|---------|
+| `core_stat.py` | `stat_bar`, `total_stats`, `infer_role`, `infer_speed_tier`, `compare_stats` | Stat calculations |
+| `core_egg.py` | `egg_group_name`, `format_egg_groups` | Egg group display |
+| `core_evolution.py` | `parse_trigger`, `flatten_chain`, `filter_paths_for_game` | Evolution chain logic |
+| `core_move.py` | `score_move`, `rank_status_moves`, `select_combo`, `combo_score`, `build_counter_pool`, `build_coverage_pool`, `score_learnset`, and static tables | Move scoring and combo selection |
+| `core_team.py` | `build_team_defense`, `build_unified_rows`, `gap_label`, `build_weakness_pairs`, `weakness_types`, `se_types`, `build_offensive_coverage`, `team_offensive_gaps`, `team_defensive_gaps`, `score_candidate`, `rank_candidates`, and many others | Team analysis and builder |
+| `core_opponent.py` | `analyze_matchup`, `uncovered_threats`, `recommended_leads` | Opponent analysis |
 
-- `new_team() → team_ctx`
-- `team_size(team_ctx) → int`
-- `team_slots(team_ctx) → [(idx, pkm_ctx), ...]`  Filled slots only
-- `add_to_team(team_ctx, pkm_ctx) → (new_team, slot_idx)` raises `TeamFullError`
-- `remove_from_team(team_ctx, idx) → new_team`
-- `clear_team(team_ctx) → new_team`
-- `team_summary_line(team_ctx) → str`
-- `run(game_ctx, team_ctx) → team_ctx`  Interactive sub-menu; returns updated team
+### Feature modules (thin UI wrappers)
 
-### feat_team_analysis.py
-Team defensive analysis.
+Each feature module now imports the necessary core functions and handles only:
+- fetching data from `pkm_cache`
+- calling core functions
+- displaying results (print statements) and user input
 
-- `build_team_defense(team_ctx, era_key) → {atk_type: [{form_name, multiplier}, ...]}`
-- `build_unified_rows(team_defense, era_key) → [row, ...]`  One row per era type
-- `gap_label(weak_count, cover_count) → str`  "" | "!! CRITICAL" | "!  MAJOR" | ".  MINOR"
-- `display_team_analysis(team_ctx, game_ctx)`  Full table to stdout
-- `run(team_ctx, game_ctx)`  Called from pokemain; calls display + waits for Enter
+The following is a representative list; each file's docstring describes its entry points.
 
-### feat_team_offense.py
-Team offensive coverage table (key O).
-
-- `build_team_offense(team_ctx, era_key) → dict`  Per-type hitter list
-- `build_offense_rows(team_offense, era_key) → list`  One row per era type, sorted
-- `coverage_gaps(rows) → list`  Types with zero SE coverage across the team
-- `display_team_offense(team_ctx, game_ctx, pool_cache=None)`  Full table to stdout (fetches learnsets)
-- `run(team_ctx, game_ctx, pool_cache=None)`  Called from pokemain; key O
-
-### feat_team_moveset.py
-Team moveset synergy (key S).
-
-- `_weakness_types(pkm_ctx, era_key) → list[str]`  Types that hit this Pokemon SE
-- `_se_types(combo, era_key) → list[str]`  Types hit SE by at least one combo move
-- `_format_weak_line(weakness_types) → str`  Weak line string for display
-- `_format_move_pair(left, right) → str`  Side-by-side move pair, left col 22 chars
-- `_format_se_line(se_types, era_key) → str`  SE count / total string
-- `build_offensive_coverage(member_results, era_key) → dict`
-  Aggregates `se_types` from all member result dicts. Returns `covered`,
-  `gaps`, `overlap` (≥3 members, sorted desc), `counts`, `total_types`.
-  Pure — does not recompute movesets or call the scoring engine.
-- `recommend_team_movesets(team_ctx, game_ctx, mode, pool_cache=None) → list[dict]`
-  One member result dict per filled slot. Calls `build_candidate_pool` +
-  `select_combo` from `feat_moveset_data`; no scoring logic duplicated.
-  Graceful degradation: empty pool → shaped result with empty lists.
-- `display_team_movesets(results, game_ctx, mode)`  Full screen to stdout;
-  member blocks + coverage summary
-- `run(team_ctx, game_ctx, pool_cache=None)`  Called from pokemain; key S
-
-Member result dict keys: `form_name`, `types` (list[str]), `moves` (list[dict]),
-`weakness_types` (list[str]), `se_types` (list[str]).
-
-Depends on: `feat_team_loader` (team_slots, team_size), `feat_moveset_data`
-(build_candidate_pool, select_combo), `matchup_calculator` (compute_defense,
-get_multiplier, CHARTS).
-
----
-
-### feat_stat_compare.py
-Side-by-side base stat comparison (key C). Also the canonical home for
-pure stat-analysis helpers used by other feature modules.
-
-- `compare_stats(stats_a, stats_b) → list[dict]`  Per-stat winner annotation;
-  each dict: `key`, `label`, `val_a`, `val_b`, `winner` ("a"|"b"|"tie")
-- `total_stats(base_stats) → int`  Sum of all 6 base stats
-- `infer_role(base_stats) → str`  "physical" | "special" | "mixed"
-  (Atk vs SpA, 1.2× threshold)
-- `infer_speed_tier(base_stats) → str`  "fast" | "mid" | "slow"
-  (Speed ≥90 / ≥70 / <70)
-- `display_comparison(pkm_a, pkm_b, game_ctx)`  Side-by-side bar chart with ★/•
-- `run(pkm_ctx, game_ctx)`  Called from pokemain; key C; prompts for second Pokemon
-
-Imported by: `feat_nature_browser` (for `infer_role`, `infer_speed_tier`),
-`feat_quick_view` (deferred import of same).
-
----
-
-### feat_egg_group.py
-Egg group browser and breeding partner finder (key E). Also provides inline
-egg group display for option 1 via `format_egg_groups`.
-
-- `egg_group_name(slug) → str`  PokeAPI slug → in-game display name
-  (covers all 15 groups; key mappings: `"ground"`→Field, `"plant"`→Grass)
-- `format_egg_groups(egg_groups) → str`  e.g. `["monster","dragon"]` → `"Monster  /  Dragon"`
-- `get_or_fetch_roster(slug) → list | None`  Cache-aware; fetches from PokeAPI on miss
-- `display_egg_group_browser(pkm_ctx)`  Full browser display; marks current Pokemon with ★
-- `run(pkm_ctx)`  Called from pokemain; key E; no game context needed
-
----
-
-### feat_evolution.py
-Evolution chain display, embedded at the bottom of option 1 (feat_quick_view).
-No standalone menu key. Chain is filtered by `game_gen` so future-gen evolutions
-are not shown for older games (e.g. Eevee in FireRed shows only Gen 1–2 branches).
-
-**Public API:**
-- `get_or_fetch_chain(pkm_ctx) → list[list[dict]] | None`  Cache-aware; returns
-  `None` for `chain_id=None` (event Pokemon)
-- `display_evolution_block(pkm_ctx, paths, game_gen=None)`  Compact inline display;
-  fetches types for all stages; ★ on `pkm_ctx["pokemon"]`; filters by game_gen
-- `filter_paths_for_game(paths, game_gen) → list[list[dict]]`  Pure — truncates
-  branches whose target species was introduced after `game_gen`
-
-**Internal pure helpers (testable offline):**
-- `_parse_trigger(details) → str`  PokeAPI evolution_details → human string.
-  Key mappings: `min_happiness + time_of_day` → "High Friendship (day/night)";
-  trade + `held_item` → "Trade holding X" (PokeAPI field is `held_item`, not `item`)
-- `_flatten_chain(node, max_depth=20) → list[list[dict]]`  Recursive tree → list
-  of linear paths; each stage: `{slug, trigger}`
-- `_get_species_gen(slug) → int | None`  Reads from pokemon cache
-- `_get_types_for_slug(slug) → list[str]`  Cache hit instant; API call on miss
-
-**pkm_cache additions (§90B):**
-- `get_evolution_chain(chain_id) → list | None`
-- `save_evolution_chain(chain_id, paths) → None`
-- `invalidate_evolution_chain(chain_id) → None`
-
-**pkm_pokeapi additions (§90B):**
-- `fetch_evolution_chain(chain_id) → dict`  Returns the `chain` node from
-  `GET evolution-chain/{id}` — the root of the recursive tree
-
----
-
-### feat_learnset_compare.py
-Learnset comparison between two Pokémon in the same game (key L).
-
-- `_flat_moves(learnset, form_name) → set[str]`  Extract flat set of move names
-  from one form's learnset across all learn methods
-- `compare_learnsets(learnset_a, form_a, learnset_b, form_b) → dict`  Pure;
-  returns `{only_a, only_b, shared}` — three sets of move name strings
-- `build_rows(move_set, game_ctx) → list[dict]`  Resolve move details for display;
-  each row: `{name, type, category, power, accuracy, pp}`
-- `display_comparison(pkm_a, pkm_b, game_ctx, only_a, only_b, shared)`  Three-
-  section table to stdout (Only A / Only B / Shared)
-- `run(pkm_ctx, game_ctx)`  Called from pokemain; key L; prompts for second Pokémon
-
----
-
-### feat_team_builder.py
-Team slot suggestion — gap analysis + scored candidate ranking (key H).
-Suggests the best Pokémon to add to the next open team slot based on current
-offensive and critical defensive gaps. No API calls at runtime (roster-only
-cache reads); fetches missing type rosters on demand before pool build.
-
-**Pure logic (no I/O):**
-- `team_offensive_gaps(team_ctx, era_key) → list[str]`  Era types no member hits SE
-- `team_defensive_gaps(team_ctx, era_key) → list[str]`  Critical gaps (≥2 weak, 0 cover)
-- `candidate_passes_filter(candidate_types, off_gaps, def_gaps, era_key) → bool`
-- `patchability_score(remaining_off_gaps, era_key) → float`  Ease of patching gaps
-- `score_candidate(candidate_types, team_ctx, era_key, off_gaps, def_gaps,
-  slots_remaining, base_stats=None) → float`  Composite intrinsic + lookahead score
-- `rank_candidates(candidates, team_ctx, era_key, off_gaps, def_gaps,
-  slots_remaining, top_n=6) → list[dict]`
-
-**Pool building (cache reads):**
-- `collect_relevant_types(off_gaps, def_gaps, era_key) → set[str]`
-- `fetch_needed_rosters(relevant_types, progress_cb=None) → int`
-- `build_suggestion_pool(team_ctx, game_ctx, off_gaps, def_gaps) → dict`
-  Returns `{candidates, missing_rosters, skipped_forms, skipped_gen, skipped_team}`
-
-**Display:**
-- `_format_dots(rating) → str`  1–5 → "●●●●●" etc.
-- `_dot_rating(score, all_scores) → int`  Percentile within result set
-- `_format_lookahead(remaining_off_gaps, era_key) → str`
-- `_print_suggestion(rank, result, era_key, all_scores)`  One suggestion card
-- `display_team_builder(team_ctx, game_ctx, results, off_gaps, def_gaps,
-  missing_rosters=None)`  Full screen with header, gap summary, suggestion cards
-
-**Entry point:**
-- `run(team_ctx, game_ctx)`  Called from pokemain; key H
-
----
-
-### feat_opponent.py
-Team coverage vs in‑game opponents (key X). Loads a static trainer database
-(`data/trainers.json`) and analyses how the current team fares against a selected
-opponent (gym leader, Elite Four, Champion). The analysis is moveset‑aware:
-threats/resists are based on the opponent's actual move types, while your team's
-counters are based on STAB move types.
-
-- `load_trainer_data() → dict` — loads and caches the bundled `trainers.json`
-- `get_trainers_for_game(game_slug) → dict` — returns trainer dict for a game slug
-- `list_trainer_names(game_slug) → list[str]` — sorted trainer names by encounter order
-- `analyze_matchup(team_ctx, trainer, era_key) → list[dict]` — pure matchup logic
-- `uncovered_threats(matchup_results) → list[dict]` — opponents with zero STAB coverage
-- `recommended_leads(matchup_results, team_ctx) → list[str]` — rank team members by coverage
-- `pick_trainer_interactive(game_slug, data) → str | None` — interactive trainer picker
-- `display_matchup_results(results, game_slug, trainer_name, team_ctx)` — full screen output
-- `run(team_ctx, game_ctx)` — entry point called from pokemain
-
-Depends on: `matchup_calculator`, `pkm_cache`, `pkm_pokeapi` (for move type resolution).
-No external network calls during analysis (trainer data is static).
+| File | Role |
+|---|---|
+| `feat_quick_view.py` | Quick view (option 1) |
+| `feat_move_lookup.py` | Move lookup (key M) |
+| `feat_movepool.py` | Learnable move list (option 2) |
+| `feat_moveset.py` | Scored pool (option 3) and moveset recommendation (option 4) |
+| `feat_moveset_data.py` | I/O for `build_candidate_pool` (fetches learnset and move details) |
+| `feat_type_browser.py` | Type browser (key B) |
+| `feat_nature_browser.py` | Nature & EV advisor (key N) |
+| `feat_ability_browser.py` | Ability browser (key A) |
+| `feat_team_loader.py` | Team management (key T) |
+| `feat_team_analysis.py` | Team defensive analysis (key V) |
+| `feat_team_offense.py` | Team offensive coverage (key O) |
+| `feat_team_moveset.py` | Team moveset synergy (key S) |
+| `feat_stat_compare.py` | Stat comparison (key C) |
+| `feat_egg_group.py` | Egg group browser (key E) |
+| `feat_evolution.py` | Evolution chain display (embedded in option 1) |
+| `feat_learnset_compare.py` | Learnset comparison (key L) |
+| `feat_team_builder.py` | Team builder (key H) |
+| `feat_opponent.py` | Team vs opponent (key X) |
 
 
 ---
 
-## 8. Interface contracts
+## 8. Core library modules
+
+The project has been refactored to separate pure logic from display and I/O. The following core modules contain no I/O, no print statements, and no user input; they operate only on plain data structures passed as arguments.
+
+| File | Purpose |
+|------|---------|
+| `core_stat.py` | Stat-related functions: `compare_stats`, `total_stats`, `infer_role`, `infer_speed_tier`, `stat_bar` |
+| `core_egg.py` | Egg group logic: `egg_group_name`, `format_egg_groups` |
+| `core_evolution.py` | Evolution chain parsing and filtering: `parse_trigger`, `flatten_chain`, `filter_paths_for_game` |
+| `core_move.py` | Move scoring and combo selection: `score_move`, `rank_status_moves`, `select_combo`, `combo_score`, `score_learnset`, plus static tables (`TWO_TURN_MOVES`, `STATUS_MOVE_TIERS`, etc.) |
+| `core_team.py` | Team analysis and builder logic: defensive/offensive analysis, weakness pairs, candidate scoring, ranking |
+| `core_opponent.py` | Opponent analysis: `analyze_matchup`, `uncovered_threats`, `recommended_leads` |
+
+These modules are independently testable via `--autotest` and are reused by the UI layer (`feat_*.py`). All I/O (cache access, network requests, user prompts) remains in the `feat_*.py` files, which now act as thin wrappers.
+
+
+---
+
+## 9. Interface contracts
 
 These are the cross-module contracts that must not be broken silently.
 If any of these change, update this section and log in HISTORY.md.
@@ -525,7 +413,7 @@ This is the display contract for all team analysis tables.
 
 ---
 
-## 9. Design constraints (non-negotiable)
+## 10. Design constraints (non-negotiable)
 
 - **Single flat folder.** All .py files and cache/ in the same directory.
 - **No pip dependencies beyond `requests`.** stdlib only for everything else.
@@ -537,11 +425,11 @@ This is the display contract for all team analysis tables.
 
 ---
 
-## 10. Embedded Data Tables and Constants
+## 11. Embedded Data Tables and Constants
 
 This section lists all static data that is **hard‑coded** in the source files (not fetched from PokeAPI or generated at runtime). It is a single‑source inventory to help with refactoring, migration to a database, or understanding where configuration values reside.
 
-### 10.1 Game and generation data
+### 11.1 Game and generation data
 
 | File | Constant | Purpose |
 |------|----------|---------|
@@ -556,7 +444,7 @@ This section lists all static data that is **hard‑coded** in the source files 
 | `pkm_pokeapi.py` | `VERSION_GROUP_TO_GEN` | Reverse mapping: version‑group slug → generation number (built from above). |
 | `pkm_pokeapi.py` | `_ROMAN` | Maps Roman numerals to integers (e.g., `"iv"` → 4). |
 
-### 10.2 Move scoring and recommendation data
+### 11.2 Move scoring and recommendation data
 
 | File | Constant | Purpose |
 |------|----------|---------|
@@ -573,7 +461,7 @@ This section lists all static data that is **hard‑coded** in the source files 
 | `feat_moveset.py` | `MAX_CONSTRAINTS` | Maximum number of locked moves (4). |
 | `feat_moveset.py` | `_MODE_LABELS` | Human‑readable labels for the three recommendation modes. |
 
-### 10.3 Team builder and analysis constants
+### 11.3 Team builder and analysis constants
 
 | File | Constant | Purpose |
 |------|----------|---------|
@@ -586,7 +474,7 @@ This section lists all static data that is **hard‑coded** in the source files 
 | `feat_team_moveset.py` | `_COL_MOVE`, `_BLOCK_SEP` | Layout constants for team moveset synergy. |
 | `feat_learnset_compare.py` | `_COL_NAME`, `_COL_TYPE`, `_COL_CAT`, `_COL_PWR`, `_COL_ACC`, `_SEP_W`, `_STAT_W` | Column widths for learnset comparison. |
 
-### 10.4 Nature and EV advisor
+### 11.4 Nature and EV advisor
 
 | File | Constant | Purpose |
 |------|----------|---------|
@@ -595,7 +483,7 @@ This section lists all static data that is **hard‑coded** in the source files 
 | `feat_nature_browser.py` | `_NATURE_MIN_GEN` | Generation in which natures were introduced (3). |
 | `feat_nature_browser.py` | `_PROFILE_NATURES` | Mapping of `(role, speed_tier)` → list of two (label, nature_name) pairs for EV profiles. |
 
-### 10.5 Egg groups and forms
+### 11.5 Egg groups and forms
 
 | File | Constant | Purpose |
 |------|----------|---------|
@@ -603,7 +491,7 @@ This section lists all static data that is **hard‑coded** in the source files 
 | `pkm_session.py` | `_FORM_GEN_KEYWORDS` | Keywords used to detect form generation (e.g., `"alolan"` → 7). |
 | `pkm_session.py` | `_MAX_SUGGESTIONS` | Maximum number of suggestions shown during fuzzy name search (8). |
 
-### 10.6 Type browser and stat comparison
+### 11.6 Type browser and stat comparison
 
 | File | Constant | Purpose |
 |------|----------|---------|
@@ -613,7 +501,7 @@ This section lists all static data that is **hard‑coded** in the source files 
 | `feat_stat_compare.py` | `_STAT_KEYS` | Ordered list of `(slug, label)` for the six stats. |
 | `feat_quick_view.py` | `_STAT_LABELS` | Same as above (duplicated). |
 
-### 10.7 Cache and network
+### 11.7 Cache and network
 
 | File | Constant | Purpose |
 |------|----------|---------|
@@ -625,7 +513,7 @@ This section lists all static data that is **hard‑coded** in the source files 
 | `pkm_pokeapi.py` | `_SPECIAL_TYPES_GEN1_3` | Set of type names that were Special in Generations 1–3. |
 | `pkm_pokeapi.py` | `_LEARN_METHODS_KEPT` | Set of learn method slugs that we display (level‑up, machine, tutor, egg). |
 
-### 10.8 User interface layout
+### 11.8 User interface layout
 
 | File | Constant | Purpose |
 |------|----------|---------|
@@ -640,7 +528,7 @@ This section lists all static data that is **hard‑coded** in the source files 
 | `feat_egg_group.py` | `_W`, `_COLS`, `_COL_WIDTH` | Layout for egg group roster grid. |
 | `feat_ability_browser.py` | `_C_NAME`, `_C_GEN`, `_C_EFFECT`, `_GAP` | Column widths for ability browser. |
 
-### 10.9 Duplicated constants (to be unified)
+### 11.9 Duplicated constants (to be unified)
 
 Several constants are defined in multiple files and should eventually be moved to a central location if a database migration is planned:
 

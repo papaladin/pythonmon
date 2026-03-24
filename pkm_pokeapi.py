@@ -23,6 +23,13 @@ import sys
 import json
 import urllib.request
 import urllib.error
+import ssl
+
+# Create an unverified SSL context for frozen builds (macOS PyInstaller)
+if getattr(sys, "frozen", False):
+    _unverified_ssl_context = ssl._create_unverified_context()
+else:
+    _unverified_ssl_context = None
 
 # ── Import game list ───────────────────────────────────────────────────────────
 try:
@@ -104,17 +111,16 @@ for _game_name, _era_key, _gen in GAMES:
 # ── HTTP helper ────────────────────────────────────────────────────────────────
 
 def _get(path):
-    """
-    GET {BASE_URL}/{path}, return parsed JSON dict.
-    Raises ValueError on 404, ConnectionError on other failures.
-    """
     url = f"{BASE_URL}/{path.lstrip('/')}"
     try:
         req = urllib.request.Request(
             url,
             headers={"User-Agent": "pkm-toolkit/2.0 (pokeapi adapter)"}
         )
-        resp = urllib.request.urlopen(req, timeout=10)
+        if _unverified_ssl_context:
+            resp = urllib.request.urlopen(req, timeout=10, context=_unverified_ssl_context)
+        else:
+            resp = urllib.request.urlopen(req, timeout=10)
         return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         if e.code == 404:
@@ -133,12 +139,16 @@ def check_connectivity() -> bool:
     Intended for the startup offline-mode check in pokemain.py; not used in
     normal data-fetching paths.
     """
+
     try:
         req = urllib.request.Request(
             f"{BASE_URL}/",
             headers={"User-Agent": "pkm-toolkit/2.0 (connectivity check)"}
         )
-        urllib.request.urlopen(req, timeout=3)
+        if _unverified_ssl_context:
+            urllib.request.urlopen(req, timeout=3, context=_unverified_ssl_context)
+        else:
+            urllib.request.urlopen(req, timeout=3)
         return True
     except Exception:
         return False

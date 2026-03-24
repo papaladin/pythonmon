@@ -512,15 +512,15 @@ Every module with testable logic has an `--autotest` flag (offline unless noted)
 |---|---|
 | `python matchup_calculator.py --autotest` | 79 — type chart, all 3 eras, all multipliers |
 | `python pkm_cache.py` | 62 — read/write/invalidate/upsert/batch/index/integrity/egg_groups/evolution/check_integrity/cache_info/learnset_age |
-| `python pkm_session.py --autotest` | 28 — cache upgrade, form selection, era/gen blocking, fuzzy search, form_gen fix |
+| `python pkm_session.py --autotest` | 33 — cache upgrade, form selection, era/gen blocking, fuzzy search, form_gen fix, version_slugs, make_game_ctx |
 | `python feat_moveset_data.py --autotest` | 156 — scoring formula, combo selection, status ranking, batch cache regression |
 | `python feat_type_browser.py --autotest` | 41 (+8 cache) — gen derivation, name resolution |
 | `python feat_nature_browser.py --autotest` | 48 (+11 cache) — nature scoring, stat formula, build profiles |
 | `python feat_ability_browser.py --autotest` | 14 (+8 cache) — display helpers |
 | `python feat_team_loader.py --autotest` | 41 — team ops, summary line, batch load |
 | `python feat_team_analysis.py --autotest` | 75 — defense aggregation, gap labels, display, weakness pairs |
-| `python feat_team_offense.py --autotest`  | 50 — offensive coverage, type-letter tags, gap detection, pool cache |
-| `python feat_team_moveset.py --autotest`  | 70 — moveset engine, formatting helpers, coverage aggregation, pool cache |
+| `python feat_team_offense.py --autotest` | 50 — offensive coverage, type-letter tags, gap detection, pool cache |
+| `python feat_team_moveset.py --autotest` | 70 — moveset engine, formatting helpers, coverage aggregation, pool cache |
 | `python feat_moveset.py --autotest` | 33 (+1 cache) — breakdown, coverage, locked moves, pool filter |
 | `python feat_move_lookup.py --autotest` | 14 (+2 cache) — formatting, coverage all eras, effect line |
 | `python feat_movepool.py --autotest` | 16 (+2 cache) — row formatting, section headers, filter |
@@ -529,7 +529,13 @@ Every module with testable logic has an `--autotest` flag (offline unless noted)
 | `python feat_egg_group.py --autotest` | 18 — name mapping, formatting, display browser, graceful edge cases |
 | `python feat_evolution.py --autotest` | 35 — trigger parsing, chain flattening, gen filter, display (mock) |
 | `python feat_team_builder.py --autotest` | 57 — gap analysis, scoring, pool building, display, run() guards |
-| `python feat_opponent.py --autotest` | 14 — offline trainer data loading, matchup logic, display helpers |
+| `python feat_opponent.py --autotest` | 18 — trainer data loading, merging, matchup logic, display |
+| `python core_stat.py --autotest` | 21 — stat bar, total stats, role, speed tier, compare |
+| `python core_egg.py --autotest` | 8 — egg group name mapping, formatting |
+| `python core_evolution.py --autotest` | 20 — trigger parsing, flattening, filtering |
+| `python core_move.py --autotest` | 11 — move scoring, combo selection, status ranking |
+| `python core_team.py --autotest` | 24 — defensive/offensive analysis, team builder scoring |
+| `python core_opponent.py --autotest` | 5 — opponent analysis |
 | `python pkm_pokeapi.py --autotest` | 14 — versioned entry builder, mapping tables, fetch_pokemon offline, egg_groups, evolution_chain_id, check_connectivity |
 
 Run all suites at once:
@@ -540,7 +546,6 @@ python run_tests.py --quiet   # summary table only
 ```
 
 ---
-
 ## Files
 
 | File | Role |
@@ -550,24 +555,30 @@ python run_tests.py --quiet   # summary table only
 | `pkm_cache.py` | All cache reads and writes (single gateway) |
 | `pkm_pokeapi.py` | PokeAPI adapter; fetch + translate raw data |
 | `matchup_calculator.py` | Type chart data (ERA1/2/3) + multiplier logic |
-| `feat_quick_view.py` | Option 1: quick view (stats / abilities / egg groups / type chart) |
-| `feat_move_lookup.py` | Key M: move lookup with version history |
-| `feat_movepool.py` | Option 2: learnable move list with conditions |
-| `feat_moveset.py` | Options 3–4: scored pool + moveset recommendation UI |
-| `feat_moveset_data.py` | Scoring engine (pure logic, no I/O) |
-| `feat_type_browser.py` | Key B: browse Pokemon by type |
-| `feat_nature_browser.py` | Key N: nature & EV build advisor + nature browser |
-| `feat_ability_browser.py` | Key A: ability browser + drill-in |
-| `feat_stat_compare.py` | Key C: side-by-side base stat comparison + stat analysis helpers |
-| `feat_learnset_compare.py` | Key L: learnset comparison — unique/shared moves between two Pokémon |
-| `feat_egg_group.py` | Key E: egg group browser + breeding partners |
+| `core_stat.py` | Pure stat functions (compare_stats, total_stats, infer_role, etc.) |
+| `core_egg.py` | Pure egg group functions (egg_group_name, format_egg_groups) |
+| `core_evolution.py` | Pure evolution chain logic (parse_trigger, flatten_chain, filter) |
+| `core_move.py` | Pure move scoring and combo selection |
+| `core_team.py` | Pure team analysis and builder logic |
+| `core_opponent.py` | Pure opponent analysis logic |
+| `feat_quick_view.py` | Quick view (stats / abilities / egg groups / type chart) |
+| `feat_move_lookup.py` | Move lookup by name |
+| `feat_movepool.py` | Learnable move list with learn conditions |
+| `feat_moveset.py` | Scored pool + moveset recommendation UI |
+| `feat_moveset_data.py` | Data fetching for moveset recommendation (I/O) |
+| `feat_type_browser.py` | Browse Pokemon by type |
+| `feat_nature_browser.py` | Nature & EV build advisor + nature browser (key N) |
+| `feat_ability_browser.py` | Ability browser + drill-in |
+| `feat_team_loader.py` | Team context management (add/remove/view) |
+| `feat_team_analysis.py` | Team defensive vulnerability table |
+| `feat_team_offense.py` | Team offensive type coverage (key O) |
+| `feat_team_moveset.py` | Team moveset synergy (key S) |
+| `feat_stat_compare.py` | Side-by-side base stat comparison (key C) |
+| `feat_egg_group.py` | Egg group browser + breeding partners (key E) |
 | `feat_evolution.py` | Evolution chain display (embedded in option 1) |
-| `feat_team_loader.py` | Key T: team context management |
-| `feat_team_analysis.py` | Key V: team defensive vulnerability table |
-| `feat_team_offense.py`  | Key O: team offensive type coverage |
-| `feat_team_moveset.py` | Key S: team-level moveset recommendations + coverage summary |
-| `feat_team_builder.py` | Key H: team slot suggestion — gap analysis + ranked candidates |
-| `feat_opponent.py`     | Feature: team coverage vs in‑game opponents (key X)
+| `feat_learnset_compare.py` | Learnset comparison between two Pokémon (key L) |
+| `feat_team_builder.py` | Team slot suggestion — gap analysis + ranked candidates (key H) |
+| `feat_opponent.py` | Team coverage vs in‑game opponents (key X) |
 | `run_tests.py` | Test runner for all suites |
 | `build.py` | Build script — produces a single-file executable via PyInstaller |
 

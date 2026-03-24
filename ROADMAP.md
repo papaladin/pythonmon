@@ -55,11 +55,13 @@
 
 ---
 
+
+
 ## Roadmap to V2
 
 The following steps represent a phased approach to evolving the toolkit into version 2.0. Each step builds on the previous one, and the order minimises risk while keeping the tool usable throughout.
 
-### 1. Core library / presentation separation
+### 1. Core library / presentation separation ✅ Complete (see §109)
 
 **What:** Split the codebase into two distinct layers: a pure logic library (no I/O, no print statements, no `input()` calls) and a thin presentation layer on top. The logic library will contain all scoring formulas, type calculations, team analysis, and data access.
 

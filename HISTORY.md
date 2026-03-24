@@ -1551,3 +1551,44 @@ To allow players to evaluate their team against real in‑game opponents (gym le
 - `pkm_session.py`: 33 tests (was 30).
 - `pokemain.py`: no new tests (the flag‑handling code is purely additive and does not affect the menu loop).
 - Full offline suite: unchanged (~972 tests), 0 failures.
+
+---
+
+## §109 — V2 Package 1: Core library / presentation separation
+
+### What changed
+- Created core modules for pure logic:
+  - `core_stat.py` – stat functions (`compare_stats`, `total_stats`, `infer_role`, `infer_speed_tier`, `stat_bar`), with self‑tests (21).
+  - `core_egg.py` – egg group functions (`egg_group_name`, `format_egg_groups`), with self‑tests (8).
+  - `core_evolution.py` – evolution chain parsing and filtering (`parse_trigger`, `flatten_chain`, `filter_paths_for_game`), with self‑tests (20).
+  - `core_move.py` – move scoring, combo selection, status ranking, and static tables (`TWO_TURN_MOVES`, `STATUS_MOVE_TIERS`, etc.), with self‑tests (11).
+  - `core_team.py` – team analysis and builder logic (defensive/offensive analysis, weakness pairs, candidate scoring, ranking), with self‑tests (24).
+  - `core_opponent.py` – opponent analysis (`analyze_matchup`, `uncovered_threats`, `recommended_leads`), with self‑tests (5).
+- Refactored the following feature files to import from the core modules and remove duplicated pure logic:
+  - `feat_stat_compare.py`
+  - `feat_quick_view.py`
+  - `feat_nature_browser.py`
+  - `feat_egg_group.py`
+  - `feat_evolution.py`
+  - `feat_moveset_data.py` (now a thin wrapper)
+  - `feat_moveset.py` (imports adjusted)
+  - `feat_team_moveset.py` (imports adjusted)
+  - `feat_team_analysis.py`
+  - `feat_team_offense.py`
+  - `feat_team_builder.py`
+  - `feat_opponent.py`
+- Updated `run_tests.py` to include all core modules in the test suite.
+
+### Why
+To separate presentation from business logic, enabling independent testing, reuse across different frontends (e.g., a future TUI or GUI), and cleaner architecture. This is the first step toward the V2 roadmap.
+
+### Key decisions
+- Core modules are placed in the same folder with a `core_` prefix, making imports straightforward.
+- Each core module has its own `_run_tests()` with offline tests, and is added to `run_tests.py`.
+- The `feat_*.py` files now act as thin UI wrappers: they fetch data via `pkm_cache`, call core functions, and display results.
+- Data access (cache and network) remains outside the core modules, preserving testability.
+- Step 7 (consolidating data access) was postponed to a later V2 package to keep this refactoring focused.
+
+### Test count
+- New core modules add 89 offline tests (21+8+20+11+24+5).
+- Existing tests were redistributed; the total offline test count remains stable and all tests pass.

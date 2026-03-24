@@ -21,7 +21,7 @@ import sys
 
 try:
     import pkm_cache as cache
-    from feat_stat_compare import infer_role, infer_speed_tier
+    from core_stat import infer_role, infer_speed_tier
 except ModuleNotFoundError as e:
     print(f"\n  ERROR: {e}")
     print("  Make sure all files are in the same folder.\n")
