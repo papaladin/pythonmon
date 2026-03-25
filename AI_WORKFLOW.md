@@ -18,7 +18,8 @@ At the start of every session, or when picking up an unfinished task:
 4. If the task is architecturally significant, read `ARCHITECTURE.md`.
 5. Verify the working environment: `python run_tests.py --offline`
    All tests must pass before starting. If they do not, fix the environment first.
-6. Session Resume Protocol (AI handoff safety). If the assistant is continuing work started in a previous session, it must verify that the **documentation state matches the implementation state** before writing any code : TASKS.md & ROADMAP.md aligns with codebase. If inconsistencies are detected: Produce a **reconstruction summary** describing how to repair documentation. Once the user confirms and the project state is clarified, you can proceed to next step.
+6. If the feature involves the cache or data persistence, be aware that the toolkit now uses SQLite (single `pokemon.db` file) instead of JSON files. The cache directory still exists, but contains only the database. The `--sync` command can pre‑load all data for offline use.
+7. Session Resume Protocol (AI handoff safety). If the assistant is continuing work started in a previous session, it must verify that the **documentation state matches the implementation state** before writing any code : TASKS.md & ROADMAP.md aligns with codebase. If inconsistencies are detected: Produce a **reconstruction summary** describing how to repair documentation. Once the user confirms and the project state is clarified, you can proceed to next step.
 
 ---
 

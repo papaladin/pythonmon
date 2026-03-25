@@ -274,6 +274,27 @@ def fetch_pokemon(name: str) -> dict:
     }
 
 
+def fetch_all_pokemon() -> dict:
+    """Fetch all Pokémon from PokeAPI, returning a dict keyed by slug with full data."""
+    import json
+    all_data = _get("pokemon?limit=2000")
+    results = {}
+    total = len(all_data["results"])
+    print(f"  Fetching {total} Pokémon...")
+    for i, item in enumerate(all_data["results"], 1):
+        slug = item["name"]
+        print(f"  {i}/{total}  {slug:<30}", end="\r", flush=True)
+        try:
+            data = fetch_pokemon(slug)
+            results[slug] = data
+        except (ValueError, ConnectionError):
+            continue
+    print(f"  Fetched {len(results)} Pokémon.          ")
+    return results
+
+
+
+
 # ── Step 3: Move fetch ────────────────────────────────────────────────────────
 
 # PokeAPI type slug → capitalised display name

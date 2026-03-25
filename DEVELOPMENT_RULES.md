@@ -21,23 +21,22 @@
 ## 2. File organisation
 
 - One feature = one file. `feat_<name>.py` for user-facing features.
-  Supporting data/logic that is too large for one file: `feat_<name>_data.py`.
-- Shared infrastructure: `pkm_cache.py`, `pkm_pokeapi.py`, `pkm_session.py`,
-  `matchup_calculator.py`. Do not bloat these with feature-specific logic.
-- Entry point: `pokemain.py`. This file wires features together; it contains
-  almost no logic of its own.
+  Supporting data/logic that is too large for one feature: `feat_<name>_data.py`.
+- Pure logic (no I/O, no display) must go in `core_<name>.py` files.
+- Shared infrastructure: `pkm_cache.py`, `pkm_sqlite.py`, `pkm_pokeapi.py`, `pkm_session.py`, `matchup_calculator.py`. Do not bloat these with feature-specific logic.
+- Entry point: `pokemain.py`. This file wires features together; it contains almost no logic of its own.
 - Tests: embedded in each module as `_run_tests()`, NOT in a separate test file.
   `run_tests.py` is only a runner that calls each module's `--autotest` flag.
 
 ---
 
-## 3. Module structure (every feat_ file must follow this order)
+## 3. Module structure (every feat_ and core_ file must follow this order)
 
     1. Module docstring (purpose, public API, entry points)
     2. Imports (stdlib, then project modules)
     3. Constants
-    4. Pure logic functions
-    5. Display / formatting helpers
+    4. Pure logic functions (only in core modules; feature modules may call them)
+    5. Display / formatting helpers (only in feature modules)
     6. Entry points: run(ctx...) called from pokemain, then main() for standalone use
     7. _run_tests() function
     8. if __name__ == "__main__": block with --autotest dispatch
@@ -51,7 +50,7 @@
   Exception: display functions that build a single visual output may be longer,
   as splitting them often makes them harder to read.
 - Pure logic functions must have no print statements and no input() calls.
-  They take data in, return data out.
+  They take data in, return data out. They reside in core modules.
 - Display functions print to stdout. They do not return values.
 - Entry points (`run()`, `main()`) may call both.
 
@@ -148,6 +147,7 @@ A mismatch between the declared total and actual test count is a bug.
 - All PokeAPI calls go through `pkm_cache.py`. Never call requests directly
   from a feature file.
 - Features must work fully offline if the cache is populated.
+- The cache is stored in a single SQLite database (`cache/pokemon.db`). Tables are created automatically on first use. Data is stored as JSON text in the appropriate columns.
 - Tests that require cache data are tagged with `--withcache` and are skipped
   during `--offline` runs.
 - Never hard-code Pokemon data (stats, types, move lists) in feature files.
@@ -209,10 +209,16 @@ A mismatch between the declared total and actual test count is a bug.
 
 ---
 
-## 12. What NOT to do
+## 12. Core modules (pure logic)
+
+All pure logic (no I/O, no print, no `input()`) must reside in `core_*.py` files. These modules contain functions that transform data structures and perform calculations. They are independently testable with `--autotest`. Feature modules (`feat_*.py`) should import from core modules and handle only I/O and display. The core modules should not import `pkm_cache` or any other I/O‑heavy module; they operate only on plain data structures passed as arguments.
+
+---
+
+## 13. What NOT to do
 
 - Do not add argparse or click. The CLI is hand-rolled by design.
-- Do not add a database. The cache is JSON files; keep it that way.
+- Do not add another database. The cache is a single SQLite file; keep it that way.
 - Do not introduce async code. Everything is synchronous by design.
 - Do not rename existing context keys (game_ctx, pkm_ctx, team_ctx fields)
   without updating every file that uses them and logging the change in HISTORY.md.

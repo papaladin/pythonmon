@@ -1592,3 +1592,52 @@ To separate presentation from business logic, enabling independent testing, reus
 ### Test count
 - New core modules add 89 offline tests (21+8+20+11+24+5).
 - Existing tests were redistributed; the total offline test count remains stable and all tests pass.
+
+
+## §110 — V2 Package 2: SQLite data layer
+
+### What changed
+- Created `pkm_sqlite.py` – a new module that manages a single SQLite database (`pokemon.db`) in the cache directory.
+- Rewrote `pkm_cache.py` to use SQLite instead of JSON files. All public functions keep the same signatures and return values.
+- The database is created on first access; tables are created automatically.
+- The move table now includes a `version` column to track `MOVES_CACHE_VERSION`.
+- Metadata table stores schema version and moves schema version for consistency checks.
+- Existing JSON cache files are not migrated; users can delete their old `cache/` folder to start fresh, or the database will be populated lazily as they use the tool.
+
+### Why
+SQLite provides referential integrity, atomic multi‑table updates, efficient indexing, and simpler code. It also enables complex queries (e.g., “all Fire‑type Pokémon with base Speed > 100 that learn Earthquake”) that were impractical with JSON files. This is the second step toward the V2 roadmap.
+
+### Key decisions
+- JSON data is stored as text in the database, preserving the existing data structures without schema changes.
+- The `pkm_sqlite` module isolates all SQLite‑specific code, making the transition easier.
+- The public API of `pkm_cache.py` remains unchanged, so no other modules needed modifications.
+- The build process is unaffected; the database is created at runtime.
+
+### Test count
+- All existing tests pass after adaptation (the temporary directory now holds a `.db` file).
+- No new tests were added; the existing coverage remains sufficient.
+
+
+---
+
+## §111 — V2 Package 3: One‑time full data import (`--sync`)
+
+### What changed
+- Added `pkm_sync.py` – a script that downloads all Pokémon, moves, type rosters, natures, abilities, egg groups, and evolution chains from PokeAPI and stores them in the SQLite database.
+- Added `fetch_all_pokemon()` to `pkm_pokeapi.py` to fetch all Pokémon in bulk.
+- Added a `--sync` command‑line flag to `pokemain.py` that runs the sync script. The flag also accepts `--force` to overwrite an existing database.
+- Added a `sync_status` table to `pkm_sqlite.py` to track progress, allowing the sync to resume from where it left off if interrupted.
+- Updated `run_tests.py` to recognise the new files and mark them as intentional non‑test files.
+
+### Why
+The lazy‑fetch approach, while functional, introduces delays on first use. After a full sync, the toolkit becomes completely offline and all lookups are instant. This is the third step toward the V2 roadmap.
+
+### Key decisions
+- The sync script is a separate module (`pkm_sync.py`) to keep the main codebase clean.
+- Progress is tracked per section (moves, Pokémon, type rosters, etc.) using a `sync_status` table, enabling resume on interruption.
+- Existing data is not automatically migrated; users must run `--sync` explicitly to populate the database fully.
+- The `--force` flag deletes the existing database and starts from scratch.
+
+### Test count
+- No new tests; the sync script is not unit‑tested due to its long‑running nature, but it is manually verified.
+- All existing tests continue to pass.

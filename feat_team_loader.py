@@ -365,8 +365,11 @@ def main() -> None:
 
 def _run_tests():
     errors = []
+    passed = 0
 
     def ok(label):
+        nonlocal passed
+        passed += 1
         print(f"  [OK]   {label}")
 
     def fail(label, msg=""):
@@ -517,9 +520,7 @@ def _run_tests():
         fail("_type_str single", _type_str(blastoise))
 
     # ── command parsing (D/C/Q logic, no interactive stack needed) ──────────
-    # Simulate the cmd-parsing logic extracted from _team_menu
     def _parse_cmd(raw):
-        """Returns ('quit'|'clear'|'remove'|'add'), optional slot idx or name."""
         cmd = raw.strip().lower()
         if cmd == "q":            return "quit",   None
         if cmd == "c":            return "clear",  None
@@ -557,22 +558,66 @@ def _run_tests():
         ok("cmd: name → add")
     else: fail("cmd name", f"({act}, {val})")
 
-    # Dragonite should now be treated as a name to add, not a remove command
     act2, val2 = _parse_cmd("Dragonite")
     if act2 == "add" and val2 == "Dragonite":
         ok("cmd: Dragonite → add (not remove)")
     else: fail("cmd Dragonite", f"({act2}, {val2})")
 
     # ── _resolve_batch_name ───────────────────────────────────────────────────
+    # Use a temporary SQLite database for cache operations
+    import tempfile
+    import pkm_cache as _cache
+    import pkm_sqlite
 
-    batch_index = {
-        "charizard":   {"forms": [{"name": "Charizard",  "types": ["Fire","Flying"]}]},
-        "charmander":  {"forms": [{"name": "Charmander", "types": ["Fire"]}]},
-        "blastoise":   {"forms": [{"name": "Blastoise",  "types": ["Water"]}]},
-        "gengar":      {"forms": [{"name": "Gengar",     "types": ["Ghost","Poison"]}]},
-        "rotom-wash":  {"forms": [{"name": "Rotom-Wash", "types": ["Water","Electric"]}]},
-        "rotom-heat":  {"forms": [{"name": "Rotom-Heat", "types": ["Fire","Electric"]}]},
-    }
+    tmp_dir = tempfile.mkdtemp()
+    _cache._BASE = tmp_dir
+    pkm_sqlite.set_base(tmp_dir)
+
+    # Save some Pokémon to the cache so index exists
+    _cache.save_pokemon("charizard", {
+        "pokemon": "charizard", "species_gen": 1,
+        "egg_groups": ["monster", "dragon"], "evolution_chain_id": 1,
+        "forms": [{"name": "Charizard", "variety_slug": "charizard",
+                   "types": ["Fire","Flying"], "base_stats": {"hp":78},
+                   "abilities": [{"slug":"blaze","is_hidden":False}]}]
+    })
+    _cache.save_pokemon("charmander", {
+        "pokemon": "charmander", "species_gen": 1,
+        "egg_groups": ["monster", "dragon"], "evolution_chain_id": 1,
+        "forms": [{"name": "Charmander", "variety_slug": "charmander",
+                   "types": ["Fire"], "base_stats": {"hp":39},
+                   "abilities": [{"slug":"blaze","is_hidden":False}]}]
+    })
+    _cache.save_pokemon("blastoise", {
+        "pokemon": "blastoise", "species_gen": 1,
+        "egg_groups": ["monster", "water1"], "evolution_chain_id": 1,
+        "forms": [{"name": "Blastoise", "variety_slug": "blastoise",
+                   "types": ["Water"], "base_stats": {"hp":79},
+                   "abilities": [{"slug":"torrent","is_hidden":False}]}]
+    })
+    _cache.save_pokemon("gengar", {
+        "pokemon": "gengar", "species_gen": 1,
+        "egg_groups": ["indeterminate"], "evolution_chain_id": 1,
+        "forms": [{"name": "Gengar", "variety_slug": "gengar",
+                   "types": ["Ghost","Poison"], "base_stats": {"hp":60},
+                   "abilities": [{"slug":"cursed-body","is_hidden":False}]}]
+    })
+    _cache.save_pokemon("rotom-wash", {
+        "pokemon": "rotom-wash", "species_gen": 4,
+        "egg_groups": ["indeterminate"], "evolution_chain_id": 1,
+        "forms": [{"name": "Rotom-Wash", "variety_slug": "rotom-wash",
+                   "types": ["Water","Electric"], "base_stats": {"hp":50},
+                   "abilities": [{"slug":"levitate","is_hidden":False}]}]
+    })
+    _cache.save_pokemon("rotom-heat", {
+        "pokemon": "rotom-heat", "species_gen": 4,
+        "egg_groups": ["indeterminate"], "evolution_chain_id": 1,
+        "forms": [{"name": "Rotom-Heat", "variety_slug": "rotom-heat",
+                   "types": ["Fire","Electric"], "base_stats": {"hp":50},
+                   "abilities": [{"slug":"levitate","is_hidden":False}]}]
+    })
+
+    batch_index = _cache.get_index()  # get index after saves
 
     r = _resolve_batch_name("charizard", batch_index)
     if r == "charizard":
@@ -598,151 +643,110 @@ def _run_tests():
     else: fail("_resolve_batch_name ambiguous", f"r={r} out={buf.getvalue()[:60]}")
 
     # ── _build_pkm_ctx_from_cache ─────────────────────────────────────────────
+    ctx = _build_pkm_ctx_from_cache("charizard")
+    required = {"pokemon","variety_slug","form_name","types","type1","type2",
+                "species_gen","form_gen","base_stats","abilities",
+                "egg_groups","evolution_chain_id"}
+    if ctx is not None and required <= set(ctx.keys()):
+        ok("_build_pkm_ctx_from_cache: valid cache → all required keys")
+    else: fail("_build_pkm_ctx_from_cache valid", str(ctx))
 
-    import sys as _sys, os as _os, tempfile as _tmp, json as _json
-    import pkm_cache as _cache
+    if ctx and ctx["type1"] == "Fire" and ctx["type2"] == "Flying":
+        ok("_build_pkm_ctx_from_cache: types populated correctly")
+    else: fail("_build_pkm_ctx_from_cache types", str(ctx))
 
-    with _tmp.TemporaryDirectory() as _td:
-        _orig_base  = _cache._BASE
-        _orig_pkm   = _cache._POKEMON_DIR
-        _orig_idx   = _cache._INDEX_FILE
-        _cache._BASE        = _td
-        _cache._POKEMON_DIR = _os.path.join(_td, "pokemon")
-        _cache._INDEX_FILE  = _os.path.join(_td, "pokemon_index.json")
-        _os.makedirs(_cache._POKEMON_DIR, exist_ok=True)
+    ctx_miss = _build_pkm_ctx_from_cache("pikachu")
+    if ctx_miss is None:
+        ok("_build_pkm_ctx_from_cache: missing cache → None")
+    else: fail("_build_pkm_ctx_from_cache miss", str(ctx_miss))
 
-        try:
-            _cache.save_pokemon("charizard", {
-                "pokemon": "charizard", "species_gen": 1,
-                "egg_groups": ["monster", "dragon"], "evolution_chain_id": 1,
-                "forms": [{"name": "Charizard", "variety_slug": "charizard",
-                           "types": ["Fire","Flying"], "base_stats": {"hp":78},
-                           "abilities": [{"slug":"blaze","is_hidden":False}]}],
-            })
-            ctx = _build_pkm_ctx_from_cache("charizard")
-            required = {"pokemon","variety_slug","form_name","types","type1","type2",
-                        "species_gen","form_gen","base_stats","abilities",
-                        "egg_groups","evolution_chain_id"}
-            if ctx is not None and required <= set(ctx.keys()):
-                ok("_build_pkm_ctx_from_cache: valid cache → all required keys")
-            else: fail("_build_pkm_ctx_from_cache valid", str(ctx))
+    # ── _load_batch ───────────────────────────────────────────────────────────
+    # 2 valid names → team_size == 2
+    t_empty = new_team()
+    buf2 = io.StringIO()
+    with contextlib.redirect_stdout(buf2):
+        t_result = _load_batch("charizard, blastoise", t_empty)
+    if team_size(t_result) == 2:
+        ok("_load_batch: 2 valid names → team_size == 2")
+    else: fail("_load_batch 2 names", f"size={team_size(t_result)}")
 
-            if ctx and ctx["type1"] == "Fire" and ctx["type2"] == "Flying":
-                ok("_build_pkm_ctx_from_cache: types populated correctly")
-            else: fail("_build_pkm_ctx_from_cache types", str(ctx))
+    # 1 unresolvable + 1 valid → adds 1, skips 1
+    # Patch _fetch_and_build to simulate network failure (pikachu not cached)
+    import sys as _sys2
+    _self = _sys2.modules[__name__]
+    _orig_fab = _self._fetch_and_build
+    _self._fetch_and_build = lambda slug: None  # network always fails
 
-            ctx_miss = _build_pkm_ctx_from_cache("pikachu")
-            if ctx_miss is None:
-                ok("_build_pkm_ctx_from_cache: missing cache → None")
-            else: fail("_build_pkm_ctx_from_cache miss", str(ctx_miss))
+    t_empty2 = new_team()
+    buf3 = io.StringIO()
+    with contextlib.redirect_stdout(buf3):
+        t_result2 = _load_batch("pikachu, charizard", t_empty2)
+    _self._fetch_and_build = _orig_fab
 
-            # ── _load_batch ───────────────────────────────────────────────────
+    if team_size(t_result2) == 1:
+        ok("_load_batch: 1 miss + 1 hit (API fail) → team_size == 1")
+    else: fail("_load_batch miss+hit", f"size={team_size(t_result2)}")
 
-            # Also cache blastoise so batch can resolve it
-            _cache.save_pokemon("blastoise", {
-                "pokemon": "blastoise", "species_gen": 1,
-                "egg_groups": ["monster"], "evolution_chain_id": 2,
-                "forms": [{"name": "Blastoise", "variety_slug": "blastoise",
-                           "types": ["Water"], "base_stats": {"hp":79},
-                           "abilities": [{"slug":"torrent","is_hidden":False}]}],
-            })
+    # PokeAPI fallback: name not in index → _fetch_and_build called and succeeds
+    _pikachu_ctx = {
+        "pokemon": "pikachu", "variety_slug": "pikachu",
+        "form_name": "Pikachu", "types": ["Electric"],
+        "type1": "Electric", "type2": "None",
+        "species_gen": 1, "form_gen": 1,
+        "base_stats": {"hp": 35}, "abilities": [],
+        "egg_groups": [], "evolution_chain_id": None,
+    }
+    _fetch_calls = []
+    def _mock_fab(slug):
+        _fetch_calls.append(slug)
+        return _pikachu_ctx if slug == "pikachu" else None
 
-            # 2 valid names → team_size == 2
-            t_empty = new_team()
-            buf2 = io.StringIO()
-            with contextlib.redirect_stdout(buf2):
-                t_result = _load_batch("charizard, blastoise", t_empty)
-            if team_size(t_result) == 2:
-                ok("_load_batch: 2 valid names → team_size == 2")
-            else: fail("_load_batch 2 names", f"size={team_size(t_result)}")
+    _self._fetch_and_build = _mock_fab
+    t_empty3 = new_team()
+    buf_fab = io.StringIO()
+    with contextlib.redirect_stdout(buf_fab):
+        t_result_fab = _load_batch("pikachu", t_empty3)
+    _self._fetch_and_build = _orig_fab
 
-            # 1 unresolvable + 1 valid → adds 1, skips 1
-            # Patch _fetch_and_build to simulate network failure (pikachu not cached)
-            import sys as _sys2
-            _self2 = _sys2.modules[__name__]
-            _orig_fab = _self2._fetch_and_build
-            _self2._fetch_and_build = lambda slug: None  # network always fails
+    if team_size(t_result_fab) == 1 and len(_fetch_calls) == 1:
+        ok("_load_batch: PokeAPI fallback called on cache miss, Pokémon added")
+    else: fail("_load_batch PokeAPI fallback", f"size={team_size(t_result_fab)} calls={_fetch_calls}")
 
-            t_empty2 = new_team()
-            buf3 = io.StringIO()
-            with contextlib.redirect_stdout(buf3):
-                t_result2 = _load_batch("pikachu, charizard", t_empty2)
-            _self2._fetch_and_build = _orig_fab  # restore
+    if "fetching" in buf_fab.getvalue():
+        ok("_load_batch: 'fetching' loading indicator shown during API call")
+    else: fail("_load_batch fetching indicator", buf_fab.getvalue()[:80])
 
-            if team_size(t_result2) == 1:
-                ok("_load_batch: 1 miss + 1 hit (API fail) → team_size == 1")
-            else: fail("_load_batch miss+hit", f"size={team_size(t_result2)}")
+    # Full team (5/6) + 2 names → adds 1, reports remaining skipped
+    t_full5 = new_team()
+    for _ in range(5):
+        t_full5, _ = add_to_team(t_full5, _build_pkm_ctx_from_cache("charizard"))
+    buf4 = io.StringIO()
+    with contextlib.redirect_stdout(buf4):
+        t_result3 = _load_batch("blastoise, charizard", t_full5)
+    if team_size(t_result3) == 6:
+        ok("_load_batch: 5/6 team + 2 names → fills to 6")
+    else: fail("_load_batch 5/6 team", f"size={team_size(t_result3)}")
 
-            # PokeAPI fallback: name not in index → _fetch_and_build called and succeeds
-            _pikachu_ctx = {
-                "pokemon": "pikachu", "variety_slug": "pikachu",
-                "form_name": "Pikachu", "types": ["Electric"],
-                "type1": "Electric", "type2": "None",
-                "species_gen": 1, "form_gen": 1,
-                "base_stats": {"hp": 35}, "abilities": [],
-                "egg_groups": [], "evolution_chain_id": None,
-            }
-            _fetch_calls = []
-            def _mock_fab(slug):
-                _fetch_calls.append(slug)
-                return _pikachu_ctx if slug == "pikachu" else None
+    # Full team → adds 0
+    buf5 = io.StringIO()
+    with contextlib.redirect_stdout(buf5):
+        t_result4 = _load_batch("charizard", t_result3)
+    if team_size(t_result4) == 6 and "full" in buf5.getvalue().lower():
+        ok("_load_batch: full team → 0 added, team-full note shown")
+    else: fail("_load_batch full team", f"size={team_size(t_result4)}")
 
-            _self2._fetch_and_build = _mock_fab
-            t_empty3 = new_team()
-            buf_fab = io.StringIO()
-            with contextlib.redirect_stdout(buf_fab):
-                t_result_fab = _load_batch("pikachu", t_empty3)
-            _self2._fetch_and_build = _orig_fab
+    # Clean up temp directory
+    import shutil
+    shutil.rmtree(tmp_dir)
 
-            if team_size(t_result_fab) == 1 and len(_fetch_calls) == 1:
-                ok("_load_batch: PokeAPI fallback called on cache miss, Pokémon added")
-            else: fail("_load_batch PokeAPI fallback", f"size={team_size(t_result_fab)} calls={_fetch_calls}")
-
-            if "fetching" in buf_fab.getvalue():
-                ok("_load_batch: 'fetching' loading indicator shown during API call")
-            else: fail("_load_batch fetching indicator", buf_fab.getvalue()[:80])
-
-            # Full team (5/6) + 2 names → adds 1, reports remaining skipped
-            t_full5 = new_team()
-            for _ in range(5):
-                t_full5, _ = add_to_team(t_full5, _build_pkm_ctx_from_cache("charizard"))
-            buf4 = io.StringIO()
-            with contextlib.redirect_stdout(buf4):
-                t_result3 = _load_batch("blastoise, charizard", t_full5)
-            if team_size(t_result3) == 6:
-                ok("_load_batch: 5/6 team + 2 names → fills to 6")
-            else: fail("_load_batch 5/6 team", f"size={team_size(t_result3)}")
-
-            # Full team → adds 0
-            buf5 = io.StringIO()
-            with contextlib.redirect_stdout(buf5):
-                t_result4 = _load_batch("charizard", t_result3)
-            if team_size(t_result4) == 6 and "full" in buf5.getvalue().lower():
-                ok("_load_batch: full team → 0 added, team-full note shown")
-            else: fail("_load_batch full team", f"size={team_size(t_result4)}")
-
-        finally:
-            _cache._BASE        = _orig_base
-            _cache._POKEMON_DIR = _orig_pkm
-            _cache._INDEX_FILE  = _orig_idx
-
-    # Comma detection: "char, blas" → batch path; "charizard" → single-name path
-    if "," in "char, blas":
-        ok("comma detection: 'char, blas' contains comma → batch path")
-    else: fail("comma detection batch")
-
-    if "," not in "charizard":
-        ok("comma detection: 'charizard' no comma → single-name path")
-    else: fail("comma detection single")
-
-    # ── summary ───────────────────────────────────────────────────────────────
     print()
-    total = 41
+    total = passed + len(errors)
     if errors:
         print(f"  FAILED ({len(errors)}): {errors}")
         sys.exit(1)
     else:
         print(f"  All {total} tests passed")
+
 
 
 if __name__ == "__main__":

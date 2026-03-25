@@ -1,199 +1,199 @@
 # TASKS.md
-# Current work — V2 Package 1: Core Library / Presentation Separation
+# Current work — V2 Package 2: SQLite data layer
 
 **Status:** 🔄 PLANNED  
-**Complexity:** 🟡 Medium  
-**Goal:** Extract all pure logic (no I/O, no print statements) from the existing feature modules into a set of core modules. The core modules will be independently testable and reusable by alternative frontends (e.g., a TUI). After this package, the existing CLI will remain unchanged, but its internal structure will be cleanly separated.
+**Complexity:** 🔴 High  
+**Effort:** 🟡 Medium  
+**Goal:** Replace the JSON file cache with a single SQLite database, preserving the same public API in `pkm_cache.py`. The rest of the toolkit (feature modules, core modules) must remain unchanged. Lazy‑fetch behaviour is retained; the database is created on first use and populated on‑demand.
 
 ---
 
 ## Design decisions
 
-1. **Core modules will live in the same folder with a `core_` prefix** (e.g., `core_move.py`). This avoids import path changes and makes the separation visible.
-2. **The existing `feat_*.py` files will become thin UI wrappers** that fetch data via `pkm_cache`, call core functions, and display results. Display functions will stay in the `feat_*.py` files.
-3. **All pure logic will be moved to core modules**. Each core module will have its own `_run_tests()` for offline testing.
-4. **The data access layer (`pkm_cache.py`) remains the single gateway to cached data**. Core modules will **not** import `pkm_cache`; they will only operate on plain data structures passed from the UI layer.
-5. **After each step, run `python run_tests.py` to ensure no regression.** New tests for core modules will be added to `run_tests.py`.
+1. **Single database file**: `cache/pokemon.db` (or `pokemon.db` in the same base directory as the current JSON cache). The path is determined by the existing `_BASE` logic (frozen‑safe, user‑writable).
+2. **Tables**: We'll design a relational schema that mirrors the current JSON structure:
+   - `pokemon` – species data (forms are stored as JSON in a text column for simplicity, but we can normalise later)
+   - `learnsets` – one row per `(variety_slug, game_slug)`, with `forms` stored as JSON
+   - `moves` – move entries (name, versioned entries stored as JSON)
+   - `machines` – machine URL → label mapping (JSON)
+   - `type_rosters` – per‑type roster (JSON)
+   - `natures` – nature data (JSON)
+   - `abilities` – index and detail (JSON)
+   - `egg_groups` – per‑group roster (JSON)
+   - `evolution_chains` – per‑chain flattened paths (JSON)
+   - `metadata` – schema version, timestamps
+3. **Backward compatibility**: On first run, if the database does not exist, create it and initialise empty tables. Existing JSON cache files are not automatically migrated; users can keep their old cache or delete it (the database will repopulate lazily). We may add a one‑time migration script later, but it's optional.
+4. **Public API unchanged**: Functions like `get_move(name)`, `get_pokemon(slug)`, `upsert_move_batch(batch)`, etc., will continue to work exactly as before, but their internals will use SQLite instead of JSON files.
+5. **Atomicity**: SQLite transactions replace the `write‑tmp‑move` pattern. We'll use `with conn:` to ensure rollback on error.
+6. **Testing**: All existing tests that use the cache must pass. New tests for the SQLite layer will be added, but they can reuse the existing test data and patterns.
 
 ---
 
-## Step 1: Core stat functions
+## Step 2.1 — Schema design and database initialisation
 
-**Goal:** Extract stat‑related pure functions from `feat_stat_compare.py` and `feat_quick_view.py`.
+**Goal:** Define the SQLite schema and implement functions to create the database and tables on first use.
 
-### 1.1 Create `core_stat.py`
-- Move pure functions:
-  - `compare_stats(stats_a, stats_b) → list[dict]`
-  - `total_stats(base_stats) → int`
-  - `infer_role(base_stats) → str`
-  - `infer_speed_tier(base_stats) → str`
-  - `_stat_bar(value) → str` (now public as `stat_bar(value)`)
-- Add docstrings and a `_run_tests()` function with tests for each function (reuse existing tests from `feat_stat_compare.py` and `feat_quick_view.py`).
-- Update `feat_stat_compare.py` to import from `core_stat` and remove the original definitions.
-- Update `feat_quick_view.py` to import `stat_bar`, `infer_role`, `infer_speed_tier` from `core_stat`.
-- Update `feat_nature_browser.py` to import `infer_role`, `infer_speed_tier` from `core_stat` (already done in §83, but ensure import is from core now).
-- Add `core_stat.py` to `run_tests.py` SUITES (offline suite, no cache needed).
+**2.1.1** Create a new module `pkm_sqlite.py` (or integrate into `pkm_cache.py`). We'll keep it separate initially to avoid disrupting the existing code, then later replace the JSON logic.
 
-**Verify:** `python run_tests.py` passes; all stat‑related features (key C, option 1, nature browser) work as before.
+**2.1.2** Define table schemas (as SQL `CREATE TABLE` statements). Use `TEXT` columns for JSON data to keep the transition simple. For example:
 
----
+```sql
+CREATE TABLE IF NOT EXISTS pokemon (
+    slug TEXT PRIMARY KEY,
+    data TEXT NOT NULL,   -- JSON: whole pokemon dict
+    scraped_at TEXT
+);
 
-## Step 2: Core egg group functions
+CREATE TABLE IF NOT EXISTS learnsets (
+    variety_slug TEXT,
+    game_slug TEXT,
+    data TEXT NOT NULL,
+    scraped_at TEXT,
+    PRIMARY KEY (variety_slug, game_slug)
+);
 
-**Goal:** Extract pure egg‑group functions from `feat_egg_group.py`.
+CREATE TABLE IF NOT EXISTS moves (
+    name TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    version INTEGER   -- MOVES_CACHE_VERSION
+);
 
-### 2.1 Create `core_egg.py`
-- Move pure functions:
-  - `egg_group_name(slug) → str`
-  - `format_egg_groups(egg_groups) → str`
-- Keep `_EGG_GROUP_NAMES` mapping as module‑level constant.
-- Add `_run_tests()` with tests for both functions.
-- Update `feat_egg_group.py` to import from `core_egg` and remove the original definitions.
-- Update `feat_quick_view.py` to import `format_egg_groups` from `core_egg`.
-- Add `core_egg.py` to `run_tests.py` SUITES.
+CREATE TABLE IF NOT EXISTS machines (
+    url TEXT PRIMARY KEY,
+    label TEXT NOT NULL
+);
 
-**Verify:** `python run_tests.py` passes; egg group display in option 1 and key E unchanged.
+-- similarly for types, natures, abilities_index, abilities_detail, egg_groups, evolution_chains
 
----
+2.1.3 Add a metadata table to store schema version and any other global flags:
+sql
 
-## Step 3: Core evolution functions
+CREATE TABLE IF NOT EXISTS metadata (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 
-**Goal:** Extract pure evolution‑chain logic from `feat_evolution.py`.
+2.1.4 Write a function _init_db() that creates the database and tables if they don't exist. Call it whenever the database is opened.
 
-### 3.1 Create `core_evolution.py`
-- Move pure functions:
-  - `_parse_trigger(details) → str` (rename to `parse_trigger` in core)
-  - `_flatten_chain(node, max_depth=20) → list[list[dict]]` (rename to `flatten_chain`)
-- Create a new pure version of `filter_paths_for_game` that takes a `species_gen_map` dict (slug → generation) instead of using `_get_species_gen`:
-  ```python
-  def filter_paths_for_game(paths, game_gen, species_gen_map) -> list 
-  
-It will use the provided map to filter stages.
-- Add `_run_tests()` for these functions (reuse existing tests from `feat_evolution.py`).
-- Update `feat_evolution.py` to:
-  - Import core functions.
-  - In `get_or_fetch_chain`, keep the cache fetch (unchanged).
-  - In `display_evolution_block`, pre‑fetch the species generations for all slugs in the paths and build a `species_gen_map` before calling `filter_paths_for_game`.
-- Remove the original pure functions from `feat_evolution.py`.
-- Add `core_evolution.py` to `run_tests.py` SUITES.
+2.1.5 Write a helper _get_connection() that returns a sqlite3.Connection object, ensuring the database is initialised.
 
-**Verify:** `python run_tests.py` passes; evolution chain display (option 1) works correctly for all games.
+2.1.6 Add a self‑test in pkm_cache.py to verify that _init_db() creates the expected tables.
 
 ---
 
-## Step 4: Core move scoring functions
+Step 2.2 — Adapt pkm_cache.py to use SQLite
 
-**Goal:** Extract pure move‑scoring and combo‑selection logic from `feat_moveset_data.py`.
+Goal: Replace the JSON read/write functions with SQLite equivalents, while keeping the same public API.
 
-### 4.1 Create `core_move.py`
-- Move pure functions:
-  - `score_move(move_entry, pkm_ctx, game_ctx) → float`
-  - `rank_status_moves(status_pool, top_n=3) → list`
-  - `_uncovered_weaknesses(combo, weakness_types) → int` (rename to `uncovered_weaknesses`)
-  - `_combo_score(combo, weakness_types, era_key, mode) → float` (rename to `combo_score`)
-  - `_build_counter_pool(eligible, weakness_types) → list` (rename to `build_counter_pool`)
-  - `_build_coverage_pool(eligible) → list` (rename to `build_coverage_pool`)
-  - `select_combo(damage_pool, mode, weakness_types, era_key, locked=None) → list`
-- Also move `_score_learnset` as a pure function that takes:
-  - `form_data` (learnset dict with move names)
-  - `move_entries_map` (dict mapping move name → resolved versioned entry dict)
-  - `pkm_ctx`, `game_ctx`, `weakness_types`, `era_key`
-  Returns `(damage_pool, status_pool)`.
-- Add `_run_tests()` for all functions (reuse existing tests).
-- Update `feat_moveset_data.py` to import core functions; keep data‑fetching logic.
-- Update `feat_moveset.py` and `feat_team_moveset.py` to continue using the same public API.
-- Add `core_move.py` to `run_tests.py` SUITES.
+2.2.1 Modify get_moves() to read from the moves table instead of moves.json. If the table is empty or missing, return None.
 
-**Verify:** `python run_tests.py` passes; moveset recommendation (options 3 and 4) and team moveset synergy (key S) unchanged.
+2.2.2 Modify save_moves(data) to write to the moves table (using INSERT OR REPLACE).
 
----
+2.2.3 Modify upsert_move(name, entries) and upsert_move_batch(batch) to use SQLite.
 
-## Step 5: Core team analysis functions
+2.2.4 Adapt get_move(name) to query the moves table.
 
-**Goal:** Extract pure team‑related logic from multiple files into `core_team.py`.
+2.2.5 Adapt invalidate_moves() to delete the moves table (or truncate it).
 
-### 5.1 Create `core_team.py`
-- Move pure functions:
+2.2.6 Repeat for all other cache functions: get_pokemon, save_pokemon, invalidate_pokemon, get_learnset, save_learnset, invalidate_learnset, get_machines, save_machines, get_type_roster, save_type_roster, get_natures, save_natures, get_abilities_index, save_abilities_index, get_ability_detail, save_ability_detail, get_egg_group, save_egg_group, get_evolution_chain, save_evolution_chain, invalidate_evolution_chain, check_integrity, get_cache_info, get_learnset_age_days.
 
-  **From `feat_team_analysis.py`:**
-  - `build_team_defense(team_ctx, era_key) → dict`
-  - `build_unified_rows(team_defense, era_key) → list`
-  - `gap_label(weak_count, cover_count) → str`
-  - `build_weakness_pairs(team_ctx, era_key) → list`
-  - `gap_pair_label(shared_count) → str`
+2.2.7 For functions that return a dict or list, ensure the JSON stored in the database is parsed back into Python objects.
 
-  **From `feat_team_offense.py`:**
-  - `_hitting_types(era_key, type1, type2, target) → list` (rename to `hitting_types`)
-  - `build_team_offense(team_ctx, era_key) → dict`
-  - `build_offense_rows(team_offense, era_key) → list`
-  - `coverage_gaps(rows) → list`
+2.2.8 Implement check_integrity() using SQL queries (e.g., count rows, check for malformed JSON). Keep the same output format (list of issue strings).
 
-  **From `feat_team_moveset.py`:**
-  - `_weakness_types(pkm_ctx, era_key) → list` (rename to `weakness_types`)
-  - `_se_types(combo, era_key) → list` (rename to `se_types`)
-  - `build_offensive_coverage(member_results, era_key) → dict`
-  - `_empty_member_result(form_name) → dict` (rename to `empty_member_result`)
-  - `_format_weak_line(weakness_types) → str` (rename to `format_weak_line`)
-  - `_format_move_pair(left, right) → str` (rename to `format_move_pair`)
-  - `_format_se_line(se_types, era_key) → str` (rename to `format_se_line`)
+2.2.9 Implement get_cache_info() using SQL SELECT COUNT(*) queries.
 
-  **From `feat_team_builder.py`:**
-  - `team_offensive_gaps(team_ctx, era_key) → list`
-  - `team_defensive_gaps(team_ctx, era_key) → list`
-  - `candidate_passes_filter(candidate_types, off_gaps, def_gaps, era_key) → bool`
-  - `patchability_score(remaining_off_gaps, era_key) → float`
-  - `_shared_weakness_count(candidate_types, team_ctx, era_key) → int` (rename to `shared_weakness_count`)
-  - `_new_weak_pairs(candidate_types, team_ctx, era_key) → list` (rename to `new_weak_pairs`)
-  - `score_candidate(candidate_types, team_ctx, era_key, off_gaps, def_gaps, slots_remaining, base_stats=None) → float`
-  - `rank_candidates(candidates, team_ctx, era_key, off_gaps, def_gaps, slots_remaining, top_n=6) → list`
-
-- Add `_run_tests()` in `core_team.py` with tests for all functions.
-- Update original files to import from `core_team` and remove definitions.
-- Add `core_team.py` to `run_tests.py` SUITES.
-
-**Verify:** `python run_tests.py` passes; all team features (V, O, S, H) work unchanged.
-
---- 
-
-## Step 6: Core opponent analysis functions
-
-**Goal:** Extract pure opponent‑analysis logic from `feat_opponent.py`.
-
-### 6.1 Create `core_opponent.py`
-- Move pure functions:
-  - `analyze_matchup(team_ctx, opponent_team, era_key) → list` – where `opponent_team` is a list of dicts, each containing `name`, `types`, `level`, `move_types` (list of type strings). This makes it pure.
-  - `uncovered_threats(matchup_results) → list`
-  - `recommended_leads(matchup_results, team_ctx) → list`
-- Add `_run_tests()` with tests (reuse from `feat_opponent.py`, adjusting to the new signature).
-- Update `feat_opponent.py` to:
-  - Keep data loading and trainer selection.
-  - Resolve move types for each opponent Pokémon using `get_move_type` and build `opponent_team`.
-  - Call `core_opponent.analyze_matchup` with resolved data.
-  - Keep display functions in `feat_opponent.py`.
-- Add `core_opponent.py` to `run_tests.py` SUITES.
-
-**Verify:** `python run_tests.py` passes; opponent analysis (key X) unchanged.
-
---- 
-
-## Step 7: Consolidate data access (optional)
-
-**Goal:** Move remaining I/O‑intensive code into a dedicated module, leaving core modules pure.
-
-**Decision:** Postpone to a later V2 package (e.g., SQLite migration). The `feat_*.py` files already act as thin UI layers after steps 1–6, so they are acceptable for now.
-
-No implementation in this step.
+2.2.10 Implement get_learnset_age_days(variety_slug, game_slug) by reading the scraped_at column from the learnsets table.
 
 ---
 
-## Step 8: Update `run_tests.py` and documentation
+Step 2.3 — Handle legacy JSON files (optional migration)
 
-- Ensure all new core modules are added to the SUITES list in `run_tests.py`.
-- Verify that all offline tests pass.
-- Update `ARCHITECTURE.md`:
-  - Add a new section describing core modules and their responsibilities.
-  - Update file list and module descriptions.
-- Update `README.md` if any user‑visible changes occurred (none expected, but verify).
-- Update `HISTORY.md` with a new section (e.g., §109) describing the refactoring.
+Goal: Provide a smooth transition for existing users. We can decide to ignore old JSON files (the database will be empty and will repopulate lazily). However, we may add a one‑time migration command --migrate-json that reads all JSON files and inserts them into SQLite.
 
-**Verify:** All tests pass; documentation is up to date.
+2.3.1 (Optional) Add a command‑line flag --migrate-json to pokemain.py. It would call a function in pkm_cache.py that scans the JSON cache directories and inserts everything into SQLite.
+
+2.3.2 (Optional) Implement the migration function.
+
+Decision: Postpone migration to a later step; keep it optional. We'll document that users can delete their old cache/ folder after the database is populated (or keep it as a backup). The database will fill up gradually as they use the tool.
+
+---
+
+Step 2.4 — Update run_tests.py
+
+Goal: Ensure the test suite works with SQLite.
+
+2.4.1 The existing tests already mock the cache layer (they use a temporary directory). We need to adjust the mock to use a temporary SQLite database instead of JSON files. This will require changes in the test setup to create a temporary SQLite file and redirect _BASE appropriately.
+
+2.4.2 Since many tests depend on the cache being empty, we can keep the same approach: use a temporary directory and set _BASE to that directory. The SQLite database file will be created inside that directory.
+
+2.4.3 Add new tests specifically for SQLite features (e.g., transaction atomicity, concurrent access) if needed.
+
+2.4.4 Verify that all existing tests pass.
+
+---
+
+Step 2.5 — Update documentation
+
+Goal: Document the change in README.md and ARCHITECTURE.md.
+
+2.5.1 Update README.md:
+
+    In the "Files" section, replace cache/ description with cache/ (still a directory, but now contains a single pokemon.db file).
+
+    Add a note that the cache is now stored in a SQLite database (transparent to the user).
+
+    Update any troubleshooting entries if needed.
+
+2.5.2 Update ARCHITECTURE.md:
+
+    Rewrite the cache layout section to describe the SQLite database and its tables.
+
+    Mention the metadata table for schema versioning.
+
+    Note that JSON files are no longer used.
+
+2.5.3 Update HISTORY.md with a new section (e.g., §110) describing the SQLite migration.
+
+
+---
+
+
+Step 2.6 — Final verification
+
+Goal: Ensure the toolkit works as expected with the new database.
+
+2.6.1 Run python run_tests.py (both offline and with network) to confirm all tests pass.
+
+2.6.2 Manually test the following workflows:
+
+    First run (no database): select a game, load a Pokémon, view learnable moves, etc. Verify that the database is created and populated correctly.
+
+    Second run (database already exists): verify that data is read from the database and no new fetches occur.
+
+    Check that --cache-info shows correct counts (should match the number of rows in each table).
+
+    Check that --check-cache runs without errors.
+
+2.6.3 Run the build script (python build.py) and test the frozen executable on each platform to ensure SQLite works in the frozen environment (the sqlite3 module is included in Python's standard library, so no extra bundling is needed).
+
+
+---
+
+Completion criteria for this package
+
+    All public cache functions in pkm_cache.py use SQLite instead of JSON files.
+
+    The database is created automatically on first access.
+
+    All existing tests pass.
+
+    Manual testing confirms that the toolkit behaves identically to the JSON version.
+
+    Documentation is updated to reflect the change.
+
+---
+
+Next steps after this package
+
+Once the SQLite data layer is in place, we can proceed to Step 3: One‑time full data import (--sync command) and Step 4: Terminal UI. The core logic and team features are already separated and will work with the new database without changes.

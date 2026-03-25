@@ -276,6 +276,15 @@ Run without arguments to start the interactive menu.
 """)
         sys.exit(0)
 
+    if "--sync" in args:
+        force = "--force" in args
+        try:
+            import pkm_sync
+            pkm_sync.sync_all(force=force)
+        except ImportError as e:
+            print(f"  ERROR: Could not import pkm_sync: {e}")
+        sys.exit(0)
+
     if "--cache-info" in args:
         info = cache.get_cache_info()
         labels = [

@@ -3,8 +3,7 @@
 feat_type_browser.py  Type browser / Pokémon type searcher
 
 Lists all Pokémon that have a given type (or type combination).
-Data comes from PokeAPI /type/{name}, cached in cache/types/<name>.json.
-Each type file is fetched once and reused indefinitely — types never change.
+Data comes from PokeAPI /type/{name}, cached in SQLite database.
 
 Entry points:
   run(game_ctx=None)   called from pokemain (game_ctx unused but accepted
@@ -282,15 +281,13 @@ def _run_tests(with_cache: bool = False) -> None:
     check("parse: 'invalid' → None",        _parse_type("invalid") is None)
     check("parse: '' → None",               _parse_type("")        is None)
 
-    # ── _build_rows sorting ───────────────────────────────────────────────────
-    # Build a minimal fake roster and verify sort order (gen asc, name alpha).
+    # ── _build_rows sorting (pure, no cache) ─────────────────────────────────
     fake_roster = [
-        {"slug": "bulbasaur",      "slot": 1, "id": 1},    # gen1
-        {"slug": "chikorita",      "slot": 1, "id": 152},  # gen2
-        {"slug": "azumarill",      "slot": 2, "id": 184},  # gen2, Water/Fairy
-        {"slug": "charizard-mega-x","slot": 2, "id": 10034},# alt form gen?
+        {"slug": "bulbasaur",      "slot": 1, "id": 1},
+        {"slug": "chikorita",      "slot": 1, "id": 152},
+        {"slug": "azumarill",      "slot": 2, "id": 184},
+        {"slug": "charizard-mega-x","slot": 2, "id": 10034},
     ]
-    # Simulate _build_rows logic (no network needed)
     rows = []
     for e in fake_roster:
         gen = _id_to_gen(e["id"])
@@ -312,32 +309,25 @@ def _run_tests(with_cache: bool = False) -> None:
     check("sort: alt-form gen displayed as None",
           rows[-1]["gen"] is None)
 
-    # ── single-type slot assignment ───────────────────────────────────────────
-    # Slot 1 → col_t1 = queried type, col_t2 = ""
-    # Slot 2 → col_t1 = "",           col_t2 = queried type
-    slot1_entry = {"slug": "charmander", "slot": 1, "id": 4}
-    slot2_entry = {"slug": "charizard",  "slot": 1, "id": 6}
-    # Manually replicate the single-type branch
+    # ── single-type slot assignment ─────────────────────────────────────────
     def _slot_cols(entry, type1):
         if entry["slot"] == 1:
             return type1, ""
         return "", type1
 
+    slot1_entry = {"slug": "charmander", "slot": 1, "id": 4}
+    slot2_entry = {"slug": "charizard",  "slot": 1, "id": 6}
     t1, t2 = _slot_cols(slot1_entry, "Fire")
     check("single-type slot1: col_t1=Fire, col_t2=''", t1 == "Fire" and t2 == "")
-    # Charizard is Fire/Flying — if fetched via Flying type, slot=2
     flying_entry = {"slug": "charizard", "slot": 2, "id": 6}
     t1, t2 = _slot_cols(flying_entry, "Flying")
     check("single-type slot2: col_t1='', col_t2=Flying", t1 == "" and t2 == "Flying")
 
     # ── entry["name"] used in preference to slug-to-title ────────────────────
-    # Simulate a roster entry that already has a resolved "name" field.
-    # _build_rows must prefer it over slug-to-title.
     entry_with_name    = {"slug": "mr-mime",   "slot": 1, "id": 122, "name": "Mr. Mime"}
     entry_without_name = {"slug": "mr-mime",   "slot": 1, "id": 122}
     entry_no_hyphen    = {"slug": "charizard", "slot": 1, "id": 6}
 
-    # Directly test the name-resolution logic used in _build_rows
     name_resolved   = entry_with_name.get("name")  or _slug_to_title(entry_with_name["slug"])
     name_fallback   = entry_without_name.get("name") or _slug_to_title(entry_without_name["slug"])
     name_no_hyphen  = entry_no_hyphen.get("name")  or _slug_to_title(entry_no_hyphen["slug"])
@@ -349,50 +339,46 @@ def _run_tests(with_cache: bool = False) -> None:
     check('no-hyphen entry: slug-to-title "Charizard"',
           name_no_hyphen == "Charizard")
 
-    # ── resolve_type_roster_names: offline round-trip via pkm_cache ───────────
-    # Verify that resolve_type_roster_names() correctly skips already-resolved
-    # entries and saves names into the cache file.
+    # ── resolve_type_roster_names: offline test with mock ────────────────────
     import tempfile, os as _os, json as _json
-
-    # Monkey-patch cache paths to a temp directory for isolation
     import pkm_cache as _cache
-    orig_types_dir = _cache._TYPES_DIR
+    import pkm_pokeapi as _api
+
+    # We'll create a temporary directory and set _BASE there, then use SQLite.
+    orig_base = _cache._BASE
     tmp_dir = tempfile.mkdtemp()
-    _cache._TYPES_DIR = tmp_dir
+    _cache._BASE = tmp_dir
+    _cache.pkm_sqlite.set_base(tmp_dir)
 
     try:
-        # Build a fake roster: one hyphenated entry (name missing), one already resolved,
-        # one no-hyphen entry (should be left alone)
+        # Build a fake roster and save it to SQLite (type roster)
         fake_roster = [
-            {"slug": "charizard",       "slot": 1, "id": 6},            # no hyphen → skip
-            {"slug": "charizard-mega-x","slot": 1, "id": 10034},        # hyphen, no name
-            {"slug": "mr-mime",         "slot": 1, "id": 122,
-             "name": "Mr. Mime"},                                        # already resolved
+            {"slug": "charizard",       "slot": 1, "id": 6},
+            {"slug": "charizard-mega-x","slot": 1, "id": 10034},
+            {"slug": "mr-mime",         "slot": 1, "id": 122, "name": "Mr. Mime"},
         ]
         _cache.save_type_roster("TestType", fake_roster)
 
-        # Verify no names yet for charizard-mega-x
-        saved = _cache.get_type_roster("TestType")
-        mega_entry = next(e for e in saved if e["slug"] == "charizard-mega-x")
+        # Verify before resolve: charizard-mega-x has no 'name'
+        roster = _cache.get_type_roster("TestType")
+        mega_entry = next(e for e in roster if e["slug"] == "charizard-mega-x")
         check("before resolve: charizard-mega-x has no 'name'",
               "name" not in mega_entry)
 
-        # Manually patch fetch_form_display_name to avoid network call
-        import pkm_pokeapi as _api
-        orig_fetch = _api.fetch_form_display_name
-
+        # Mock fetch_form_display_name to avoid network
         def _mock_fetch(slug):
             return {"charizard-mega-x": "Mega Charizard X"}.get(slug)
 
+        orig_fetch = _api.fetch_form_display_name
         _api.fetch_form_display_name = _mock_fetch
 
         _cache.resolve_type_roster_names("TestType")
 
         # Re-read and verify
-        saved2 = _cache.get_type_roster("TestType")
-        mega2  = next(e for e in saved2 if e["slug"] == "charizard-mega-x")
-        mr2    = next(e for e in saved2 if e["slug"] == "mr-mime")
-        char2  = next(e for e in saved2 if e["slug"] == "charizard")
+        roster2 = _cache.get_type_roster("TestType")
+        mega2 = next(e for e in roster2 if e["slug"] == "charizard-mega-x")
+        mr2   = next(e for e in roster2 if e["slug"] == "mr-mime")
+        char2 = next(e for e in roster2 if e["slug"] == "charizard")
 
         check('after resolve: charizard-mega-x name = "Mega Charizard X"',
               mega2.get("name") == "Mega Charizard X")
@@ -401,7 +387,7 @@ def _run_tests(with_cache: bool = False) -> None:
         check("after resolve: charizard has no 'name' (no-hyphen skipped)",
               "name" not in char2)
 
-        # Second call should be a no-op (no to_resolve entries)
+        # Second resolve call should be a no-op (no to_resolve entries)
         call_count = [0]
         orig_save = _cache.save_type_roster
         def _counting_save(t, r):
@@ -416,23 +402,23 @@ def _run_tests(with_cache: bool = False) -> None:
 
     finally:
         _api.fetch_form_display_name = orig_fetch
-        _cache._TYPES_DIR = orig_types_dir
+        _cache._BASE = orig_base
+        _cache.pkm_sqlite.set_base(orig_base)
         import shutil as _sh
         _sh.rmtree(tmp_dir, ignore_errors=True)
 
-        # ── cache-dependent tests ─────────────────────────────────────────────────
+    # ── with_cache tests (optional) ──────────────────────────────────────────
     if with_cache:
-        # Requires cache/types/fire.json to exist (pre-warmed by run_tests.py).
-        # Verifies: roster fetch from cache, name resolution, known Pokémon present.
-
-        roster = cache.get_type_roster_or_fetch("Fire")
+        # Requires the database to be populated. We'll run them only if we have a
+        # database already. Since the sync is done, we can just test that the
+        # type roster for Fire exists and has entries.
+        roster = _cache.get_type_roster("Fire")
         if roster is None:
             check("withcache: Fire type roster fetched from cache", False)
         else:
             check("withcache: Fire type roster is a non-empty list",
                   isinstance(roster, list) and len(roster) > 0)
 
-            # Every entry must have slug, slot, id
             all_valid = all(
                 isinstance(e.get("slug"), str) and
                 e.get("slot") in (1, 2) and
@@ -441,26 +427,20 @@ def _run_tests(with_cache: bool = False) -> None:
             )
             check("withcache: all roster entries have slug/slot/id", all_valid)
 
-            # Known Fire-type Pokémon must be present
             slugs = {e["slug"] for e in roster}
             check("withcache: Charizard in Fire roster",    "charizard"    in slugs)
             check("withcache: Arcanine in Fire roster",     "arcanine"     in slugs)
             check("withcache: Charmander in Fire roster",   "charmander"   in slugs)
 
             # Resolve names (no-op if already done)
-            cache.resolve_type_roster_names("Fire")
-            roster2 = cache.get_type_roster("Fire")
-
-            # All hyphenated entries must now have a "name" field
+            _cache.resolve_type_roster_names("Fire")
+            roster2 = _cache.get_type_roster("Fire")
             hyphenated = [e for e in roster2 if "-" in e["slug"]]
             all_named = all("name" in e for e in hyphenated)
             check("withcache: all hyphenated entries have resolved name",
                   not hyphenated or all_named)
 
-            # Spot-check specific known form names
             by_slug = {e["slug"]: e for e in roster2}
-
-            # charizard-mega-x should exist and have proper name
             if "charizard-mega-x" in by_slug:
                 mega_name = by_slug["charizard-mega-x"].get("name", "")
                 check('withcache: Charizard-Mega-X → "Mega Charizard X"',

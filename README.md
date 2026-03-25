@@ -27,12 +27,17 @@ python pokemain.py --refresh-all <name>       # force-refresh all data for a Pok
 python pokemain.py --refresh-evolution <n>      # force-refresh one Pokemon's evolution chain
 python pokemain.py --help                     # show usage summary and exit
 python pokemain.py --game "Scarlet / Violet"  # pre-select a game, skipping the selection prompt
+python pokemain.py --sync                     # pre‑load all Pokémon, moves, etc. into SQLite database
 ```
 
 First run requires a network connection to populate the cache. After that, all
 features work offline. If PokeAPI is unreachable on a sparse cache, a warning is
 printed at startup. The **T** and **W** keys in the menu pre-warm the move and
 machine tables in bulk — recommended before first moveset run.
+
+**Database location:** The SQLite database (`pokemon.db`) is stored in the same cache directory as before (`cache/`). 
+On macOS, if running the bundled app, it is placed in `~/Library/Application Support/PokemonToolkit/cache/`. 
+On Windows/Linux, it lives next to the executable.
 
 ---
 
@@ -537,6 +542,8 @@ Every module with testable logic has an `--autotest` flag (offline unless noted)
 | `python core_team.py --autotest` | 24 — defensive/offensive analysis, team builder scoring |
 | `python core_opponent.py --autotest` | 5 — opponent analysis |
 | `python pkm_pokeapi.py --autotest` | 14 — versioned entry builder, mapping tables, fetch_pokemon offline, egg_groups, evolution_chain_id, check_connectivity |
+| `python pkm_sqlite.py --autotest` | 0 (no public interface; tested via pkm_cache) |
+| `python pkm_sync.py --autotest` | 0 (sync script, not unit‑tested) |
 
 Run all suites at once:
 ```
@@ -552,7 +559,9 @@ python run_tests.py --quiet   # summary table only
 |---|---|
 | `pokemain.py` | Entry point; menu loop; context wiring |
 | `pkm_session.py` | Interactive game + Pokemon context selection |
-| `pkm_cache.py` | All cache reads and writes (single gateway) |
+| `pkm_cache.py` | All cache reads and writes (single gateway, now uses SQLite) |
+| `pkm_sqlite.py` | SQLite database layer (tables, connections, low‑level access) |
+| `pkm_sync.py` | One‑time full data import from PokeAPI to SQLite (`--sync`) |
 | `pkm_pokeapi.py` | PokeAPI adapter; fetch + translate raw data |
 | `matchup_calculator.py` | Type chart data (ERA1/2/3) + multiplier logic |
 | `core_stat.py` | Pure stat functions (compare_stats, total_stats, infer_role, etc.) |

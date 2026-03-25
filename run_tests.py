@@ -102,7 +102,7 @@ def _cache_items():
 
 SUITES = [
     ("matchup_calculator",       "matchup_calculator.py",  ["--autotest"],               []),
-    ("pkm_cache",                "pkm_cache.py",            [],                            []),
+    ("pkm_cache",                "pkm_cache.py",            ["--autotest"],               []),
     ("pkm_pokeapi",              "pkm_pokeapi.py",          ["--autotest"],               []),
     ("pkm_session",              "pkm_session.py",          ["--autotest"],               []),
     ("feat_moveset_data",        "feat_moveset_data.py",    ["--autotest"],               []),
@@ -179,9 +179,9 @@ def _extract_counts(output: str):
         if m:
             return None, int(m.group(1))
 
-    # Pass 2: "All N tests passed" — assume 0 failures
+    # Pass 2: "All N tests passed" or "All N tests passed."
     for line in reversed(lines):
-        m = re.search(r"All(?: (\d+))? tests? passed", line)
+        m = re.search(r"All(?: (\d+))? tests? passed\.?", line)
         if m:
             return int(m.group(1)) if m.group(1) else None, 0
 
@@ -371,6 +371,8 @@ def main():
         "feat_quick_view.py": "display-only — all functions print to stdout; no pure logic to test",
         "pokemain.py":        "wiring-only  — menu loop with no logic; interactive I/O untestable",
         "build.py":           "build tool   — wraps PyInstaller; depends on external binary, not testable offline",
+        "pkm_sqlite.py":      "SQLite layer — called by pkm_cache; no public interface for standalone testing",
+        "pkm_sync.py":        "sync script  — one‑time data import; no unit tests",
     }
     _all_py = sorted(
         f for f in os.listdir(HERE)

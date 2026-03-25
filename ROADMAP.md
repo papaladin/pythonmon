@@ -51,7 +51,9 @@
 | Code quality sweep (TD‑7, TD‑8, TD‑9) | Specific exception types; magic constants extracted; input validation improved | §105 |
 | Pythonmon‑31 (part 1) | Team coverage vs in‑game opponents – static trainer database, version‑slug merging, key X | §106–§107 |
 | Pythonmon‑23 | Persistent game selection + help flag | `--game` flag skips game selection; `--help` shows usage summary | §108 |
-
+| V2 Package 1 | Core library / presentation separation | Moved all pure logic to core_*.py modules; feat_*.py now thin UI wrappers | §109 |
+| V2 Package 2 | SQLite data layer | Replaced JSON cache with SQLite database; added pkm_sqlite.py | §110 |
+| V2 Package 3 | One‑time full data import | Added `--sync` flag to pre‑download all data into SQLite; progress tracking | §111 |
 
 ---
 
@@ -73,7 +75,7 @@ The following steps represent a phased approach to evolving the toolkit into ver
 
 ---
 
-### 2. SQLite data layer
+### 2. SQLite data layer ✅ Complete (see §110) 
 
 **What:** Replace the JSON file cache with a single SQLite database. Migrate existing cache data into tables. Keep the same public API for `pkm_cache.py` so the rest of the toolkit is unaware of the change.
 
@@ -85,7 +87,7 @@ The following steps represent a phased approach to evolving the toolkit into ver
 
 ---
 
-### 3. One‑time full data import
+### 3. One‑time full data import ✅ Complete (see §111) 
 
 **What:** Add a command (`python pokemain.py --sync`) that downloads all Pokemon, moves, learnsets, etc., into the SQLite database upfront.
 
@@ -99,13 +101,10 @@ The following steps represent a phased approach to evolving the toolkit into ver
 
 ### 4. Terminal UI (TUI)
 
-**What:** Replace the sequential prompt‑and‑redraw loop with a persistent split‑pane terminal interface (using `textual` or `curses`). The game, Pokemon, and team context are always visible. Feature output updates in the right pane without clearing the screen. Navigation is keyboard‑driven.
+| **4.1. UI abstraction** | Refactor `pokemain.py` to use an abstract UI class. Replace all direct `print()` and `input()` calls with UI methods. Move interactive selection functions (`select_pokemon`, `select_game`) into the UI layer. Keep the current CLI as the first implementation. | 🟡 Medium | 🟡 Medium | Separates UI concerns from application logic, enabling alternative frontends (TUI, GUI). The foundation for all future UI work. |
+| **4.2. Terminal UI (TUI)** | Build a persistent split‑pane interface (e.g., using `textual` or `curses`) that shows context at all times. Replace the menu loop with key‑driven navigation. | 🔴 High | 🔴 High | Drastically improves UX: no screen clearing, all context visible, faster workflows. Keeps CLI as fallback. |
 
-**Why:** The current UX requires the user to mentally hold context because the screen clears on every action. A TUI makes all context visible at once and reduces interactions to keypresses rather than typed commands.
 
-**Effort:** 🔴 High  
-**Complexity:** 🔴 High  
-**Added value:** Drastically improved user experience; faster workflows; keeps CLI as fallback.
 
 ---
 

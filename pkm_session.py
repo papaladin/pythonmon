@@ -419,19 +419,19 @@ def print_session_header(pkm_ctx, game_ctx, constraints=None):
 # ── Self-test ─────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import os, tempfile
+    import os
+    import tempfile
     import pkm_cache as _cache
     import pkm_session as _self
+    import pkm_sqlite
 
     print("\n  pkm_session.py — self-test\n")
     errors = []
 
     with tempfile.TemporaryDirectory() as tmp:
-        _cache._BASE         = tmp
-        _cache._POKEMON_DIR  = os.path.join(tmp, "pokemon")
-        _cache._LEARNSET_DIR = os.path.join(tmp, "learnsets")
-        _cache._MOVES_FILE   = os.path.join(tmp, "moves.json")
-        _cache._ensure_dirs()
+        # Set base directory for SQLite database
+        _cache._BASE = tmp
+        _cache.pkm_sqlite.set_base(tmp)
 
         def ok(label):   print(f"  [OK]   {label}")
         def fail(label, msg):
@@ -471,7 +471,6 @@ if __name__ == "__main__":
         _cache.save_pokemon("fakizard-old", old_fmt)
         _self.pkm_pokeapi.fetch_pokemon = lambda n: fake_api("fakizard")  # reuse same mock
         forms_upg, _ = _self._fetch_or_cache("fakizard-old")
-        # Should have called API once (upgrade) and now have variety_slug in tuples
         has_slug = all(len(f)==3 and f[2] for f in forms_upg)
         if len(api_calls)==1 and has_slug: ok("T2b old cache auto-upgrade → re-fetch")
         else: fail("T2b", f"calls={api_calls} forms={forms_upg}")
@@ -483,9 +482,11 @@ if __name__ == "__main__":
         if len(api_calls)==1: ok("T3 force_refresh")
         else: fail("T3", f"calls={api_calls}")
 
-        # T4: corrupt cache → re-fetch
+        # T4: corrupt cache → re-fetch (SQLite version)
         api_calls.clear()
-        with open(_cache._pokemon_path("fakizard"), "w") as f: f.write("{bad}")
+        db_path = os.path.join(tmp, "pokemon.db")
+        if os.path.exists(db_path):
+            os.remove(db_path)
         _self._fetch_or_cache("fakizard")
         if len(api_calls)==1: ok("T4 corrupt cache → re-fetch")
         else: fail("T4", f"calls={api_calls}")
@@ -519,7 +520,6 @@ if __name__ == "__main__":
         r = _self.refresh_pokemon(pctx)
         if len(api_calls)==1 and r["form_name"]=="Fakizard": ok("T8 refresh_pokemon correct")
         else: fail("T8", f"calls={api_calls} form={r.get('form_name')}")
-
 
         # T9: select_pokemon blocks Pokemon not yet existing in selected game
         # Fakizard species_gen=1, Mega form_gen=6; game Gen 5 → should block Mega
@@ -561,15 +561,11 @@ if __name__ == "__main__":
             ok("T12 Mega Fakizard accepted in Gen 9 game")
         else: fail("T12", f"got {result}")
 
+        builtins.input = real_input
+
         # T13: select_game blocks game where loaded Pokemon didn't exist
         # Mega Fakizard X form_gen=6; try Gen 5 → blocked, then abort
         mega_ctx = {"form_name": "Mega Fakizard X", "form_gen": 6}
-        responses = iter(["Black / White", "n"])   # pick gen5 game, then abort
-        builtins.input = lambda p="": (
-            _self.select_from_list.__wrapped__(p) if hasattr(_self.select_from_list, "__wrapped__")
-            else next(responses)
-        )
-        # Override select_from_list to return the game name directly
         orig_sfl = _self.select_from_list
         games_iter = iter(["Black / White", "Scarlet / Violet"])
         _self.select_from_list = lambda *a, **kw: next(games_iter)
@@ -596,7 +592,6 @@ if __name__ == "__main__":
         builtins.input = real_input
 
         # ── _index_search ─────────────────────────────────────────────────────
-
         fake_index = {
             "charizard":   {"forms": [{"name": "Charizard",   "types": ["Fire","Flying"]}]},
             "charmander":  {"forms": [{"name": "Charmander",  "types": ["Fire"]}]},

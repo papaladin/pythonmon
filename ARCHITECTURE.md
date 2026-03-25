@@ -9,26 +9,29 @@
 pokemon-toolkit/
   pokemain.py               Entry point and menu loop
   pkm_session.py            Game + Pokemon context selection
-  pkm_cache.py              All cache reads and writes (single gateway)
+  pkm_cache.py              All cache reads and writes (single gateway, now uses SQLite)
+  pkm_sqlite.py             SQLite database layer (tables, connections, low‑level access)
+  pkm_sync.py               One‑time full data import from PokeAPI to SQLite (`--sync`)
   pkm_pokeapi.py            PokeAPI adapter (fetch + translate raw data)
   matchup_calculator.py     Type chart data + multiplier logic (pure library)
   run_tests.py              Test runner (calls --autotest on each module)
-  cache/                    Local JSON cache (see section 4)
-  Data/trainers.json	   Local JSON file with notorious trainers data (gym&league)
+  cache/                    Local cache directory (contains pokemon.db)
+  data/trainers.json        Local JSON file with notorious trainers data (gym & league)
   
-**Core logic modules (no I/O, no display)**
-  core_stat.py 		Pure stat functions (compare_stats, total_stats, infer_role, etc.)
-  core_egg.py 		Pure egg group functions (egg_group_name, format_egg_groups)
-  core_evolution.py 	Pure evolution chain logic (parse_trigger, flatten_chain, filter)
-  core_move.py 		Pure move scoring and combo selection (score_move, select_combo, etc.)
-  core_team.py 		Pure team analysis and builder logic
-  core_opponent.py 	Pure opponent analysis logic
-**Feature modules (thin UI wrappers)**
+  # Core logic modules (no I/O, no display)
+  core_stat.py              Pure stat functions (compare_stats, total_stats, infer_role, etc.)
+  core_egg.py               Pure egg group functions (egg_group_name, format_egg_groups)
+  core_evolution.py         Pure evolution chain logic (parse_trigger, flatten_chain, filter)
+  core_move.py              Pure move scoring and combo selection (score_move, select_combo, etc.)
+  core_team.py              Pure team analysis and builder logic
+  core_opponent.py          Pure opponent analysis logic
+  
+  # Feature modules (thin UI wrappers)
   feat_quick_view.py        Feature: quick view (stats / abilities / egg groups / type chart)
   feat_move_lookup.py       Feature: move lookup by name
   feat_movepool.py          Feature: learnable move list with learn conditions
   feat_moveset.py           Feature: scored pool + moveset recommendation UI
-  feat_moveset_data.py      Scoring engine (pure logic, no I/O)
+  feat_moveset_data.py      Data fetching for moveset recommendation (I/O)
   feat_type_browser.py      Feature: browse Pokemon by type
   feat_nature_browser.py    Feature: nature & EV build advisor + nature browser (key N)
   feat_ability_browser.py   Feature: ability browser + Pokemon roster drill-in
@@ -42,7 +45,6 @@ pokemon-toolkit/
   feat_learnset_compare.py  Feature: learnset comparison between two Pokémon (key L)
   feat_team_builder.py      Feature: team slot suggestion — gap analysis + ranked candidates (key H)
   feat_opponent.py          Feature: team coverage vs in‑game opponents (key X)
-**Others**
 
 ```
 
@@ -152,45 +154,47 @@ no persistence to disk.
 
 ## 4. Cache layout
 
+
+All cache data is stored in a single SQLite database file:
 ```
-cache/
-  moves.json               All moves; each entry has versioned sub-entries (from_gen/to_gen)
-  machines.json            TM/HM lookup: machine resource URL → display label ("TM38")
-  pokemon_index.json       Compact index: species_slug → {forms: [{form_name, types}]}
-  natures.json             All 25 natures with stat effects; fetched once
-  abilities_index.json     All ~307 abilities: name, gen, short_effect; fetched once
-
-  pokemon/
-    charizard.json         Per-species: forms list, types, base_stats, variety_slug per form
-    sandslash.json
-
-  learnsets/
-    charizard_scarlet-violet.json        Key = variety_slug + "_" + game_slug
-    sandslash-alola_scarlet-violet.json  Regional forms get their own file
-
-  types/
-    fire.json              All Pokemon with Fire type (slug, slot, id, name)
-    water.json             One file per type; fetched once per type, cached indefinitely
-
-  abilities/
-    blaze.json             Per-ability detail: full effect text + Pokemon roster list
-
-  egg_groups/
-    monster.json           Per-group roster: list of {slug, name} dicts, sorted by name
-    dragon.json            One file per group; fetched once, cached indefinitely
-
-  evolution/
-    1.json                 Per-chain flattened paths: list[list[{slug, trigger}]]
-    67.json                One file per chain ID; fetched once, cached indefinitely
+cache/pokemon.db Main database (tables listed below)
 ```
+The database is created on first access. Tables are created automatically. 
+All data is stored as JSON text in the appropriate columns, preserving the original data structures.
 
-**All cache access goes through `pkm_cache.py`.** No feature file opens cache files directly.
 
-**Lazy loading:** data is fetched on first use and cached indefinitely.
-**Atomic writes:** all writes go to `<path>.tmp` then `shutil.move()` to final path.
-**Defensive reads:** every `get_*` wraps JSON parse in try/except; returns None on any error.
-**Auto-upgrade:** pokemon files cached before variety_slug was added (§42) are silently
-re-fetched on next access. Detection: missing `variety_slug` key in the cached dict.
+
+### SQLite database schema
+
+The SQLite database (`pokemon.db`) replaces all JSON cache files. It is stored in the same cache directory and created automatically on first use.
+
+| Table | Columns | Purpose |
+|-------|---------|---------|
+| `metadata` | `key TEXT PRIMARY KEY`, `value TEXT` | Global metadata: schema version, moves schema version, etc. |
+| `pokemon` | `slug TEXT PRIMARY KEY`, `data TEXT NOT NULL`, `scraped_at TEXT` | One row per Pokémon species. `data` contains the full Pokémon dict (forms, stats, etc.) as JSON. |
+| `learnsets` | `variety_slug TEXT`, `game_slug TEXT`, `data TEXT NOT NULL`, `scraped_at TEXT`, PRIMARY KEY (variety_slug, game_slug) | One row per (variety, game) combination. `data` contains the learnset JSON (level-up, machine, tutor, egg). |
+| `moves` | `name TEXT PRIMARY KEY`, `data TEXT NOT NULL`, `version INTEGER` | One row per move. `data` contains the versioned entries list as JSON. `version` stores `MOVES_CACHE_VERSION`. |
+| `machines` | `url TEXT PRIMARY KEY`, `label TEXT NOT NULL` | Mapping from machine resource URL to TM/HM label (e.g., `"TM35"`). |
+| `types` | `type_name TEXT PRIMARY KEY`, `data TEXT NOT NULL` | One row per type. `data` contains the list of Pokémon entries for that type (slug, slot, id, name). |
+| `natures` | `id INTEGER PRIMARY KEY CHECK (id = 1)`, `data TEXT NOT NULL` | Single row containing the full natures dict. |
+| `abilities_index` | `id INTEGER PRIMARY KEY CHECK (id = 1)`, `data TEXT NOT NULL` | Single row containing the abilities index dict. |
+| `abilities` | `slug TEXT PRIMARY KEY`, `data TEXT NOT NULL` | One row per ability. `data` contains the full ability detail (effect, Pokémon list). |
+| `egg_groups` | `slug TEXT PRIMARY KEY`, `data TEXT NOT NULL` | One row per egg group. `data` contains the roster list of Pokémon in that group. |
+| `evolution` | `chain_id INTEGER PRIMARY KEY`, `data TEXT NOT NULL` | One row per evolution chain. `data` contains the flattened list of paths. |
+| `sync_status` | `key TEXT PRIMARY KEY`, `value TEXT` | Tracks which sync sections have been completed (used by `--sync`). |
+
+**Relationships** (implied by the data stored in JSON blobs):
+- A Pokémon (row in `pokemon`) has one evolution chain (referenced by `evolution_chain_id` inside the JSON data).
+- A learnset row (`learnsets`) belongs to one Pokémon variety (`variety_slug`) and one game (`game_slug`).
+- Moves are independent; learnsets reference move names (stored in the JSON).
+- Type rosters (`types`) reference Pokémon slugs.
+
+All JSON data follows the same structure as the original JSON cache. This design keeps the transition simple and maintains backward compatibility with the existing code that expects dict/list shapes.
+
+**Future normalisation:** For more complex queries (e.g., “all Fire‑type Pokémon with base Speed > 100”), the database could be normalised into separate tables for forms, stats, etc. This is a potential future enhancement.
+
+
+
 
 ---
 
@@ -276,7 +280,7 @@ Handles all interactive context selection.
 Called by feature standalone `main()` functions and by pokemain.
 
 ### pkm_cache.py
-Single gateway to all cached data. Feature files never open cache files directly.
+Single gateway to all cached data. Feature files never open cache files directly. Now uses SQLite via `pkm_sqlite.py`. All public functions remain unchanged.
 
 Key functions:
 - `get_move(name) → list | None`
@@ -290,6 +294,7 @@ Key functions:
 - `get_ability(slug) → dict | None`
 - `get_abilities_index() → dict | None`
 - `save_*` counterparts for each
+- `get_index() → dict`  (compact index of all Pokémon, used by fuzzy search)
 
 ### pkm_pokeapi.py
 Fetches data from PokeAPI and translates it to the cache schema.
@@ -302,6 +307,22 @@ Never called directly by feature files — always called by pkm_cache.py or pkm_
 
 ### matchup_calculator.py
 Pure type chart library. No project imports. See section 5.
+
+### pkm_sqlite.py
+Low‑level SQLite database layer. Manages the connection, table creation, and basic CRUD operations. It is used exclusively by `pkm_cache.py`.
+
+- `set_base(base_path)` – sets the directory for the database file.
+- `get_connection()` – context manager that yields a connection (creates tables if needed).
+- `get_pokemon(slug)`, `save_pokemon(...)`, `invalidate_pokemon(...)` – direct database access.
+- Similar functions for moves, learnsets, machines, types, natures, abilities, egg groups, evolution chains, metadata, and sync status.
+- `get_cache_info()`, `check_integrity()` – high‑level database inspection.
+
+### pkm_sync.py
+One‑time full data import script. Fetches all Pokémon, moves, type rosters, natures, abilities, egg groups, and evolution chains from PokeAPI and stores them in the SQLite database. Progress is tracked in the `sync_status` table, allowing resumption if interrupted.
+
+- `sync_all(force=False)` – main entry point. If `force` is True, deletes the existing database and starts fresh; otherwise, resumes from the last completed section.
+
+
 
 ### Core library modules
 
@@ -418,9 +439,9 @@ This is the display contract for all team analysis tables.
 - **Single flat folder.** All .py files and cache/ in the same directory.
 - **No pip dependencies beyond `requests`.** stdlib only for everything else.
 - **No async code.** All operations are synchronous.
-- **No database.** Cache is JSON files only.
+- **SQLite database.** The cache is stored in a single SQLite file (`cache/pokemon.db`).
 - **Python 3.10+ required.** This is the minimum supported version; do not use syntax or stdlib features introduced after 3.10.
-- **Atomic writes.** All cache writes: write to .tmp, then shutil.move().
+- **Atomic writes.** SQLite transactions ensure atomicity; the old JSON write‑tmp‑move pattern is no longer used.
 - **Defensive reads.** All cache reads return None on any error, never raise.
 
 ---
