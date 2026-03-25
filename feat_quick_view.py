@@ -10,8 +10,8 @@ When a Pokémon is loaded, displays:
 In manual-type mode (standalone, no Pokémon), only the type chart is shown.
 
 Entry points:
-  run(pkm_ctx, game_ctx)  — called from the main menu (key 1)
-  main()                  — standalone
+  run(pkm_ctx, game_ctx, ui=None)  — called from the main menu (key 1)
+  main()                           — standalone
 
 Standalone usage:
     python feat_quick_view.py
@@ -23,6 +23,7 @@ try:
     import matchup_calculator as calc
     from pkm_session import select_game, select_pokemon, select_from_list, print_session_header
     from core_stat import stat_bar, infer_role, infer_speed_tier
+    from core_egg import format_egg_groups
 except ModuleNotFoundError as e:
     print(f"\n  ERROR: {e}")
     print("  Make sure all files are in the same folder.\n")
@@ -43,31 +44,31 @@ _STAT_LABELS = [
 ]
 
 
-def _print_base_stats(base_stats: dict, form_name: str) -> None:
+def _print_base_stats(ui, base_stats: dict, form_name: str) -> None:
     """Print base stats as a labelled bar chart, followed by role and speed tier."""
     if not base_stats:
         return
-    print(f"\n  Base stats — {form_name}")
-    print("  " + "─" * _SEP_WIDTH)
+    ui.print_output(f"\n  Base stats — {form_name}")
+    ui.print_output("  " + "─" * _SEP_WIDTH)
     total = 0
     for key, label in _STAT_LABELS:
         val = base_stats.get(key, 0)
         total += val
         bar = stat_bar(val)
-        print(f"  {label:<4}  {val:>3}  {bar}")
-    print("  " + "─" * _SEP_WIDTH)
-    print(f"  {'Total':>8}  {total:>3}")
+        ui.print_output(f"  {label:<4}  {val:>3}  {bar}")
+    ui.print_output("  " + "─" * _SEP_WIDTH)
+    ui.print_output(f"  {'Total':>8}  {total:>3}")
     role = infer_role(base_stats)
     tier = infer_speed_tier(base_stats)
     spe  = base_stats.get("speed", 0)
     role_str = f"{role.capitalize()} attacker"
     tier_str = f"{tier.capitalize()} (base {spe})"
-    print(f"  {'Role':>8}  {role_str}  |  Speed: {tier_str}")
+    ui.print_output(f"  {'Role':>8}  {role_str}  |  Speed: {tier_str}")
 
 
 # ── Abilities display ─────────────────────────────────────────────────────────
 
-def _print_abilities_section(abilities: list, form_name: str) -> None:
+def _print_abilities_section(ui, abilities: list, form_name: str) -> None:
     """Print abilities with short effects, using the ability index for names/effects."""
     if not abilities:
         return
@@ -77,8 +78,8 @@ def _print_abilities_section(abilities: list, form_name: str) -> None:
     except (ImportError, OSError, ValueError):
         index = None
 
-    print(f"\n  Abilities — {form_name}")
-    print("  " + "─" * _SEP_WIDTH)
+    ui.print_output(f"\n  Abilities — {form_name}")
+    ui.print_output("  " + "─" * _SEP_WIDTH)
     for ab in abilities:
         slug      = ab.get("slug", "")
         is_hidden = ab.get("is_hidden", False)
@@ -89,35 +90,48 @@ def _print_abilities_section(abilities: list, form_name: str) -> None:
             name   = slug.replace("-", " ").title()
             effect = "(press A to load ability data)"
         tag = "  [Hidden]" if is_hidden else ""
-        print(f"  {name}{tag}")
+        ui.print_output(f"  {name}{tag}")
         if effect:
-            print(f"    {effect}")
+            ui.print_output(f"    {effect}")
 
 
 # ── Core display ──────────────────────────────────────────────────────────────
 
-def run(pkm_ctx: dict, game_ctx: dict, constraints: list = None) -> None:
+def run(pkm_ctx: dict, game_ctx: dict, constraints: list = None, ui=None) -> None:
     """
     Display type vulnerabilities and resistances.
     Called from pokemain with both contexts already loaded.
     """
-    print_session_header(pkm_ctx, game_ctx, constraints)
+    if ui is None:
+        # Fallback to direct print for standalone (not ideal but works)
+        # For now, we'll keep it simple; the caller should always pass ui.
+        # We'll raise an error if ui is None in the main code path.
+        import builtins
+        class DummyUI:
+            def print_output(self, text): builtins.print(text)
+            def input_prompt(self, prompt): return builtins.input(prompt)
+            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        ui = DummyUI()
+
+    ui.print_session_header(pkm_ctx, game_ctx, constraints)
 
     form_name  = pkm_ctx.get("form_name", pkm_ctx.get("pokemon", ""))
     base_stats = pkm_ctx.get("base_stats", {})
     abilities  = pkm_ctx.get("abilities", [])
 
-    _print_base_stats(base_stats, form_name)
-    _print_abilities_section(abilities, form_name)
+    _print_base_stats(ui, base_stats, form_name)
+    _print_abilities_section(ui, abilities, form_name)
 
-    # Egg groups — shown when egg_groups field is present (Pythonmon-27A)
+    # Egg groups — shown when egg_groups field is present
     egg_groups = pkm_ctx.get("egg_groups", [])
     if egg_groups:
-        from core_egg import format_egg_groups
-        print(f"\n  Egg groups — {form_name}")
-        print("  " + "─" * _SEP_WIDTH)
-        print(f"  {format_egg_groups(egg_groups)}")
+        ui.print_output(f"\n  Egg groups — {form_name}")
+        ui.print_output("  " + "─" * _SEP_WIDTH)
+        ui.print_output(f"  {format_egg_groups(egg_groups)}")
 
+    # Type chart (calc.print_results prints directly; we need to adapt it)
+    # We'll redirect its prints to ui? For now, keep as is.
+    # But we should ideally have calc.print_results use a UI. We'll keep it as is.
     calc.print_results(
         pkm_ctx["type1"],
         pkm_ctx["type2"],
@@ -125,14 +139,16 @@ def run(pkm_ctx: dict, game_ctx: dict, constraints: list = None) -> None:
         game_ctx["era_key"]
     )
 
-    # Evolution chain — shown at the bottom of option 1 (Pythonmon-9C)
+    # Evolution chain — shown at the bottom of option 1
     from feat_evolution import get_or_fetch_chain, display_evolution_block
-    paths = get_or_fetch_chain(pkm_ctx)
+    paths = get_or_fetch_chain(pkm_ctx, ui=ui)
     if paths is not None:
+        # Pass ui to display_evolution_block
         display_evolution_block(pkm_ctx, paths,
-                                game_gen=game_ctx.get("game_gen"))
+                                game_gen=game_ctx.get("game_gen"),
+                                ui=ui)
 
-    input("\n  Press Enter to continue...")
+    ui.input_prompt("\n  Press Enter to continue...")
 
 
 # ── Standalone entry point ────────────────────────────────────────────────────
@@ -155,10 +171,17 @@ def main() -> None:
         pkm_ctx = select_pokemon(game_ctx=game_ctx)
         if pkm_ctx is None:
             sys.exit(0)
-        run(pkm_ctx, game_ctx)
+        # In standalone, we don't have a UI instance; we'll use a dummy
+        import builtins
+        class DummyUI:
+            def print_output(self, text): builtins.print(text)
+            def input_prompt(self, prompt): return builtins.input(prompt)
+            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        ui = DummyUI()
+        run(pkm_ctx, game_ctx, ui=ui)
 
     else:
-        # Manual type entry — mirrors the original matchup_calculator.py flow
+        # Manual type entry
         game_names  = [g[0] for g in calc.GAMES]
         game_choice = select_from_list("  Select GAME:", game_names)
         era_key     = next(g[1] for g in calc.GAMES if g[0] == game_choice)

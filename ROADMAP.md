@@ -101,7 +101,7 @@ The following steps represent a phased approach to evolving the toolkit into ver
 
 ### 4. Terminal UI (TUI)
 
-| **4.1. UI abstraction** | Refactor `pokemain.py` to use an abstract UI class. Replace all direct `print()` and `input()` calls with UI methods. Move interactive selection functions (`select_pokemon`, `select_game`) into the UI layer. Keep the current CLI as the first implementation. | 🟡 Medium | 🟡 Medium | Separates UI concerns from application logic, enabling alternative frontends (TUI, GUI). The foundation for all future UI work. |
+| **4.1. UI abstraction** | Refactor `pokemain.py` to use an abstract UI class. Replace all direct `print()` and `input()` calls with UI methods. Move interactive selection functions (`select_pokemon`, `select_game`) into the UI layer. Keep the current CLI as the first implementation. | 🟡 Medium | 🟡 Medium | Separates UI concerns from application logic, enabling alternative frontends (TUI, GUI). The foundation for all future UI work. | ✅ Complete (see §112) 
 | **4.2. Terminal UI (TUI)** | Build a persistent split‑pane interface (e.g., using `textual` or `curses`) that shows context at all times. Replace the menu loop with key‑driven navigation. | 🔴 High | 🔴 High | Drastically improves UX: no screen clearing, all context visible, faster workflows. Keeps CLI as fallback. |
 
 

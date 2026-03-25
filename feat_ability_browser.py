@@ -23,7 +23,7 @@ Pokémon list) are fetched on demand and cached in cache/abilities/<slug>.json.
 Menu key: A  (always shown)
 
 Entry points:
-  run(game_ctx=None, pkm_ctx=None)   called from pokemain
+  run(game_ctx=None, pkm_ctx=None, ui=None)   called from pokemain
   main()                             standalone
 """
 
@@ -85,27 +85,27 @@ def _ability_display_name(slug: str, index: dict) -> str:
     return slug.replace("-", " ").title()
 
 
-def _print_ability_row(name: str, gen: int, short_effect: str) -> None:
+def _print_ability_row(ui, name: str, gen: int, short_effect: str) -> None:
     """Print one row of the ability list table."""
     gen_s    = _gen_label(gen)
     wrapped  = _wrap(short_effect, _C_EFFECT)
     first    = wrapped[0]
-    print(f"  {name:<{_C_NAME}}{_GAP}{gen_s:<{_C_GEN}}{_GAP}{first}")
+    ui.print_output(f"  {name:<{_C_NAME}}{_GAP}{gen_s:<{_C_GEN}}{_GAP}{first}")
     for extra in wrapped[1:]:
-        print("  " + " " * _C_NAME + _GAP + " " * _C_GEN + _GAP + extra)
+        ui.print_output("  " + " " * _C_NAME + _GAP + " " * _C_GEN + _GAP + extra)
 
 
-def _print_ability_table_header() -> None:
+def _print_ability_table_header(ui) -> None:
     header = (f"  {'Ability':<{_C_NAME}}{_GAP}{'Gen':<{_C_GEN}}"
               f"{_GAP}{'Effect (short)'}")
     sep    = "  " + "─" * (len(header) - 2)
-    print(header)
-    print(sep)
+    ui.print_output(header)
+    ui.print_output(sep)
 
 
 # ── Ability list (all) ────────────────────────────────────────────────────────
 
-def _print_all_abilities(index: dict) -> None:
+def _print_all_abilities(ui, index: dict) -> None:
     """Print all abilities grouped by generation."""
     # Group by gen
     groups: dict[int, list] = {}
@@ -115,10 +115,10 @@ def _print_all_abilities(index: dict) -> None:
 
     for gen in sorted(groups):
         entries = sorted(groups[gen], key=lambda r: r[0].lower())
-        print(f"\n  ── Generation {gen} " + "─" * 48)
-        _print_ability_table_header()
+        ui.print_output(f"\n  ── Generation {gen} " + "─" * 48)
+        _print_ability_table_header(ui)
         for name, g, effect, _slug in entries:
-            _print_ability_row(name, g, effect)
+            _print_ability_row(ui, name, g, effect)
 
 
 # ── Ability detail (drill-in) ─────────────────────────────────────────────────
@@ -144,36 +144,36 @@ def _fetch_ability_detail(slug: str) -> dict | None:
         return None
 
 
-def _print_ability_detail(slug: str, index: dict) -> None:
+def _print_ability_detail(ui, slug: str, index: dict) -> None:
     """Fetch and print full details for one ability."""
     entry = index.get(slug)
     if entry is None:
-        print(f"\n  Ability '{slug}' not found in index.")
+        ui.print_output(f"\n  Ability '{slug}' not found in index.")
         return
 
     name    = entry["name"]
     gen     = entry.get("gen", 0)
     s_eff   = entry.get("short_effect", "")
 
-    print(f"\n  {'─'*68}")
-    print(f"  {name}  (Gen {gen})")
-    print(f"  {'─'*68}")
-    print(f"\n  Short effect:  {s_eff}")
+    ui.print_output(f"\n  {'─'*68}")
+    ui.print_output(f"  {name}  (Gen {gen})")
+    ui.print_output(f"  {'─'*68}")
+    ui.print_output(f"\n  Short effect:  {s_eff}")
 
     detail = _fetch_ability_detail(slug)
     if detail:
         full = detail.get("effect", "")
         if full and full != s_eff:
-            print(f"\n  Full effect:")
+            ui.print_output(f"\n  Full effect:")
             for line in _wrap(full, 68, indent="    "):
-                print(f"    {line}")
+                ui.print_output(f"    {line}")
 
         pokemon_list = detail.get("pokemon", [])
         if pokemon_list:
             # Split into normal and hidden ability holders
             normal = [p for p in pokemon_list if not p.get("is_hidden")]
             hidden = [p for p in pokemon_list if p.get("is_hidden")]
-            print(f"\n  Pokémon with this ability ({len(normal)} normal"
+            ui.print_output(f"\n  Pokémon with this ability ({len(normal)} normal"
                   f"{f', {len(hidden)} hidden' if hidden else ''}):")
             names_normal = sorted(p["name"] for p in normal)
             names_hidden = sorted(p["name"] for p in hidden)
@@ -183,50 +183,50 @@ def _print_ability_detail(slug: str, index: dict) -> None:
                     continue
                 is_hidden_chunk = chunk is names_hidden
                 if is_hidden_chunk:
-                    print()
-                    print("  Hidden:")
+                    ui.print_output("")
+                    ui.print_output("  Hidden:")
                 label = "    "
                 for i in range(0, len(chunk), 3):
                     row = "  ".join(f"{n:<22}" for n in chunk[i:i+3])
-                    print(f"  {label}{row}")
-    print()
+                    ui.print_output(f"  {label}{row}")
+    ui.print_output("")
 
 
 # ── Pokémon abilities display ─────────────────────────────────────────────────
 
-def _print_pkm_abilities(pkm_ctx: dict, index: dict) -> None:
+def _print_pkm_abilities(ui, pkm_ctx: dict, index: dict) -> None:
     """Display the abilities of the currently loaded Pokémon."""
     abilities = pkm_ctx.get("abilities", [])
     form_name = pkm_ctx.get("form_name", pkm_ctx.get("pokemon", "?"))
 
     if not abilities:
-        print(f"\n  No ability data for {form_name}.")
-        print("  Press R in the main menu to refresh Pokémon data.")
+        ui.print_output(f"\n  No ability data for {form_name}.")
+        ui.print_output("  Press R in the main menu to refresh Pokémon data.")
         return
 
-    print(f"\n  Abilities for {form_name}:")
-    print("  " + "─" * 60)
+    ui.print_output(f"\n  Abilities for {form_name}:")
+    ui.print_output("  " + "─" * 60)
     for ab in abilities:
         slug      = ab.get("slug", "")
         is_hidden = ab.get("is_hidden", False)
         name      = _ability_display_name(slug, index)
         tag       = "  [Hidden Ability]" if is_hidden else ""
         short_eff = index.get(slug, {}).get("short_effect", "(effect unknown)")
-        print(f"\n  {name}{tag}")
+        ui.print_output(f"\n  {name}{tag}")
         for line in _wrap(short_eff, 64, indent="    "):
-            print(f"    {line}")
-    print()
+            ui.print_output(f"    {line}")
+    ui.print_output("")
 
 
 # ── Search / filter ───────────────────────────────────────────────────────────
 
-def _search_and_drill(index: dict) -> None:
+def _search_and_drill(ui, index: dict) -> None:
     """
     Prompt user for an ability name, find matches, and drill into the detail.
     Loops until user enters nothing.
     """
     while True:
-        query = input("\n  Search ability (Enter to skip): ").strip().lower()
+        query = ui.input_prompt("\n  Search ability (Enter to skip): ").strip().lower()
         if not query:
             return
 
@@ -237,55 +237,65 @@ def _search_and_drill(index: dict) -> None:
         ]
 
         if not matches:
-            print(f"  No ability found matching '{query}'.")
+            ui.print_output(f"  No ability found matching '{query}'.")
             continue
 
         if len(matches) == 1:
-            _print_ability_detail(matches[0][0], index)
+            _print_ability_detail(ui, matches[0][0], index)
         else:
             matches.sort(key=lambda r: r[1]["name"].lower())
-            print(f"\n  {len(matches)} abilities match '{query}':")
+            ui.print_output(f"\n  {len(matches)} abilities match '{query}':")
             for i, (slug, entry) in enumerate(matches, 1):
-                print(f"  {i:3d}. {entry['name']}")
+                ui.print_output(f"  {i:3d}. {entry['name']}")
             try:
-                idx = int(input("  Enter number to drill in (0 to cancel): ").strip())
+                idx = int(ui.input_prompt("  Enter number to drill in (0 to cancel): ").strip())
                 if 1 <= idx <= len(matches):
-                    _print_ability_detail(matches[idx - 1][0], index)
+                    _print_ability_detail(ui, matches[idx - 1][0], index)
             except ValueError:
                 pass
 
 
 # ── Main entry point ─────────────────────────────────────────────────────────
 
-def run(game_ctx=None, pkm_ctx=None) -> None:
+def run(game_ctx=None, pkm_ctx=None, ui=None) -> None:
     """
     Ability browser entry point.  Always accessible; warns for Gen 1/2 games.
     """
+    if ui is None:
+        # Fallback dummy UI for standalone
+        import builtins
+        class DummyUI:
+            def print_output(self, text): builtins.print(text)
+            def print_progress(self, text, end="\n", flush=False): builtins.print(text, end=end, flush=flush)
+            def input_prompt(self, prompt): return builtins.input(prompt)
+            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        ui = DummyUI()
+
     # Gen 1/2 warning
     if game_ctx is not None:
         game_gen  = game_ctx.get("game_gen", 1)
         game_name = game_ctx.get("game", f"Gen {game_gen}")
         if game_gen < _ABILITY_MIN_GEN:
-            print(f"\n  ⚠  Abilities did not exist in {game_name}.")
-            print(    "     They were introduced in Generation 3 (Ruby / Sapphire).")
-            print(    "     The browser below is shown for reference only.\n")
+            ui.print_output(f"\n  ⚠  Abilities did not exist in {game_name}.")
+            ui.print_output(    "     They were introduced in Generation 3 (Ruby / Sapphire).")
+            ui.print_output(    "     The browser below is shown for reference only.\n")
 
     # Load ability index
     index = cache.get_abilities_index_or_fetch()
     if index is None:
-        print("\n  Could not load ability data (network unavailable and no cache).")
+        ui.print_output("\n  Could not load ability data (network unavailable and no cache).")
         return
 
     # If Pokémon loaded: show its abilities first
     if pkm_ctx is not None:
-        _print_pkm_abilities(pkm_ctx, index)
+        _print_pkm_abilities(ui, pkm_ctx, index)
 
     # Full list
-    print("  All abilities by generation  (search below to drill in)")
-    _print_all_abilities(index)
+    ui.print_output("  All abilities by generation  (search below to drill in)")
+    _print_all_abilities(ui, index)
 
     # Search / drill-in
-    _search_and_drill(index)
+    _search_and_drill(ui, index)
 
 
 # ── Standalone entry point ────────────────────────────────────────────────────
@@ -347,7 +357,14 @@ def _run_tests(with_cache: bool = False) -> None:
     }
     buf = _io.StringIO()
     _sys.stdout = buf
-    _print_pkm_abilities(fake_pkm, fake_index)
+    # Create a dummy UI that writes to buf and matches the real signature
+    class DummyUI:
+        def print_output(self, text): _sys.stdout.write(text + "\n")
+        def print_progress(self, text, end="\n", flush=False): _sys.stdout.write(text + "\n")
+        def input_prompt(self, prompt): return ""
+        def confirm(self, prompt): return False
+    dummy = DummyUI()
+    _print_pkm_abilities(dummy, fake_pkm, fake_index)
     _sys.stdout = _sys.__stdout__
     out = buf.getvalue()
 
@@ -363,7 +380,7 @@ def _run_tests(with_cache: bool = False) -> None:
     # Empty abilities list
     buf2 = _io.StringIO()
     _sys.stdout = buf2
-    _print_pkm_abilities({"form_name": "Lapras", "abilities": []}, fake_index)
+    _print_pkm_abilities(dummy, {"form_name": "Lapras", "abilities": []}, fake_index)
     _sys.stdout = _sys.__stdout__
     out2 = buf2.getvalue()
     check("_print_pkm_abilities: empty abilities shows fallback message",

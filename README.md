@@ -56,7 +56,6 @@ On Windows/Linux, it lives next to the executable.
   N   Nature browser
   A   Ability browser
   C   Stat comparison       (needs Pokemon + game)
-  L   Learnset comparison   (needs Pokemon + game)
   E   Egg group browser     (needs Pokemon)
   ─────────────────────────────────────────────
   T   Manage team
@@ -250,26 +249,6 @@ are shown with drill-in available.
 
 ---
 
-### L — Learnset comparison
-
-**Needs:** Pokemon + game
-
-Compares the learnable moves of two Pokémon in the same game. After pressing L,
-you are prompted to pick a second Pokémon. The screen shows:
-
-- **Compact stat header** — side-by-side base stats for quick context
-- **Only [Pokémon A]** — moves learnable by A but not B
-- **Only [Pokémon B]** — moves learnable by B but not A
-- **Shared by both** — moves learnable by both
-
-Each section is sorted alphabetically and shows type, category, power, accuracy,
-and PP (era-correct). All learn methods (level-up, TM/HM, tutor, egg) are
-merged into the flat pool — the comparison is about *what* is learnable, not *how*.
-
-Moves not yet in the local move cache are shown with `?` stats — run
-MOVE → F to fill missing move data if needed.
-
----
 
 ### T — Team management
 
@@ -432,6 +411,9 @@ Up to 6 candidates are shown, ranked by a composite score:
   total      =  intrinsic + lookahead
 ```
 
+**Evolution filtering:**  
+When multiple stages of a pure level‑up evolution chain (e.g., Dratini → Dragonair → Dragonite) are all valid candidates, only the highest stage is shown. This avoids cluttering the suggestions with intermediate forms that would eventually evolve into the same final Pokémon. If the evolution requires a trade, an item, or a special condition (e.g., Seadra → Kingdra), both forms are kept because they represent distinct acquisition paths or type/role changes.
+
 **Notes:**
 - A note is shown when the team has fewer than 3 members (suggestions improve with more context).
 - Candidates are drawn from cached type rosters. Missing rosters are fetched automatically
@@ -544,6 +526,8 @@ Every module with testable logic has an `--autotest` flag (offline unless noted)
 | `python pkm_pokeapi.py --autotest` | 14 — versioned entry builder, mapping tables, fetch_pokemon offline, egg_groups, evolution_chain_id, check_connectivity |
 | `python pkm_sqlite.py --autotest` | 0 (no public interface; tested via pkm_cache) |
 | `python pkm_sync.py --autotest` | 0 (sync script, not unit‑tested) |
+| `ui_base.py --autotest` | 0 |
+| `ui_cli.py --autotest`  | 0 |
 
 Run all suites at once:
 ```
@@ -590,6 +574,8 @@ python run_tests.py --quiet   # summary table only
 | `feat_opponent.py` | Team coverage vs in‑game opponents (key X) |
 | `run_tests.py` | Test runner for all suites |
 | `build.py` | Build script — produces a single-file executable via PyInstaller |
+| `ui_base.py` | Abstract base class for UI implementations |
+| `ui_cli.py`  | CLI implementation of the UI interface |
 
 **Obsolete files** (safe to delete):
 `feat_type_matchup.py` (renamed to `feat_quick_view.py` in §85),

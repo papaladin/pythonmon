@@ -6,9 +6,8 @@ Lists all Pokémon that have a given type (or type combination).
 Data comes from PokeAPI /type/{name}, cached in SQLite database.
 
 Entry points:
-  run(game_ctx=None)   called from pokemain (game_ctx unused but accepted
-                       for uniform signature)
-  main()               standalone
+  run(game_ctx=None, ui=None)   called from pokemain
+  main()                         standalone
 
 Display:
   - Single type   : all Pokémon with that type (either slot)
@@ -19,6 +18,7 @@ Display:
                     shown as "?" for alternate forms (Mega, Gigantamax, regional)
                     whose IDs are > 10000 in PokeAPI
   - Sorted        : generation ascending, then name alphabetically
+  - Filtered      : only Pokémon that existed in the selected game (if game_ctx provided)
 """
 
 import sys
@@ -55,6 +55,29 @@ def _id_to_gen(pokemon_id: int) -> int | None:
     return None
 
 
+def _species_gen_from_slug(slug: str) -> int | None:
+    """
+    Determine the generation a species (or form) was introduced.
+    Tries to use the pokemon cache if available, otherwise falls back to
+    _id_to_gen on the base species ID (extracted from the slug).
+    """
+    # Try direct cache lookup
+    pkm_data = cache.get_pokemon(slug)
+    if pkm_data:
+        return pkm_data.get("species_gen")
+
+    # If slug contains a hyphen, try the base species (everything before last hyphen)
+    if "-" in slug:
+        base_slug = slug[:slug.rfind("-")]
+        pkm_data = cache.get_pokemon(base_slug)
+        if pkm_data:
+            return pkm_data.get("species_gen")
+
+    # Fallback: if we have an ID in the entry we can use, but we don't have it here.
+    # This function is called later with the entry's ID; we'll just return None.
+    return None
+
+
 # ── Name formatting ───────────────────────────────────────────────────────────
 
 def _slug_to_title(slug: str) -> str:
@@ -87,7 +110,7 @@ def _parse_type(raw: str) -> str | None:
 
 # ── Roster building ───────────────────────────────────────────────────────────
 
-def _build_rows(type1: str, type2: str | None) -> list:
+def _build_rows(type1: str, type2: str | None, game_gen: int | None = None) -> list:
     """
     Fetch and merge roster(s), returning a list of display row dicts:
       {name, type1, type2, gen, sort_gen}
@@ -96,6 +119,10 @@ def _build_rows(type1: str, type2: str | None) -> list:
     slot information is used to assign type1/type2 in the display:
       the queried primary type is shown first; the secondary fills the second
       column regardless of its slot in the API.
+
+    If game_gen is provided, Pokémon whose species generation > game_gen are
+    filtered out. Alternate forms without a clear generation are kept (assumed
+    available) to avoid overly aggressive filtering.
     """
     roster1 = cache.get_type_roster_or_fetch(type1)
     if roster1 is None:
@@ -119,7 +146,20 @@ def _build_rows(type1: str, type2: str | None) -> list:
     for entry in combined:
         slug    = entry["slug"]
         id_     = entry["id"]
-        gen     = _id_to_gen(id_)
+        # Determine generation for this entry
+        if id_ is not None and id_ <= 1025:
+            gen = _id_to_gen(id_)
+        else:
+            # Try to get generation from cache (species or base species)
+            gen = _species_gen_from_slug(slug)
+            if gen is None:
+                # Keep entry but treat as unknown generation (show as "?")
+                gen = None
+
+        # Filter by game generation if specified
+        if game_gen is not None and gen is not None and gen > game_gen:
+            continue
+
         # Use the resolved display name if present; fall back to slug-to-title
         name    = entry.get("name") or _slug_to_title(slug)
 
@@ -161,67 +201,81 @@ _COL_GEN  =  4
 _TABLE_W  = _COL_NAME + _COL_T1 + _COL_T2 + _COL_GEN + 3  # separators
 
 
-def _print_header(type1: str, type2: str | None, n: int) -> None:
+def _print_header(ui, type1: str, type2: str | None, n: int) -> None:
     title = f"{type1} / {type2}" if type2 else type1
-    print(f"\n  {title} Pokémon  ({n} found)")
-    print("  " + "─" * _TABLE_W)
-    print(f"  {'Name':<{_COL_NAME}}{'Type 1':<{_COL_T1}}{'Type 2':<{_COL_T2}}{'Gen':>{_COL_GEN}}")
-    print("  " + "─" * _TABLE_W)
+    ui.print_output(f"\n  {title} Pokémon  ({n} found)")
+    ui.print_output("  " + "─" * _TABLE_W)
+    ui.print_output(f"  {'Name':<{_COL_NAME}}{'Type 1':<{_COL_T1}}{'Type 2':<{_COL_T2}}{'Gen':>{_COL_GEN}}")
+    ui.print_output("  " + "─" * _TABLE_W)
 
 
-def _print_rows(rows: list) -> None:
+def _print_rows(ui, rows: list) -> None:
     for r in rows:
         gen_str = str(r["gen"]) if r["gen"] is not None else "?"
-        print(f"  {r['name']:<{_COL_NAME}}"
-              f"{r['col_t1']:<{_COL_T1}}"
-              f"{r['col_t2']:<{_COL_T2}}"
-              f"{gen_str:>{_COL_GEN}}")
-    print()
+        ui.print_output(f"  {r['name']:<{_COL_NAME}}"
+                        f"{r['col_t1']:<{_COL_T1}}"
+                        f"{r['col_t2']:<{_COL_T2}}"
+                        f"{gen_str:>{_COL_GEN}}")
+    ui.print_output("")
 
 
 # ── Main feature entry point ──────────────────────────────────────────────────
 
-def run(game_ctx=None, pkm_ctx=None) -> None:
+def run(game_ctx=None, ui=None) -> None:
     """
     Interactive type browser.  Prompts for one or two types, then displays
     the matching Pokémon table.  Loops until the user chooses to exit.
+
+    If game_ctx is provided, the list is filtered to only include Pokémon that
+    existed in that game (by generation).
     """
+    if ui is None:
+        # Fallback dummy UI for standalone
+        import builtins
+        class DummyUI:
+            def print_output(self, text): builtins.print(text)
+            def input_prompt(self, prompt): return builtins.input(prompt)
+            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        ui = DummyUI()
+
+    game_gen = game_ctx.get("game_gen") if game_ctx else None
+
     valid = _valid_types()
     valid_lower = {t.lower(): t for t in valid}
 
     while True:
-        print(f"\n  Types: {', '.join(valid)}")
-        raw1 = input("\n  Enter type (or Q to quit): ").strip()
+        ui.print_output(f"\n  Types: {', '.join(valid)}")
+        raw1 = ui.input_prompt("\n  Enter type (or Q to quit): ")
         if raw1.lower() == "q":
             return
 
         type1 = valid_lower.get(raw1.lower())
         if type1 is None:
-            print(f"  Unknown type '{raw1}'. Please try again.")
+            ui.print_output(f"  Unknown type '{raw1}'. Please try again.")
             continue
 
-        raw2 = input(f"  Enter second type (or Enter for {type1} only): ").strip()
+        raw2 = ui.input_prompt(f"  Enter second type (or Enter for {type1} only): ")
         if raw2 == "":
             type2 = None
         else:
             type2 = valid_lower.get(raw2.lower())
             if type2 is None:
-                print(f"  Unknown type '{raw2}'. Please try again.")
+                ui.print_output(f"  Unknown type '{raw2}'. Please try again.")
                 continue
             if type2 == type1:
-                print("  Both types are the same — showing single-type results.")
+                ui.print_output("  Both types are the same — showing single-type results.")
                 type2 = None
 
-        rows = _build_rows(type1, type2)
+        rows = _build_rows(type1, type2, game_gen)
         if not rows:
             label = f"{type1}/{type2}" if type2 else type1
-            print(f"\n  No Pokémon found for {label} "
-                  f"(or data could not be fetched).")
+            ui.print_output(f"\n  No Pokémon found for {label} "
+                            f"(or data could not be fetched).")
         else:
-            _print_header(type1, type2, len(rows))
-            _print_rows(rows)
+            _print_header(ui, type1, type2, len(rows))
+            _print_rows(ui, rows)
 
-        again = input("  Search again? (y/n): ").strip().lower()
+        again = ui.input_prompt("  Search again? (y/n): ").strip().lower()
         if again != "y":
             return
 

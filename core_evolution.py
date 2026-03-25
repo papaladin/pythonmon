@@ -6,6 +6,8 @@ Functions:
   parse_trigger(details) → str
   flatten_chain(node, max_depth=20) → list[list[dict]]
   filter_paths_for_game(paths, game_gen, species_gen_map) → list[list[dict]]
+  trigger_is_pure_level_up(trigger) → bool
+  is_pure_level_up_chain(paths, target_slug) → bool
 """
 
 import sys
@@ -137,26 +139,57 @@ def filter_paths_for_game(paths: list, game_gen: int,
     return result
 
 
+# ── New helpers for level‑up filtering ────────────────────────────────────────
+
+_NON_LEVEL_KEYWORDS = frozenset([
+    "Trade", "Use", "Friendship", "Happiness", "Item", "Move", "Time", "Location"
+])
+
+def trigger_is_pure_level_up(trigger: str) -> bool:
+    """Return True if the trigger string represents a pure level‑up evolution."""
+    if not trigger:
+        return True  # stage 0 (base) is considered pure by default
+    if "Level" not in trigger:
+        return False
+    low = trigger.lower()
+    for kw in _NON_LEVEL_KEYWORDS:
+        if kw.lower() in low:
+            return False
+    return True
+
+def is_pure_level_up_chain(paths: list, target_slug: str) -> bool:
+    """
+    Check if the evolution to target_slug can happen purely by level‑up.
+    paths is the list of flattened chains (from flatten_chain).
+    Returns True if all stages between base and target have triggers that are pure level‑up.
+    """
+    for path in paths:
+        for i, stage in enumerate(path):
+            if stage["slug"] == target_slug:
+                # Check all triggers from index 1 to i (stage 0 has no trigger)
+                if all(trigger_is_pure_level_up(path[j]["trigger"]) for j in range(1, i+1)):
+                    return True
+    return False
+
+
 # ── Self‑tests ────────────────────────────────────────────────────────────────
 
 def _run_tests():
     errors = []
     total = 0
-    def ok(label):
+    def ok(label, cond, msg=""):
         nonlocal total
         total += 1
-        print(f"  [OK]   {label}")
-    def fail(label, msg=""):
-        nonlocal total
-        total += 1
-        print(f"  [FAIL] {label}" + (f": {msg}" if msg else ""))
-        errors.append(label)
+        if cond:
+            print(f"  [OK]   {label}")
+        else:
+            print(f"  [FAIL] {label}" + (f": {msg}" if msg else ""))
+            errors.append(label)
 
     print("\n  core_evolution.py — self-test\n")
 
-    # ── parse_trigger tests ──────────────────────────────────────────────────
+    # ── parse_trigger tests (unchanged) ──────────────────────────────────────
     def _d(trigger_name, **kwargs):
-        """Build a minimal evolution_details list for testing."""
         d = {"trigger": {"name": trigger_name}}
         if "min_level" in kwargs:
             d["min_level"] = kwargs["min_level"]
@@ -173,138 +206,71 @@ def _run_tests():
         return [d]
 
     r = parse_trigger(_d("level-up", min_level=16))
-    if r == "Level 16":
-        ok("parse_trigger: level-up + min_level → Level N")
-    else:
-        fail("parse_trigger level min_level", r)
-
+    ok("parse_trigger: level-up + min_level → Level 16", r == "Level 16")
     r = parse_trigger(_d("level-up", min_happiness=160, time_of_day="day"))
-    if r == "High Friendship (day)":
-        ok("parse_trigger: level-up + min_happiness + day → High Friendship (day)")
-    else:
-        fail("parse_trigger happiness day", r)
-
+    ok("parse_trigger: level-up + min_happiness + day → High Friendship (day)", r == "High Friendship (day)")
     r = parse_trigger(_d("level-up", min_happiness=160, time_of_day="night"))
-    if r == "High Friendship (night)":
-        ok("parse_trigger: level-up + min_happiness + night → High Friendship (night)")
-    else:
-        fail("parse_trigger happiness night", r)
-
+    ok("parse_trigger: level-up + min_happiness + night → High Friendship (night)", r == "High Friendship (night)")
     r = parse_trigger(_d("level-up", min_happiness=220))
-    if r == "High Friendship":
-        ok("parse_trigger: level-up + min_happiness (no time) → High Friendship")
-    else:
-        fail("parse_trigger level happiness", r)
-
+    ok("parse_trigger: level-up + min_happiness (no time) → High Friendship", r == "High Friendship")
     r = parse_trigger(_d("level-up", known_move="solar-beam"))
-    if r == "Level up knowing Solar Beam":
-        ok("parse_trigger: level-up + known_move → Level up knowing <Move>")
-    else:
-        fail("parse_trigger level known_move", r)
-
+    ok("parse_trigger: level-up + known_move → Level up knowing Solar Beam", r == "Level up knowing Solar Beam")
     r = parse_trigger(_d("level-up", time_of_day="day"))
-    if r == "Level up (day)":
-        ok("parse_trigger: level-up + day → Level up (day)")
-    else:
-        fail("parse_trigger level day", r)
-
+    ok("parse_trigger: level-up + day → Level up (day)", r == "Level up (day)")
     r = parse_trigger(_d("level-up", time_of_day="night"))
-    if r == "Level up (night)":
-        ok("parse_trigger: level-up + night → Level up (night)")
-    else:
-        fail("parse_trigger level night", r)
-
+    ok("parse_trigger: level-up + night → Level up (night)", r == "Level up (night)")
     r = parse_trigger(_d("level-up"))
-    if r == "Level up":
-        ok("parse_trigger: bare level-up → Level up")
-    else:
-        fail("parse_trigger bare level-up", r)
-
+    ok("parse_trigger: bare level-up → Level up", r == "Level up")
     r = parse_trigger(_d("use-item", item="fire-stone"))
-    if r == "Use Fire Stone":
-        ok("parse_trigger: use-item → Use <Item>")
-    else:
-        fail("parse_trigger use-item", r)
-
+    ok("parse_trigger: use-item → Use Fire Stone", r == "Use Fire Stone")
     r = parse_trigger(_d("trade"))
-    if r == "Trade":
-        ok("parse_trigger: trade (no item) → Trade")
-    else:
-        fail("parse_trigger trade bare", r)
-
+    ok("parse_trigger: trade (no item) → Trade", r == "Trade")
     r = parse_trigger(_d("trade", held_item="metal-coat"))
-    if r == "Trade holding Metal Coat":
-        ok("parse_trigger: trade + held_item → Trade holding <Item>")
-    else:
-        fail("parse_trigger trade held_item", r)
-
+    ok("parse_trigger: trade + held_item → Trade holding Metal Coat", r == "Trade holding Metal Coat")
     r = parse_trigger(_d("shed"))
-    if r == "Level 20 (empty slot)":
-        ok("parse_trigger: shed → Level 20 (empty slot)")
-    else:
-        fail("parse_trigger shed", r)
-
+    ok("parse_trigger: shed → Level 20 (empty slot)", r == "Level 20 (empty slot)")
     r = parse_trigger([])
-    if r == "":
-        ok("parse_trigger: empty list → empty string (stage 0)")
-    else:
-        fail("parse_trigger empty", repr(r))
-
+    ok("parse_trigger: empty list → empty string (stage 0)", r == "")
     r = parse_trigger(_d("other"))
-    if r == "Special condition":
-        ok("parse_trigger: unknown trigger → Special condition")
-    else:
-        fail("parse_trigger unknown", r)
+    ok("parse_trigger: unknown trigger → Special condition", r == "Special condition")
 
-    # ── flatten_chain tests ──────────────────────────────────────────────────
+    # ── flatten_chain tests (unchanged) ──────────────────────────────────────
     def _node(slug, details=None, children=None):
         return {
             "species": {"name": slug},
             "evolution_details": details or [],
             "evolves_to": children or [],
         }
-
-    # Linear 3-stage chain: Bulbasaur → Ivysaur → Venusaur
     linear = _node("bulbasaur", children=[
         _node("ivysaur", details=_d("level-up", min_level=16), children=[
             _node("venusaur", details=_d("level-up", min_level=32))
         ])
     ])
     paths = flatten_chain(linear)
-    if (len(paths) == 1
-            and len(paths[0]) == 3
-            and paths[0][0]["slug"] == "bulbasaur"
-            and paths[0][1]["slug"] == "ivysaur"
-            and paths[0][1]["trigger"] == "Level 16"
-            and paths[0][2]["slug"] == "venusaur"
-            and paths[0][2]["trigger"] == "Level 32"):
-        ok("flatten_chain: linear 3-stage → 1 path, 3 stages, triggers correct")
-    else:
-        fail("flatten_chain linear", str([(s["slug"], s["trigger"]) for s in paths[0]] if paths else "no paths"))
+    ok("flatten_chain: linear 3-stage → 1 path, 3 stages, triggers correct",
+       len(paths) == 1 and len(paths[0]) == 3
+       and paths[0][0]["slug"] == "bulbasaur"
+       and paths[0][1]["slug"] == "ivysaur"
+       and paths[0][1]["trigger"] == "Level 16"
+       and paths[0][2]["slug"] == "venusaur"
+       and paths[0][2]["trigger"] == "Level 32")
 
-    # 2-branch chain: Slowpoke → Slowbro | Slowking
     branching = _node("slowpoke", children=[
         _node("slowbro", details=_d("level-up", min_level=37)),
         _node("slowking", details=_d("trade", item="kings-rock")),
     ])
     paths = flatten_chain(branching)
     slugs_per_path = [[s["slug"] for s in p] for p in paths]
-    if (len(paths) == 2
-            and ["slowpoke", "slowbro"] in slugs_per_path
-            and ["slowpoke", "slowking"] in slugs_per_path):
-        ok("flatten_chain: 2-branch → 2 paths, correct slugs")
-    else:
-        fail("flatten_chain branching", str(slugs_per_path))
+    ok("flatten_chain: 2-branch → 2 paths, correct slugs",
+       len(paths) == 2
+       and ["slowpoke", "slowbro"] in slugs_per_path
+       and ["slowpoke", "slowking"] in slugs_per_path)
 
-    # Single-stage (no evolution): Kangaskhan
     single = _node("kangaskhan")
     paths = flatten_chain(single)
-    if len(paths) == 1 and len(paths[0]) == 1 and paths[0][0]["slug"] == "kangaskhan":
-        ok("flatten_chain: single-stage → 1 path, 1 stage")
-    else:
-        fail("flatten_chain single", str(paths))
+    ok("flatten_chain: single-stage → 1 path, 1 stage",
+       len(paths) == 1 and len(paths[0]) == 1 and paths[0][0]["slug"] == "kangaskhan")
 
-    # max_depth guard: artificially deep chain truncates rather than crashing
     deep = _node("a")
     node = deep
     for letter in "bcdefghijklmnopqrstuvwxyz":
@@ -313,20 +279,17 @@ def _run_tests():
         node = child
     try:
         paths = flatten_chain(deep, max_depth=5)
-        ok("flatten_chain: max_depth guard → no crash, returns partial paths")
+        ok("flatten_chain: max_depth guard → no crash, returns partial paths", True)
     except RecursionError:
-        fail("flatten_chain max_depth", "RecursionError raised")
+        ok("flatten_chain: max_depth guard → no crash, returns partial paths", False)
 
-    # ── filter_paths_for_game tests ──────────────────────────────────────────
-    # Mock species_gen_map
+    # ── filter_paths_for_game tests (unchanged) ──────────────────────────────
     _GEN_MAP = {
         "eevee": 1, "vaporeon": 1, "jolteon": 1, "flareon": 1,
         "espeon": 2, "umbreon": 2,
         "leafeon": 4, "glaceon": 4, "sylveon": 6,
         "charmander": 1, "charmeleon": 1, "charizard": 1,
     }
-
-    # All 8 Eevee branches, gen 3 game → only gen 1 + gen 2 remain
     eevee_paths = [
         [{"slug":"eevee","trigger":""}, {"slug":"vaporeon","trigger":"Use Water Stone"}],
         [{"slug":"eevee","trigger":""}, {"slug":"jolteon", "trigger":"Use Thunder Stone"}],
@@ -340,36 +303,56 @@ def _run_tests():
     filtered = filter_paths_for_game(eevee_paths, game_gen=3, species_gen_map=_GEN_MAP)
     filtered_targets = [p[1]["slug"] for p in filtered if len(p) > 1]
     expected = {"vaporeon", "jolteon", "flareon", "espeon", "umbreon"}
-    if set(filtered_targets) == expected and len(filtered) == 5:
-        ok("filter_paths_for_game: Eevee gen3 → 5 branches (no gen4/6)")
-    else:
-        fail("filter_paths_for_game Eevee gen3", f"got {filtered_targets}")
+    ok("filter_paths_for_game: Eevee gen3 → 5 branches (no gen4/6)",
+       set(filtered_targets) == expected and len(filtered) == 5)
 
-    # No filter (game_gen=None) → paths unchanged
     result = filter_paths_for_game(eevee_paths, game_gen=None, species_gen_map=_GEN_MAP)
-    if result is eevee_paths:
-        ok("filter_paths_for_game: game_gen=None → paths unchanged")
-    else:
-        fail("filter_paths_for_game None", str(len(result)))
+    ok("filter_paths_for_game: game_gen=None → paths unchanged", result is eevee_paths)
 
-    # All evolutions filtered → de-duplicated to single base-only path
     filtered2 = filter_paths_for_game(eevee_paths, game_gen=0, species_gen_map=_GEN_MAP)
-    if len(filtered2) == 1 and len(filtered2[0]) == 1 and filtered2[0][0]["slug"] == "eevee":
-        ok("filter_paths_for_game: all filtered → single base-only path")
-    else:
-        fail("filter_paths_for_game all filtered", str(filtered2))
+    ok("filter_paths_for_game: all filtered → single base-only path",
+       len(filtered2) == 1 and len(filtered2[0]) == 1 and filtered2[0][0]["slug"] == "eevee")
 
-    # Linear chain unaffected when all stages within game_gen
     charmander_paths = [
         [{"slug":"charmander","trigger":""},
          {"slug":"charmeleon","trigger":"Level 16"},
          {"slug":"charizard", "trigger":"Level 36"}]
     ]
     result2 = filter_paths_for_game(charmander_paths, game_gen=1, species_gen_map=_GEN_MAP)
-    if result2 == charmander_paths:
-        ok("filter_paths_for_game: gen1 chain in gen1 game → unchanged")
-    else:
-        fail("filter_paths_for_game linear", str(result2))
+    ok("filter_paths_for_game: gen1 chain in gen1 game → unchanged", result2 == charmander_paths)
+
+    # ── New tests for trigger_is_pure_level_up and is_pure_level_up_chain ──────
+    ok("trigger_is_pure_level_up: empty string → True", trigger_is_pure_level_up(""))
+    ok("trigger_is_pure_level_up: Level 16 → True", trigger_is_pure_level_up("Level 16"))
+    ok("trigger_is_pure_level_up: Level up (day) → True", trigger_is_pure_level_up("Level up (day)"))
+    ok("trigger_is_pure_level_up: High Friendship → False", not trigger_is_pure_level_up("High Friendship"))
+    ok("trigger_is_pure_level_up: Trade → False", not trigger_is_pure_level_up("Trade"))
+    ok("trigger_is_pure_level_up: Use Water Stone → False", not trigger_is_pure_level_up("Use Water Stone"))
+
+    char_path = [[
+        {"slug": "charmander", "trigger": ""},
+        {"slug": "charmeleon", "trigger": "Level 16"},
+        {"slug": "charizard", "trigger": "Level 36"}
+    ]]
+    ok("is_pure_level_up_chain: charizard is pure", is_pure_level_up_chain(char_path, "charizard"))
+    ok("is_pure_level_up_chain: charmeleon is pure", is_pure_level_up_chain(char_path, "charmeleon"))
+    ok("is_pure_level_up_chain: charmander is pure", is_pure_level_up_chain(char_path, "charmander"))
+
+    slow_path = [
+        [{"slug": "slowpoke", "trigger": ""},
+         {"slug": "slowbro", "trigger": "Level 37"},
+         {"slug": "slowking", "trigger": "Trade holding Kings Rock"}]
+    ]
+    ok("is_pure_level_up_chain: slowbro is pure", is_pure_level_up_chain(slow_path, "slowbro"))
+    ok("is_pure_level_up_chain: slowking is NOT pure", not is_pure_level_up_chain(slow_path, "slowking"))
+    ok("is_pure_level_up_chain: slowpoke is pure", is_pure_level_up_chain(slow_path, "slowpoke"))
+
+    eevee_path_test = [
+        [{"slug": "eevee", "trigger": ""}, {"slug": "vaporeon", "trigger": "Use Water Stone"}],
+        [{"slug": "eevee", "trigger": ""}, {"slug": "jolteon", "trigger": "Use Thunder Stone"}],
+    ]
+    ok("is_pure_level_up_chain: eevee base is pure", is_pure_level_up_chain(eevee_path_test, "eevee"))
+    ok("is_pure_level_up_chain: vaporeon not pure", not is_pure_level_up_chain(eevee_path_test, "vaporeon"))
 
     print()
     if errors:

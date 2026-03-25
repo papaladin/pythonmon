@@ -10,8 +10,8 @@ Move details come from moves.json (lazy-fetched per move on cache miss).
 Learnset comes from the learnset cache (lazy-fetched on first use).
 
 Entry points:
-  run(pkm_ctx, game_ctx, constraints)  called from pokemain
-  main()                               standalone
+  run(pkm_ctx, game_ctx, constraints, ui=None)  called from pokemain
+  main()                                        standalone
 """
 
 import sys
@@ -52,28 +52,33 @@ def _get_move_details(move_name: str, game_ctx: dict) -> dict | None:
     )
 
 
-def _prefetch_missing(all_moves: list, game_ctx: dict) -> None:
-    """
-    For each move name in all_moves not yet in moves.json, fetch from PokeAPI.
-    Shows a progress line while fetching. Writes in a single batch operation.
-    """
+def _prefetch_missing(ui, all_moves: list, game_ctx: dict) -> None:
     missing = [m for m in all_moves if cache.get_move(m) is None]
     if not missing:
         return
 
     total = len(missing)
-    print(f"\n  Fetching details for {total} move(s) not yet in cache...")
+    if ui:
+        ui.print_output(f"\n  Fetching details for {total} move(s) not yet in cache...")
+    else:
+        print(f"\n  Fetching details for {total} move(s) not yet in cache...")
     batch = {}
     for i, name in enumerate(missing, start=1):
-        print(f"  {i}/{total}  {name:<24}", end="\r", flush=True)
+        if ui:
+            ui.print_progress(f"  {i}/{total}  {name:<24}", end="\r", flush=True)
+        else:
+            print(f"  {i}/{total}  {name:<24}", end="\r", flush=True)
         try:
-            entries     = pokeapi.fetch_move(name)
+            entries = pokeapi.fetch_move(name)
             batch[name] = entries
         except (ValueError, ConnectionError):
             pass
     if batch:
         cache.upsert_move_batch(batch)
-    print(f"  Done — move details cached.             ")
+    if ui:
+        ui.print_progress("  Done — move details cached.             ")
+    else:
+        print("  Done — move details cached.             ")
 
 
 # ── Display helpers ───────────────────────────────────────────────────────────
@@ -108,23 +113,23 @@ def _fmt_move_row(label: str, move_name: str, details: dict | None) -> str:
             f"  {acc_str:>{_COL_ACC}}"
             f"  {pp_str:>{_COL_PP}}")
 
-def _section_header(title: str) -> None:
-    print(f"\n  ── {title} {'─' * max(0, _SEP_WIDTH - len(title) - 5)}")
+def _section_header(ui, title: str) -> None:
+    ui.print_output(f"\n  ── {title} {'─' * max(0, _SEP_WIDTH - len(title) - 5)}")
 
-def _print_header_row() -> None:
-    print(_fmt_move_row("", "Move", "Type", "Cat", "Pwr", "Acc", "PP")
-          .replace("  Type      ", "  Type      ")  # already correct
-          )
+def _print_header_row(ui) -> None:
+    ui.print_output(_fmt_move_row("", "Move", "Type", "Cat", "Pwr", "Acc", "PP")
+                    .replace("  Type      ", "  Type      ")  # already correct
+                    )
 
-def _print_col_headers() -> None:
-    print(f"\n  {'':>{_COL_LABEL}}  "
-          f"{'Move':<{_COL_NAME}}  "
-          f"{'Type':<{_COL_TYPE}}  "
-          f"{'Category':<{_COL_CAT}}  "
-          f"{'Pwr':>{_COL_PWR}}  "
-          f"{'Acc':>{_COL_ACC}}  "
-          f"{'PP':>{_COL_PP}}")
-    print(f"  {'─'*(_SEP_WIDTH + 4)}")
+def _print_col_headers(ui) -> None:
+    ui.print_output(f"\n  {'':>{_COL_LABEL}}  "
+                    f"{'Move':<{_COL_NAME}}  "
+                    f"{'Type':<{_COL_TYPE}}  "
+                    f"{'Category':<{_COL_CAT}}  "
+                    f"{'Pwr':>{_COL_PWR}}  "
+                    f"{'Acc':>{_COL_ACC}}  "
+                    f"{'PP':>{_COL_PP}}")
+    ui.print_output(f"  {'─'*(_SEP_WIDTH + 4)}")
 
 
 # ── Filter helpers ────────────────────────────────────────────────────────────
@@ -181,7 +186,7 @@ def _filter_summary(f: dict) -> str:
     return "  |  ".join(parts) if parts else ""
 
 
-def _prompt_filter() -> dict:
+def _prompt_filter(ui) -> dict:
     """
     Interactively ask the user for up to three filter constraints.
     Returns a filter dict suitable for _passes_filter / _apply_filter.
@@ -193,10 +198,10 @@ def _prompt_filter() -> dict:
         "t": "Status",   "st": "Status",   "sta": "Status", "status": "Status",
     }
 
-    print("\n  Filter options (press Enter to skip any):")
-    type_raw = input("    Type      (e.g. Fire, Water): ").strip()
-    cat_raw  = input("    Category  (P)hysical / (S)pecial / (T) Status: ").strip().lower()
-    pow_raw  = input("    Min power (e.g. 80): ").strip()
+    ui.print_output("\n  Filter options (press Enter to skip any):")
+    type_raw = ui.input_prompt("    Type      (e.g. Fire, Water): ")
+    cat_raw  = ui.input_prompt("    Category  (P)hysical / (S)pecial / (T) Status: ").strip().lower()
+    pow_raw  = ui.input_prompt("    Min power (e.g. 80): ")
 
     return {
         "type"     : type_raw.capitalize() if type_raw else None,
@@ -207,7 +212,7 @@ def _prompt_filter() -> dict:
 
 # ── Core display ──────────────────────────────────────────────────────────────
 
-def _display_learnset(learnset: dict, pkm_ctx: dict, game_ctx: dict,
+def _display_learnset(ui, learnset: dict, pkm_ctx: dict, game_ctx: dict,
                       constraints: list,
                       filter_spec: dict | None = None) -> None:
     """Render the learnset for a form, optionally filtered."""
@@ -219,7 +224,7 @@ def _display_learnset(learnset: dict, pkm_ctx: dict, game_ctx: dict,
     )
 
     if not form_data:
-        print("\n  No move data found for this Pokemon / game combination.")
+        ui.print_output("\n  No move data found for this Pokemon / game combination.")
         return
 
     # Collect all move names for pre-fetch
@@ -228,15 +233,15 @@ def _display_learnset(learnset: dict, pkm_ctx: dict, game_ctx: dict,
         for e in method_entries:
             all_moves.append(e["move"])
 
-    _prefetch_missing(all_moves, game_ctx)
+    _prefetch_missing(ui, all_moves, game_ctx)
 
     active = (filter_spec is not None
               and any(v is not None for v in filter_spec.values()))
 
-    print_session_header(pkm_ctx, game_ctx, constraints)
+    ui.print_session_header(pkm_ctx, game_ctx, constraints)
     if active:
-        print(f"  [ filter: {_filter_summary(filter_spec)} ]")
-    _print_col_headers()
+        ui.print_output(f"  [ filter: {_filter_summary(filter_spec)} ]")
+    _print_col_headers(ui)
 
     # ── Helper: build one section's row list ──────────────────────────────────
     def _section_rows(entries, label_fn):
@@ -255,9 +260,9 @@ def _display_learnset(learnset: dict, pkm_ctx: dict, game_ctx: dict,
     )
     lvlup_shown = _apply_filter(lvlup_rows, filter_spec or {})
     if lvlup_shown or not active:
-        _section_header("LEVEL-UP")
+        _section_header(ui, "LEVEL-UP")
         for label, name, details in (lvlup_shown if active else lvlup_rows):
-            print(_fmt_move_row(label, name, details))
+            ui.print_output(_fmt_move_row(label, name, details))
 
     # ── TM / HM ───────────────────────────────────────────────────────────────
     machine_entries = form_data.get("machine", [])
@@ -265,30 +270,30 @@ def _display_learnset(learnset: dict, pkm_ctx: dict, game_ctx: dict,
     machine_shown = _apply_filter(machine_rows, filter_spec or {})
     if machine_shown or (not active and machine_entries):
         missing_labels = any("tm" not in e or not e["tm"] for e in machine_entries)
-        _section_header("TM / HM")
+        _section_header(ui, "TM / HM")
         if missing_labels and machine_entries:
-            print("  (TM numbers unavailable — press W from main menu to fetch them,")
-            print("   then press R to reload this Pokémon's data)")
+            ui.print_output("  (TM numbers unavailable — press W from main menu to fetch them,")
+            ui.print_output("   then press R to reload this Pokémon's data)")
         for label, name, details in (machine_shown if active else machine_rows):
-            print(_fmt_move_row(label, name, details))
+            ui.print_output(_fmt_move_row(label, name, details))
 
     # ── Tutor ─────────────────────────────────────────────────────────────────
     tutor_entries = form_data.get("tutor", [])
     tutor_rows = _section_rows(tutor_entries, lambda e: "")
     tutor_shown = _apply_filter(tutor_rows, filter_spec or {})
     if tutor_shown or (not active and tutor_entries):
-        _section_header("TUTOR")
+        _section_header(ui, "TUTOR")
         for label, name, details in (tutor_shown if active else tutor_rows):
-            print(_fmt_move_row(label, name, details))
+            ui.print_output(_fmt_move_row(label, name, details))
 
     # ── Egg moves ─────────────────────────────────────────────────────────────
     egg_entries = form_data.get("egg", [])
     egg_rows = _section_rows(egg_entries, lambda e: "")
     egg_shown = _apply_filter(egg_rows, filter_spec or {})
     if egg_shown or (not active and egg_entries):
-        _section_header("EGG MOVES")
+        _section_header(ui, "EGG MOVES")
         for label, name, details in (egg_shown if active else egg_rows):
-            print(_fmt_move_row(label, name, details))
+            ui.print_output(_fmt_move_row(label, name, details))
 
     # ── Summary ───────────────────────────────────────────────────────────────
     n_lvlup    = len(lvlup_entries)
@@ -303,58 +308,67 @@ def _display_learnset(learnset: dict, pkm_ctx: dict, game_ctx: dict,
         s_tutor   = len(tutor_shown)
         s_egg     = len(egg_shown)
         total_shown = s_lvlup + s_machine + s_tutor + s_egg
-        print(f"\n  Showing {total_shown} of {total_all} moves (filtered)"
-              f"  ({s_lvlup} level-up"
-              f"  {s_machine} TM/HM"
-              f"  {s_tutor} tutor"
-              f"  {s_egg} egg)")
+        ui.print_output(f"\n  Showing {total_shown} of {total_all} moves (filtered)"
+                        f"  ({s_lvlup} level-up"
+                        f"  {s_machine} TM/HM"
+                        f"  {s_tutor} tutor"
+                        f"  {s_egg} egg)")
     else:
-        print(f"\n  Total: {total_all} moves  "
-              f"({n_lvlup} level-up"
-              f"  {n_machine} TM/HM"
-              f"  {n_tutor} tutor"
-              f"  {n_egg} egg)")
+        ui.print_output(f"\n  Total: {total_all} moves  "
+                        f"({n_lvlup} level-up"
+                        f"  {n_machine} TM/HM"
+                        f"  {n_tutor} tutor"
+                        f"  {n_egg} egg)")
 
     # Mark locked moves if constraints are set
     if constraints:
         locked_found   = [m for m in constraints if m in all_moves]
         locked_missing = [m for m in constraints if m not in all_moves]
         if locked_found:
-            print(f"\n  Locked moves learnable here: {', '.join(locked_found)}")
+            ui.print_output(f"\n  Locked moves learnable here: {', '.join(locked_found)}")
         if locked_missing:
-            print(f"  WARNING — locked moves NOT in pool: {', '.join(locked_missing)}")
+            ui.print_output(f"  WARNING — locked moves NOT in pool: {', '.join(locked_missing)}")
 
 
 # ── Entry points ──────────────────────────────────────────────────────────────
 
-def run(pkm_ctx: dict, game_ctx: dict, constraints: list = None) -> None:
+def run(pkm_ctx: dict, game_ctx: dict, constraints: list = None, ui=None) -> None:
     """Called from pokemain with both contexts loaded."""
+    if ui is None:
+        # Fallback for standalone (dummy)
+        import builtins
+        class DummyUI:
+            def print_output(self, text): builtins.print(text)
+            def input_prompt(self, prompt): return builtins.input(prompt)
+            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        ui = DummyUI()
+
     name = pkm_ctx["pokemon"]
     game = game_ctx["game"]
 
     variety_slug = pkm_ctx.get("variety_slug") or name
     learnset = cache.get_learnset_or_fetch(variety_slug, pkm_ctx["form_name"], game)
     if learnset is None:
-        print(f"\n  Could not load learnset for {pkm_ctx['form_name']} "
-              f"in {game}.")
-        input("\n  Press Enter to continue...")
+        ui.print_output(f"\n  Could not load learnset for {pkm_ctx['form_name']} "
+                        f"in {game}.")
+        ui.input_prompt("\n  Press Enter to continue...")
         return
 
     age = cache.get_learnset_age_days(variety_slug, game)
     if age is not None and age > cache.LEARNSET_STALE_DAYS:
-        print(f"  [ learnset cached {age} days ago — press R to refresh ]")
+        ui.print_output(f"  [ learnset cached {age} days ago — press R to refresh ]")
 
-    _display_learnset(learnset, pkm_ctx, game_ctx, constraints or [])
+    _display_learnset(ui, learnset, pkm_ctx, game_ctx, constraints or [])
 
-    choice = input("\n  Filter? (f to filter, Enter to return): ").strip().lower()
+    choice = ui.input_prompt("\n  Filter? (f to filter, Enter to return): ").strip().lower()
     if choice == "f":
-        f = _prompt_filter()
+        f = _prompt_filter(ui)
         if any(v is not None for v in f.values()):
-            _display_learnset(learnset, pkm_ctx, game_ctx, constraints or [],
+            _display_learnset(ui, learnset, pkm_ctx, game_ctx, constraints or [],
                               filter_spec=f)
         else:
-            print("  (no filter set)")
-        input("\n  Press Enter to continue...")
+            ui.print_output("  (no filter set)")
+        ui.input_prompt("\n  Press Enter to continue...")
 
 
 def main() -> None:
@@ -377,9 +391,15 @@ def main() -> None:
         print("\n  Could not load learnset.")
         sys.exit(1)
 
-    _display_learnset(learnset, pkm_ctx, game_ctx, [])
+    # Use dummy UI for standalone
+    import builtins
+    class DummyUI:
+        def print_output(self, text): builtins.print(text)
+        def input_prompt(self, prompt): return builtins.input(prompt)
+        def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+    ui = DummyUI()
+    _display_learnset(ui, learnset, pkm_ctx, game_ctx, [])
     input("\n  Press Enter to exit...")
-
 
 
 # ── Self-tests ────────────────────────────────────────────────────────────────
@@ -432,10 +452,12 @@ def _run_tests(with_cache=False):
 
     # ── _section_header (smoke — just check no exception) ─────────────────────
     import io, contextlib
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        _section_header("Level-up moves")
-    out = buf.getvalue()
+    class DummyUI:
+        def __init__(self): self.buf = io.StringIO()
+        def print_output(self, text): self.buf.write(text + "\n")
+    dummy = DummyUI()
+    _section_header(dummy, "Level-up moves")
+    out = dummy.buf.getvalue()
     if "Level-up moves" in out: ok("_section_header smoke")
     else: fail("_section_header", out[:60])
 

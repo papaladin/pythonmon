@@ -15,13 +15,12 @@ uses pkm_ctx["pokemon"] (raw species slug) so alternate forms (Mega, regional)
 are correctly identified in the chain.
 
 Public API:
-  get_or_fetch_chain(pkm_ctx)                    → list[list[dict]] | None
-  display_evolution_block(pkm_ctx, paths,
-                          game_gen=None)          → None  (called by feat_quick_view)
+  get_or_fetch_chain(pkm_ctx, ui=None)                  → list[list[dict]] | None
+  display_evolution_block(pkm_ctx, paths, game_gen=None, ui=None) → None
 
 Internal helpers (cache-aware):
   _get_species_gen(slug)                         → int | None
-  _get_types_for_slug(slug)                      → list[str]
+  _get_types_for_slug(slug, ui=None)              → list[str]
   _type_tag(types)                               → str
 """
 
@@ -38,7 +37,7 @@ except ModuleNotFoundError as e:
 
 # ── Type lookup helpers (cache-aware) ─────────────────────────────────────────
 
-def _get_types_for_slug(slug: str) -> list[str]:
+def _get_types_for_slug(slug: str, ui=None) -> list[str]:
     """
     Return the type list for a species slug.
     Tries the pokemon cache first (instant). Falls back to fetching from
@@ -53,13 +52,25 @@ def _get_types_for_slug(slug: str) -> list[str]:
     # Not cached — fetch and save
     try:
         import pkm_pokeapi as pokeapi
+        if ui:
+            ui.print_output(f"  Fetching types for {slug}...", end=" ", flush=True)
+        else:
+            print(f"  Fetching types for {slug}...", end=" ", flush=True)
         data = pokeapi.fetch_pokemon(slug)
         cache.save_pokemon(slug, data)
         forms = data.get("forms", [])
         if forms:
-            return forms[0].get("types", [])
+            types = forms[0].get("types", [])
+            if ui:
+                ui.print_output(f"done.")
+            else:
+                print(f"done.")
+            return types
     except (ValueError, ConnectionError):
-        pass
+        if ui:
+            ui.print_output(f"failed.")
+        else:
+            print(f"failed.")
     return []
 
 
@@ -83,7 +94,7 @@ def _get_species_gen(slug: str) -> int | None:
 
 # ── Cache-aware chain fetch ───────────────────────────────────────────────────
 
-def get_or_fetch_chain(pkm_ctx: dict) -> list | None:
+def get_or_fetch_chain(pkm_ctx: dict, ui=None) -> list | None:
     """
     Return the flattened evolution chain paths for the loaded Pokemon.
 
@@ -104,11 +115,17 @@ def get_or_fetch_chain(pkm_ctx: dict) -> list | None:
 
     try:
         import pkm_pokeapi as pokeapi
-        print("  Loading evolution chain...", end=" ", flush=True)
+        if ui:
+            ui.print_output("  Loading evolution chain...", end=" ", flush=True)
+        else:
+            print("  Loading evolution chain...", end=" ", flush=True)
         node = pokeapi.fetch_evolution_chain(chain_id)
         paths = flatten_chain(node)
         cache.save_evolution_chain(chain_id, paths)
-        print("done.")
+        if ui:
+            ui.print_output("done.")
+        else:
+            print("done.")
         return paths
     except (ValueError, ConnectionError):
         return None
@@ -120,7 +137,8 @@ _SEP_WIDTH = 46
 
 
 def display_evolution_block(pkm_ctx: dict, paths: list,
-                            game_gen: int | None = None) -> None:
+                            game_gen: int | None = None,
+                            ui=None) -> None:
     """
     Print the compact evolution chain block for embedding in option 1.
 
@@ -128,6 +146,16 @@ def display_evolution_block(pkm_ctx: dict, paths: list,
     generation. Eevee in FireRed (gen 3) will only show the 3 Gen-1/2
     Eeveelutions, not Espeon, Umbreon, Glaceon, Leafeon, Sylveon.
     """
+    if ui is None:
+        # Fallback dummy UI for standalone
+        import builtins
+        class DummyUI:
+            def print_output(self, text): builtins.print(text)
+            def print_progress(self, text, end="\n", flush=False): builtins.print(text, end=end, flush=flush)
+            def input_prompt(self, prompt): return builtins.input(prompt)
+            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        ui = DummyUI()
+
     current_slug = pkm_ctx.get("pokemon", "")
 
     # Build species_gen_map for all slugs in the paths
@@ -141,32 +169,32 @@ def display_evolution_block(pkm_ctx: dict, paths: list,
     # Apply game-gen filter
     display_paths = filter_paths_for_game(paths, game_gen, species_gen_map) if game_gen else paths
 
-    print(f"\n  Evolution chain")
-    print("  " + "─" * _SEP_WIDTH)
+    ui.print_output(f"\n  Evolution chain")
+    ui.print_output("  " + "─" * _SEP_WIDTH)
 
     # Pre-fetch types for all unique slugs not already in cache
     need_fetch = [s for s in all_slugs if cache.get_pokemon(s) is None]
     if need_fetch:
-        print(f"  Fetching types for {len(need_fetch)} stage(s)...",
-              end=" ", flush=True)
+        ui.print_output(f"  Fetching types for {len(need_fetch)} stage(s)...",
+                        end=" ", flush=True)
         for s in need_fetch:
-            _get_types_for_slug(s)   # side-effect: populates cache
-        print("done.")
+            _get_types_for_slug(s, ui=ui)   # side-effect: populates cache
+        ui.print_output("done.")
 
     if len(display_paths) == 1 and len(display_paths[0]) == 1:
         # Single-stage — does not evolve (or all evolutions filtered for this game)
         stage = display_paths[0][0]
-        types = _get_types_for_slug(stage["slug"])
+        types = _get_types_for_slug(stage["slug"], ui=ui)
         marker = " ★" if stage["slug"] == current_slug else ""
         no_evo_note = "no further evolution in this game" \
             if game_gen and len(paths) > 1 else "does not evolve"
-        print(f"  {stage['slug'].replace('-', ' ').title()} "
-              f"{_type_tag(types)}{marker}  — {no_evo_note}")
+        ui.print_output(f"  {stage['slug'].replace('-', ' ').title()} "
+                        f"{_type_tag(types)}{marker}  — {no_evo_note}")
     else:
         for path in display_paths:
             parts = []
             for i, stage in enumerate(path):
-                types = _get_types_for_slug(stage["slug"])
+                types = _get_types_for_slug(stage["slug"], ui=ui)
                 marker = " ★" if stage["slug"] == current_slug else ""
                 name = stage["slug"].replace("-", " ").title()
                 entry = f"{name} {_type_tag(types)}{marker}"
@@ -174,10 +202,10 @@ def display_evolution_block(pkm_ctx: dict, paths: list,
                     parts.append(f"→  {stage['trigger']}  →  {entry}")
                 else:
                     parts.append(entry)
-            print("  " + "  ".join(parts))
+            ui.print_output("  " + "  ".join(parts))
 
-    print()
-    print("  ★ = current Pokémon")
+    ui.print_output("")
+    ui.print_output("  ★ = current Pokémon")
 
 
 # ── Self‑tests ────────────────────────────────────────────────────────────────
@@ -192,19 +220,16 @@ def _run_tests():
 
     print("\n  feat_evolution.py — self-test\n")
 
-    # Most of the pure logic tests are now in core_evolution.py.
-    # Here we keep only the tests that involve cache and display.
-
     # Mock get_or_fetch_chain and type fetching to avoid network
     _orig_get = globals().get("get_or_fetch_chain")
     _orig_types = globals().get("_get_types_for_slug")
 
-    def _mock_types(slug):
+    def _mock_types(slug, ui=None):
         return {"charmander": ["Fire"], "charmeleon": ["Fire"],
                 "charizard": ["Fire", "Flying"], "eevee": ["Normal"],
                 "espeon": ["Psychic"], "umbreon": ["Dark"]}.get(slug, [])
 
-    def _mock_chain(pkm_ctx):
+    def _mock_chain(pkm_ctx, ui=None):
         return [
             [{"slug": "charmander", "trigger": ""},
              {"slug": "charmeleon", "trigger": "Level 16"},
@@ -214,13 +239,26 @@ def _run_tests():
     _sys.modules[__name__].get_or_fetch_chain = _mock_chain
     _sys.modules[__name__]._get_types_for_slug = _mock_types
 
+    # Dummy UI for test
+    class DummyUI:
+        def __init__(self):
+            self.buf = io.StringIO()
+        def print_output(self, text, end="\n"):
+            self.buf.write(text + end)
+        def print_progress(self, text, end="\n", flush=False):
+            self.buf.write(text + end)
+        def input_prompt(self, prompt):
+            return ""
+        def confirm(self, prompt):
+            return False
+
     try:
         pkm_charizard = {"pokemon": "charizard", "evolution_chain_id": 1}
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            display_evolution_block(pkm_charizard,
-                                    _mock_chain(pkm_charizard))
-        out = buf.getvalue()
+        dummy = DummyUI()
+        display_evolution_block(pkm_charizard,
+                                _mock_chain(pkm_charizard),
+                                ui=dummy)
+        out = dummy.buf.getvalue()
 
         if "Charmander" in out and "Charmeleon" in out and "Charizard" in out:
             ok("display_evolution_block: all stage names present")
@@ -259,4 +297,12 @@ if __name__ == "__main__":
     if "--autotest" in sys.argv:
         _run_tests()
     else:
-        main()
+        # Standalone not intended, but we provide a dummy UI
+        import builtins
+        class DummyUI:
+            def print_output(self, text): builtins.print(text)
+            def print_progress(self, text, end="\n", flush=False): builtins.print(text, end=end, flush=flush)
+            def input_prompt(self, prompt): return builtins.input(prompt)
+            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        ui = DummyUI()
+        print("\nThis module is not meant to be run standalone.")

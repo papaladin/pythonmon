@@ -15,12 +15,10 @@ Feature gates:
   B.   Type browser           → no context needed
   N.   Nature & EV advisor    → no context needed (enriched when Pokemon loaded)
   A.   Ability browser        → no context needed (enriched when Pokemon loaded)
-  C.   Stat comparison        → needs Pokemon + game
   L.   Learnset comparison    → needs Pokemon + game
   E.   Egg group browser      → needs Pokemon
   T.   Team management        → needs game
-  V/O/S. Team analysis        → needs team + game
-  H.     Team builder         → needs team + game
+  V/O/S/H/X. Team features    → needs team + game
 """
 
 import sys
@@ -40,7 +38,6 @@ try:
     import feat_team_analysis
     import feat_team_offense
     import feat_team_moveset
-    import feat_stat_compare
     import feat_learnset_compare
     import feat_egg_group
     import feat_evolution
@@ -48,6 +45,7 @@ try:
     import feat_opponent
     import pkm_cache as cache
     import pkm_pokeapi
+    from ui_cli import CLI
 except ModuleNotFoundError as e:
     print(f"\n  ERROR: {e}")
     print("  Make sure all files are in the same folder.\n")
@@ -103,65 +101,72 @@ _MENU_CHOICES = frozenset({
     "b",    # type browser
     "n",    # nature browser
     "a",    # ability browser
-    "c",    # stat comparison
     "l",    # learnset compare
     "e",    # egg group browser
     "move", # pre-load move table (multi-char key)
     "w",    # pre-load TM/HM table
 })
 
-def _box_line(text=""):
-    return f"│  {text:<{W}}│"
-
-def _banner():
-    print()
-    print("╔" + "═"*(W+2) + "╗")
-    print(_box_line("Pokemon Toolkit"))
-    print("╚" + "═"*(W+2) + "╝")
-
-def _sep():
-    print("├" + "─"*(W+2) + "┤")
-
-def _top():
-    print("┌" + "─"*(W+2) + "┐")
-
-def _bot():
-    print("└" + "─"*(W+2) + "┘")
-
-def _print_context_lines(pkm_ctx, game_ctx, team_ctx=None):
-    """Print the top info lines inside the menu box."""
+def _build_context_lines(pkm_ctx, game_ctx, team_ctx=None):
+    """Build the list of context lines to display in the menu."""
+    lines = []
     if pkm_ctx:
         dual = (f"{pkm_ctx['type1']} / {pkm_ctx['type2']}"
                 if pkm_ctx["type2"] != "None" else pkm_ctx["type1"])
-        print(_box_line(f"{pkm_ctx['form_name']}  •  {dual}"))
+        lines.append(f"{pkm_ctx['form_name']}  •  {dual}")
         stats_line = _format_stats(pkm_ctx.get("base_stats", {}))
         if stats_line:
-            print(_box_line(stats_line))
+            lines.append(stats_line)
     if not pkm_ctx:
-        print(_box_line("No Pokemon loaded"))
+        lines.append("No Pokemon loaded")
     if game_ctx:
-        print(_box_line(game_ctx["game"]))
+        lines.append(game_ctx["game"])
     elif not pkm_ctx:
-        print(_box_line("No game selected"))
-    # Team summary
+        lines.append("No game selected")
     if team_ctx is not None:
         filled  = feat_team_loader.team_size(team_ctx)
         summary = feat_team_loader.team_summary_line(team_ctx)
-        print(_box_line(f"Team ({filled}/6): {summary}"))
+        lines.append(f"Team ({filled}/6): {summary}")
+    return lines
 
-def _print_menu(pkm_ctx, game_ctx, team_ctx=None):
+
+def _build_menu_lines(pkm_ctx, game_ctx, team_ctx=None):
+    """Build the list of menu lines (including context and options)."""
     has_pkm  = pkm_ctx is not None
     has_game = game_ctx is not None
     both     = has_pkm and has_game
-
-    print()
-    _top()
-    _print_context_lines(pkm_ctx, game_ctx, team_ctx)
-    _sep()
+    has_team = team_ctx is not None and feat_team_loader.team_size(team_ctx) > 0
 
     lines = []
 
-    # Pokemon-dependent features
+    # ── Always‑visible core actions ─────────────────────────────────────────
+    # Select game / change game
+    lines.append("G. Select game" if not has_game else "G. Change game")
+    # Load Pokemon
+    lines.append("P. Load a Pokemon" if not has_pkm else "P. Load a different Pokemon")
+    # Manage team (always shown, but team loader requires game)
+    lines.append("T. Manage team")
+    # Separator
+    lines.append("─" * (W+2))
+
+    # ── Features that need game only (or no context) ────────────────────────
+    if has_game:
+        lines.append("M. Look up a move")
+    lines.append("B. Browse Pokémon by type")
+    lines.append("N. Nature & EV build advisor")
+    lines.append("A. Ability browser")
+    lines.append("")  # blank line for grouping
+
+    # ── Features that need a Pokemon (and maybe game) ───────────────────────
+    if has_pkm:
+        lines.append("E. Egg group browser")
+    if both:
+        lines.append("L. Compare learnsets  (pick a second Pokémon)")
+    # Add a blank line if we have any of these
+    if has_pkm or both:
+        lines.append("")
+
+    # ── Numbered features (need both Pokemon and game) ──────────────────────
     if both:
         for i, (label, _mod, _fn, np, ng, avail) in enumerate(PKM_FEATURES, start=1):
             if avail:
@@ -169,94 +174,68 @@ def _print_menu(pkm_ctx, game_ctx, team_ctx=None):
             else:
                 short = label[:W-18]
                 lines.append(f"   {short:<{W-18}}  [coming soon]")
-
         lines.append("")
 
-    # Move lookup
-    if has_game:
-        lines.append("M. Look up a move")
-
-    # Browsing utilities
-    lines.append("B. Browse Pokémon by type")
-    lines.append("N. Nature & EV build advisor")
-    lines.append("A. Ability browser")
-
-    if both:
-        lines.append("C. Compare stats  (pick a second Pokémon)")
-        lines.append("L. Compare learnsets  (pick a second Pokémon)")
-        lines.append("E. Egg group / breeding partners")
-
-    # Pokemon context
-    if has_pkm:
-        lines.append("P. Load a different Pokemon")
-        lines.append("R. Refresh data for current Pokemon")
-    else:
-        lines.append("P. Load a Pokemon")
-
-    # Game context
-    if has_game:
-        lines.append("G. Change game")
-    else:
-        lines.append("G. Select game")
-
-    # Team management
-    lines.append("T. Manage team  (load up to 6 Pokémon)")
-
-    if team_ctx is not None and feat_team_loader.team_size(team_ctx) > 0:
+    # ── Team features (need team and game) ──────────────────────────────────
+    if has_team and has_game:
         lines.append("V. Team defensive vulnerability analysis")
         lines.append("O. Team offensive coverage")
         lines.append("S. Team moveset synergy")
-        if has_game:
-            lines.append("H. Team builder  (suggest next slot)")
-            lines.append("X. Team vs in-game opponent")
+        lines.append("H. Team builder  (suggest next slot)")
+        lines.append("X. Team vs in-game opponent")
+        lines.append("")
 
+    # ── Cache utilities (always visible) ────────────────────────────────────
     lines.append("MOVE. Pre-load move table  (stats for all ~920 moves)")
     lines.append("W.    Pre-load TM/HM table (TM numbers in move lists)")
+    if has_pkm:
+        lines.append("R. Refresh data for current Pokemon")
     lines.append("")
     lines.append("Q. Quit")
 
-    # Remove duplicate menu lines while preserving order
+    # Remove duplicate empty lines while preserving order
     seen = set()
+    result = []
     for ln in lines:
         if ln == "":
-            print(_box_line())
+            # Keep only one consecutive empty line
+            if result and result[-1] == "":
+                continue
+            result.append(ln)
             continue
-
         if ln in seen:
             continue
-
-        print(_box_line(ln))
+        result.append(ln)
         seen.add(ln)
-
-    _bot()
+    return result
 
 
 # ── Chained context acquisition ───────────────────────────────────────────────
 
-def _ensure_game(game_ctx, pkm_ctx=None):
+def _ensure_game(ui, game_ctx, pkm_ctx=None):
     """If game_ctx is None, prompt for a game. Returns game_ctx (possibly new)."""
     if game_ctx is not None:
         return game_ctx
-    print("\n  This feature needs a game selected first.")
-    return select_game(pkm_ctx=pkm_ctx)
+    ui.print_output("This feature needs a game selected first.")
+    return ui.select_game(pkm_ctx=pkm_ctx)
 
-def _ensure_pokemon(pkm_ctx, game_ctx):
+def _ensure_pokemon(ui, pkm_ctx, game_ctx):
     """If pkm_ctx is None, prompt for a Pokemon. Returns pkm_ctx (possibly new)."""
     if pkm_ctx is not None:
         return pkm_ctx
-    print("\n  This feature needs a Pokemon loaded first.")
-    return select_pokemon(game_ctx=game_ctx)
+    ui.print_output("This feature needs a Pokemon loaded first.")
+    return ui.select_pokemon(game_ctx=game_ctx)
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
-def _handle_diagnostic_flags(args: list) -> None:
+def _handle_diagnostic_flags(ui, args: list) -> None:
     """
     Handle flags that print information and exit immediately.
     Calls sys.exit(0) if a diagnostic flag is present; returns normally otherwise.
     """
     if "--help" in args or "-h" in args:
-        print("""
+        ui.print_output("""
 Pokemon Toolkit — Command-line interface for in-game Pokemon analysis
 
 Usage: python pokemain.py [OPTIONS]
@@ -276,15 +255,6 @@ Run without arguments to start the interactive menu.
 """)
         sys.exit(0)
 
-    if "--sync" in args:
-        force = "--force" in args
-        try:
-            import pkm_sync
-            pkm_sync.sync_all(force=force)
-        except ImportError as e:
-            print(f"  ERROR: Could not import pkm_sync: {e}")
-        sys.exit(0)
-
     if "--cache-info" in args:
         info = cache.get_cache_info()
         labels = [
@@ -301,29 +271,29 @@ Run without arguments to start the interactive menu.
         ]
         moves_val  = info.get("moves", 0)
         moves_note = f"  (schema v{cache.MOVES_CACHE_VERSION})" if moves_val > 0 else ""
-        print("\n  Cache contents:")
-        print("  " + "─" * _CACHE_SEP_WIDTH)
+        ui.print_output("\nCache contents:")
+        ui.print_output("─" * _CACHE_SEP_WIDTH)
         for key, label in labels:
             val  = info.get(key, 0)
             note = moves_note if key == "moves" else ""
-            print(f"  {label:<20}: {val:>5}{note}")
-        print("  " + "─" * _CACHE_SEP_WIDTH)
+            ui.print_output(f"{label:<20}: {val:>5}{note}")
+        ui.print_output("─" * _CACHE_SEP_WIDTH)
         total = sum(info.values())
-        print(f"  {'Total':<20}: {total:>5}")
+        ui.print_output(f"{'Total':<20}: {total:>5}")
         sys.exit(0)
 
     if "--check-cache" in args:
         issues = cache.check_integrity()
         if issues:
-            print(f"\n  Cache integrity: {len(issues)} issue(s) found:")
+            ui.print_output(f"\nCache integrity: {len(issues)} issue(s) found:")
             for issue in issues:
-                print(f"    • {issue}")
+                ui.print_output(f"  • {issue}")
         else:
-            print("\n  Cache integrity: clean — no issues found.")
+            ui.print_output("\nCache integrity: clean — no issues found.")
         sys.exit(0)
 
 
-def _handle_refresh_flags(args: list) -> None:
+def _handle_refresh_flags(ui, args: list) -> None:
     """
     Handle cache mutation flags. Always returns normally.
     """
@@ -334,50 +304,52 @@ def _handle_refresh_flags(args: list) -> None:
         if idx + 1 < len(args):
             cache.invalidate_pokemon(args[idx + 1])
         else:
-            print("  Usage: --refresh-pokemon <n>")
+            ui.print_output("Usage: --refresh-pokemon <n>")
     if "--refresh-learnset" in args:
         idx = args.index("--refresh-learnset")
         if idx + 2 < len(args):
             cache.invalidate_learnset(args[idx+1], args[idx+2])
         else:
-            print("  Usage: --refresh-learnset <n> <game>")
+            ui.print_output("Usage: --refresh-learnset <n> <game>")
     if "--refresh-all" in args:
         idx = args.index("--refresh-all")
         if idx + 1 < len(args):
             cache.invalidate_all(args[idx + 1])
         else:
-            print("  Usage: --refresh-all <n>")
+            ui.print_output("Usage: --refresh-all <n>")
     if "--refresh-evolution" in args:
         idx = args.index("--refresh-evolution")
         if idx + 1 < len(args):
             name = args[idx + 1]
             data = cache.get_pokemon(name)
             if data is None:
-                print(f"  '{name}' not in cache — nothing to refresh.")
+                ui.print_output(f"'{name}' not in cache — nothing to refresh.")
             else:
                 chain_id = data.get("evolution_chain_id")
                 if chain_id is None:
-                    print(f"  No evolution chain ID for '{name}'.")
+                    ui.print_output(f"No evolution chain ID for '{name}'.")
                 else:
                     cache.invalidate_evolution_chain(chain_id)
-                    print(f"  Evolution chain for '{name}' invalidated.")
+                    ui.print_output(f"Evolution chain for '{name}' invalidated.")
         else:
-            print("  Usage: --refresh-evolution <n>")
+            ui.print_output("Usage: --refresh-evolution <n>")
 
 
 def main():
-    _handle_diagnostic_flags(sys.argv[1:])
-    _handle_refresh_flags(sys.argv[1:])
-    _banner()
+    ui = CLI()
+
+    _handle_diagnostic_flags(ui, sys.argv[1:])
+    _handle_refresh_flags(ui, sys.argv[1:])
+    ui.print_header()
 
     # Offline mode detection (Pythonmon-18): probe only when cache is sparse
     # so regular well-cached sessions don't pay a 3-second probe cost each run.
     _cache_info = cache.get_cache_info()
     if _cache_info.get("pokemon", 0) < 5:
         if not pkm_pokeapi.check_connectivity():
-            print("  ⚠  PokeAPI unreachable — running from cache only.")
-            print("     New Pokémon and moves cannot be fetched this session.")
-            print()
+            ui.print_output("⚠  PokeAPI unreachable — running from cache only.")
+            ui.print_output("   New Pokémon and moves cannot be fetched this session.")
+            ui.print_output()
 
     pkm_ctx    = None
     game_ctx   = None
@@ -388,49 +360,55 @@ def main():
     if "--game" in sys.argv:
         idx = sys.argv.index("--game")
         if idx + 1 >= len(sys.argv):
-            print("  ERROR: --game requires a game name argument.")
+            ui.print_output("ERROR: --game requires a game name argument.")
             sys.exit(1)
         game_name = sys.argv[idx + 1]
         try:
             from pkm_session import make_game_ctx
             game_ctx = make_game_ctx(game_name)
-            print(f"  Pre-selected game: {game_name}")
+            ui.print_output(f"Pre-selected game: {game_name}")
         except ValueError as e:
-            print(f"  ERROR: {e}")
+            ui.print_output(f"ERROR: {e}")
             sys.exit(1)
 
     while True:
-        _print_menu(pkm_ctx, game_ctx, team_ctx)
-        choice = input("\n  Choice: ").strip().lower()
+        # Build menu lines
+        context_lines = _build_context_lines(pkm_ctx, game_ctx, team_ctx)
+        menu_lines = _build_menu_lines(pkm_ctx, game_ctx, team_ctx)
+        # Combine context and menu with a separator
+        full_lines = context_lines + ["─" * (W+2)] + menu_lines
+        ui.print_menu(full_lines)
+
+        choice = ui.input_prompt("Choice: ").lower()
 
         if choice == "q":
-            print("\n  Goodbye!\n")
+            ui.print_output("Goodbye!\n")
             sys.exit(0)
 
         # ── Context management ────────────────────────────────────────────────
 
         elif choice == "p":
-            new = select_pokemon(game_ctx=game_ctx)
+            new = ui.select_pokemon(game_ctx=game_ctx)
             if new is not None:
                 pkm_ctx = new
                 # Offer to add to team immediately (Pythonmon-5)
                 if game_ctx is not None and feat_team_loader.team_size(team_ctx) < 6:
-                    add = input(f"\n  Add {pkm_ctx['form_name']} to team? (y/n): ").strip().lower()
-                    if add == "y":
+                    add = ui.confirm(f"\nAdd {pkm_ctx['form_name']} to team?")
+                    if add:
                         try:
                             team_ctx, slot = feat_team_loader.add_to_team(team_ctx, pkm_ctx)
-                            print(f"  Added to slot {slot + 1}.")
+                            ui.print_output(f"Added to slot {slot + 1}.")
                         except feat_team_loader.TeamFullError:
                             pass
 
         elif choice == "g":
-            new = select_game(pkm_ctx=pkm_ctx)
+            new = ui.select_game(pkm_ctx=pkm_ctx)
             if new is not None:
                 game_ctx = new
 
         elif choice == "r":
             if pkm_ctx is None:
-                print("\n  No Pokemon loaded to refresh.")
+                ui.print_output("No Pokemon loaded to refresh.")
             else:
                 chain_id = pkm_ctx.get("evolution_chain_id")
                 if chain_id is not None:
@@ -439,171 +417,163 @@ def main():
 
         elif choice == "t":
             if game_ctx is None:
-                print("\n  Please select a game first (press G).")
+                ui.print_output("Please select a game first (press G).")
             else:
-                team_ctx = feat_team_loader.run(game_ctx, team_ctx)
+                team_ctx = feat_team_loader.run(ui, game_ctx, team_ctx)
 
         elif choice == "v":
             if game_ctx is None:
-                print("\n  Select a game first (press G).")
+                ui.print_output("Select a game first (press G).")
             elif feat_team_loader.team_size(team_ctx) == 0:
-                print("\n  Load a team first (press T).")
+                ui.print_output("Load a team first (press T).")
             else:
-                feat_team_analysis.run(team_ctx, game_ctx)
+                feat_team_analysis.run(team_ctx, game_ctx, ui=ui)
 
         elif choice == "o":
             if game_ctx is None:
-                print("\n  Select a game first (press G).")
+                ui.print_output("Select a game first (press G).")
             elif feat_team_loader.team_size(team_ctx) == 0:
-                print("\n  Load a team first (press T).")
+                ui.print_output("Load a team first (press T).")
             else:
-                feat_team_offense.run(team_ctx, game_ctx, pool_cache=pool_cache)
+                feat_team_offense.run(team_ctx, game_ctx, pool_cache=pool_cache, ui=ui)
 
         elif choice == "s":
             if game_ctx is None:
-                print("\n  Select a game first (press G).")
+                ui.print_output("Select a game first (press G).")
             elif feat_team_loader.team_size(team_ctx) == 0:
-                print("\n  Load a team first (press T).")
+                ui.print_output("Load a team first (press T).")
             else:
-                feat_team_moveset.run(team_ctx, game_ctx, pool_cache=pool_cache)
+                feat_team_moveset.run(team_ctx, game_ctx, pool_cache=pool_cache, ui=ui)
 
         elif choice == "h":
             if game_ctx is None:
-                print("\n  Select a game first (press G).")
+                ui.print_output("Select a game first (press G).")
             elif feat_team_loader.team_size(team_ctx) == 0:
-                print("\n  Load a team first (press T).")
+                ui.print_output("Load a team first (press T).")
             else:
-                feat_team_builder.run(team_ctx, game_ctx)
+                feat_team_builder.run(team_ctx, game_ctx, ui=ui)
 
         elif choice == "x":
             if game_ctx is None:
-                print("\n  Select a game first (press G).")
+                ui.print_output("Select a game first (press G).")
             elif feat_team_loader.team_size(team_ctx) == 0:
-                print("\n  Load a team first (press T).")
+                ui.print_output("Load a team first (press T).")
             else:
-                feat_opponent.run(team_ctx, game_ctx)
+                feat_opponent.run(team_ctx, game_ctx, ui=ui)
 
         elif choice == "move":
             existing   = cache.get_moves()
             n_existing = len(existing) if existing else 0
             if n_existing > 0:
-                print(f"\n  Move table has {n_existing} moves cached.")
-                print("  F — fetch missing moves only")
-                print("  R — re-fetch all moves (overwrite)")
-                print("  Enter — cancel")
-                sub = input("  Choice: ").strip().lower()
+                ui.print_output(f"\nMove table has {n_existing} moves cached.")
+                ui.print_output("F — fetch missing moves only")
+                ui.print_output("R — re-fetch all moves (overwrite)")
+                ui.print_output("Enter — cancel")
+                sub = ui.input_prompt("Choice: ").lower()
             else:
-                print("\n  This fetches type, power, accuracy and PP for all ~920 moves.")
-                print("  Moves are also fetched lazily on first lookup — this just")
-                print("  avoids any wait when browsing move lists or learnsets.\n")
-                confirm = input("  Proceed? (y/n): ").strip().lower()
-                sub = "r" if confirm == "y" else ""
+                ui.print_output("\nThis fetches type, power, accuracy and PP for all ~920 moves.")
+                ui.print_output("Moves are also fetched lazily on first lookup — this just")
+                ui.print_output("avoids any wait when browsing move lists or learnsets.\n")
+                confirm = ui.confirm("Proceed?")
+                sub = "r" if confirm else ""
 
             if sub == "f":
                 try:
                     moves = pkm_pokeapi.fetch_missing_moves()
                     if moves:
                         cache.upsert_move_batch(moves)
-                        print(f"  Done — {len(moves)} missing move(s) cached.")
+                        ui.print_output(f"Done — {len(moves)} missing move(s) cached.")
                     else:
-                        print("  All moves already cached — nothing to do.")
+                        ui.print_output("All moves already cached — nothing to do.")
                 except ConnectionError as e:
-                    print(f"  Connection error: {e}")
+                    ui.print_output(f"Connection error: {e}")
             elif sub == "r":
                 try:
                     moves = pkm_pokeapi.fetch_all_moves()
                     cache.save_moves(moves)
-                    print(f"  Done — {len(moves)} moves cached.")
+                    ui.print_output(f"Done — {len(moves)} moves cached.")
                 except ConnectionError as e:
-                    print(f"  Connection error: {e}")
+                    ui.print_output(f"Connection error: {e}")
 
         elif choice == "w":
             existing = cache.get_machines()
             if existing:
                 n = sum(len(v) for v in existing.values())
-                print(f"\n  TM/HM table already cached ({n} entries across {len(existing)} games).")
-                confirm = input("  Re-fetch and overwrite? (y/n): ").strip().lower()
+                ui.print_output(f"\nTM/HM table already cached ({n} entries across {len(existing)} games).")
+                confirm = ui.confirm("Re-fetch and overwrite?")
             else:
-                print("\n  This fetches TM/HM numbers for all games (~900 entries).")
-                print("  Required for TM numbers to appear in the learnable move list.")
-                print("  After fetching, press R on any Pokemon to reload their learnset")
-                print("  with TM numbers included.\n")
-                confirm = input("  Proceed? (y/n): ").strip().lower()
-            if confirm == "y":
+                ui.print_output("\nThis fetches TM/HM numbers for all games (~900 entries).")
+                ui.print_output("Required for TM numbers to appear in the learnable move list.")
+                ui.print_output("After fetching, press R on any Pokemon to reload their learnset")
+                ui.print_output("with TM numbers included.\n")
+                confirm = ui.confirm("Proceed?")
+            if confirm:
                 try:
                     machines = pkm_pokeapi.fetch_machines()
                     cache.save_machines(machines)
                     total = sum(len(v) for v in machines.values())
-                    print(f"  Done — {total} TM/HM entries across {len(machines)} games cached.")
+                    ui.print_output(f"Done — {total} TM/HM entries across {len(machines)} games cached.")
                 except ConnectionError as e:
-                    print(f"  Connection error: {e}")
+                    ui.print_output(f"Connection error: {e}")
 
         # ── Move lookup (needs game) ──────────────────────────────────────────
 
         elif choice == "m":
             if game_ctx is None:
-                print("\n  Select a game first (press G).")
+                ui.print_output("Select a game first (press G).")
                 continue
-            feat_move_lookup.run(game_ctx)
+            feat_move_lookup.run(game_ctx, ui=ui)
 
         elif choice == "b":
-            feat_type_browser.run()
+            feat_type_browser.run(game_ctx=game_ctx, ui=ui)
 
         elif choice == "n":
-            feat_nature_browser.run(game_ctx=game_ctx, pkm_ctx=pkm_ctx)
+            feat_nature_browser.run(game_ctx=game_ctx, pkm_ctx=pkm_ctx, ui=ui)
 
         elif choice == "a":
-            feat_ability_browser.run(game_ctx=game_ctx, pkm_ctx=pkm_ctx)
-
-        elif choice == "c":
-            if pkm_ctx is None:
-                print("\n  Load a Pokemon first (press P).")
-            elif game_ctx is None:
-                print("\n  Select a game first (press G).")
-            else:
-                feat_stat_compare.run(pkm_ctx, game_ctx)
+            feat_ability_browser.run(game_ctx=game_ctx, pkm_ctx=pkm_ctx, ui=ui)
 
         elif choice == "l":
             if pkm_ctx is None:
-                print("\n  Load a Pokemon first (press P).")
+                ui.print_output("Load a Pokemon first (press P).")
             elif game_ctx is None:
-                print("\n  Select a game first (press G).")
+                ui.print_output("Select a game first (press G).")
             else:
-                feat_learnset_compare.run(pkm_ctx, game_ctx)
+                feat_learnset_compare.run(pkm_ctx, game_ctx, ui=ui)
 
         elif choice == "e":
             if pkm_ctx is None:
-                print("\n  Load a Pokemon first (press P).")
+                ui.print_output("Load a Pokemon first (press P).")
             else:
-                feat_egg_group.run(pkm_ctx)
+                feat_egg_group.run(pkm_ctx, ui=ui)
 
         # ── Pokemon-dependent features ────────────────────────────────────────
 
         elif choice.isdigit():
             idx = int(choice)
             if idx < 1 or idx > len(PKM_FEATURES):
-                print("  Invalid choice, try again.")
+                ui.print_output("Invalid choice, try again.")
                 continue
 
             label, module, entry_fn, needs_pkm, needs_game, avail = PKM_FEATURES[idx - 1]
             if not avail:
-                print(f"\n  '{label}' is not yet available.")
+                ui.print_output(f"'{label}' is not yet available.")
                 continue
 
             # Chain: acquire missing context before running
             if needs_game:
-                game_ctx = _ensure_game(game_ctx, pkm_ctx=pkm_ctx)
+                game_ctx = _ensure_game(ui, game_ctx, pkm_ctx=pkm_ctx)
                 if game_ctx is None:
                     continue
             if needs_pkm:
-                pkm_ctx = _ensure_pokemon(pkm_ctx, game_ctx)
+                pkm_ctx = _ensure_pokemon(ui, pkm_ctx, game_ctx)
                 if pkm_ctx is None:
                     continue
 
-            getattr(module, entry_fn)(pkm_ctx, game_ctx)
+            getattr(module, entry_fn)(pkm_ctx, game_ctx, ui=ui)
 
         else:
-            print("  Invalid choice, try again.")
+            ui.print_output("Invalid choice, try again.")
 
 
 if __name__ == "__main__":

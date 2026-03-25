@@ -11,8 +11,8 @@ important cases: "ground" → Field, "plant" → Grass.  All 15 known groups
 are mapped in core_egg.
 
 Entry points:
-  run(pkm_ctx)                  → None  called from pokemain; key E
-  main()                        → None  standalone
+  run(pkm_ctx, ui=None)                  → None  called from pokemain; key E
+  main()                                 → None  standalone
 """
 
 import sys
@@ -28,7 +28,7 @@ except ModuleNotFoundError as e:
 
 # ── Roster fetch (cache-aware) ────────────────────────────────────────────────
 
-def get_or_fetch_roster(slug: str) -> list | None:
+def get_or_fetch_roster(slug: str, ui=None) -> list | None:
     """
     Return the egg group roster from cache, fetching from PokeAPI on miss.
     Returns None if the group is unknown or the network is unavailable.
@@ -40,16 +40,28 @@ def get_or_fetch_roster(slug: str) -> list | None:
     try:
         import pkm_pokeapi as pokeapi
         group_name = egg_group_name(slug)
-        print(f"  Fetching {group_name} egg group roster...", end=" ", flush=True)
+        if ui:
+            ui.print_output(f"  Fetching {group_name} egg group roster...", end=" ", flush=True)
+        else:
+            print(f"  Fetching {group_name} egg group roster...", end=" ", flush=True)
         roster = pokeapi.fetch_egg_group(slug)
         cache.save_egg_group(slug, roster)
-        print(f"{len(roster)} Pokémon.")
+        if ui:
+            ui.print_output(f"{len(roster)} Pokémon.")
+        else:
+            print(f"{len(roster)} Pokémon.")
         return roster
     except ValueError:
-        print("not found.")
+        if ui:
+            ui.print_output("not found.")
+        else:
+            print("not found.")
         return None
     except ConnectionError as e:
-        print(f"connection error: {e}")
+        if ui:
+            ui.print_output(f"connection error: {e}")
+        else:
+            print(f"connection error: {e}")
         return None
 
 
@@ -60,7 +72,7 @@ _COLS      =  5    # names per row in the roster grid
 _COL_WIDTH = 16    # characters per name cell
 
 
-def _print_roster_grid(roster: list, current_slug: str) -> None:
+def _print_roster_grid(ui, roster: list, current_slug: str) -> None:
     """Print a roster as a compact name grid, marking the current Pokemon."""
     for i, entry in enumerate(roster):
         name = entry["name"]
@@ -69,70 +81,87 @@ def _print_roster_grid(roster: list, current_slug: str) -> None:
         # Mark current Pokemon with ★
         if entry["slug"] == current_slug:
             cell = f"{cell} ★"
-        print(f"  {cell:<{_COL_WIDTH}}", end="")
+        ui.print_output(f"  {cell:<{_COL_WIDTH}}", end="")
         if (i + 1) % _COLS == 0:
-            print()
+            ui.print_output("")
     if len(roster) % _COLS != 0:
-        print()   # final newline if last row wasn't complete
+        ui.print_output("")   # final newline if last row wasn't complete
 
 
-def display_egg_group_browser(pkm_ctx: dict) -> None:
+def display_egg_group_browser(ui, pkm_ctx: dict) -> None:
     """Full browser display for key E."""
     groups    = pkm_ctx.get("egg_groups", [])
     form_name = pkm_ctx.get("form_name", pkm_ctx.get("pokemon", ""))
     slug      = pkm_ctx.get("variety_slug") or pkm_ctx.get("pokemon", "")
 
-    print(f"\n  Egg groups  |  {form_name}")
-    print("  " + "═" * _W)
+    ui.print_output(f"\n  Egg groups  |  {form_name}")
+    ui.print_output("  " + "═" * _W)
 
     if not groups:
-        print("\n  No egg group data for this Pokémon.")
-        print("  Try pressing R to refresh the Pokémon data.")
+        ui.print_output("\n  No egg group data for this Pokémon.")
+        ui.print_output("  Try pressing R to refresh the Pokémon data.")
         return
 
-    print(f"  Groups: {format_egg_groups(groups)}")
+    ui.print_output(f"  Groups: {format_egg_groups(groups)}")
 
     for group_slug in groups:
         group_label = egg_group_name(group_slug)
-        roster = get_or_fetch_roster(group_slug)
+        roster = get_or_fetch_roster(group_slug, ui=ui)
 
-        print()
+        ui.print_output("")
         if roster is None:
-            print(f"  {group_label} group  (could not load roster)")
+            ui.print_output(f"  {group_label} group  (could not load roster)")
             continue
 
         undiscovered = (group_slug == "no-eggs")
         header = f"  {group_label} group  ({len(roster)} Pokémon)"
         if undiscovered:
             header += "  — cannot breed"
-        print(header)
-        print("  " + "─" * _W)
-        _print_roster_grid(roster, slug)
+        ui.print_output(header)
+        ui.print_output("  " + "─" * _W)
+        _print_roster_grid(ui, roster, slug)
 
-    print()
-    print("  ★ = current Pokémon")
-    print("  " + "═" * _W)
+    ui.print_output("")
+    ui.print_output("  ★ = current Pokémon")
+    ui.print_output("  " + "═" * _W)
 
 
 # ── Entry points ──────────────────────────────────────────────────────────────
 
-def run(pkm_ctx: dict) -> None:
+def run(pkm_ctx: dict, ui=None) -> None:
     """Called from pokemain (key E)."""
-    display_egg_group_browser(pkm_ctx)
-    input("\n  Press Enter to continue...")
+    if ui is None:
+        # Fallback dummy UI for standalone
+        import builtins
+        class DummyUI:
+            def print_output(self, text, end="\n"): builtins.print(text, end=end)
+            def print_progress(self, text, end="\n", flush=False): builtins.print(text, end=end, flush=flush)
+            def input_prompt(self, prompt): return builtins.input(prompt)
+            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        ui = DummyUI()
+    display_egg_group_browser(ui, pkm_ctx)
+    ui.input_prompt("\n  Press Enter to continue...")
 
 
 def main() -> None:
-    print()
-    print("╔══════════════════════════════════════════╗")
-    print("║         Egg Group Browser                ║")
-    print("╚══════════════════════════════════════════╝")
+    import builtins
+    class DummyUI:
+        def print_output(self, text, end="\n"): builtins.print(text, end=end)
+        def print_progress(self, text, end="\n", flush=False): builtins.print(text, end=end, flush=flush)
+        def input_prompt(self, prompt): return builtins.input(prompt)
+        def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+    ui = DummyUI()
+
+    ui.print_output("")
+    ui.print_output("╔══════════════════════════════════════════╗")
+    ui.print_output("║         Egg Group Browser                ║")
+    ui.print_output("╚══════════════════════════════════════════╝")
 
     pkm_ctx = select_pokemon()
     if pkm_ctx is None:
         sys.exit(0)
 
-    run(pkm_ctx)
+    run(pkm_ctx, ui=ui)
 
 
 # ── Self-tests ────────────────────────────────────────────────────────────────
@@ -152,7 +181,7 @@ def _run_tests():
     # Mock get_or_fetch_roster to avoid network calls
     _orig_get_or_fetch = globals().get("get_or_fetch_roster")
 
-    def _mock_roster(slug):
+    def _mock_roster(slug, ui=None):
         if slug == "monster":
             return [{"slug": "bulbasaur",  "name": "Bulbasaur"},
                     {"slug": "charmander", "name": "Charmander"},
@@ -171,10 +200,21 @@ def _run_tests():
     pkm_ctx = {"form_name": "Fakizard", "pokemon": "fakizard",
                "variety_slug": "fakizard", "egg_groups": ["monster", "dragon"]}
 
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        display_egg_group_browser(pkm_ctx)
-    out = buf.getvalue()
+    # Create a dummy UI that writes to a StringIO
+    class DummyUI:
+        def __init__(self):
+            self.buf = io.StringIO()
+        def print_output(self, text, end="\n"):
+            self.buf.write(text + end)
+        def print_progress(self, text, end="\n", flush=False):
+            self.buf.write(text + end)
+        def input_prompt(self, prompt):
+            return ""
+        def confirm(self, prompt):
+            return False
+    dummy = DummyUI()
+    display_egg_group_browser(dummy, pkm_ctx)
+    out = dummy.buf.getvalue()
 
     if "Fakizard" in out:
         ok("display_egg_group_browser: pokemon name in header")
@@ -199,10 +239,9 @@ def _run_tests():
     # Empty egg_groups → graceful message
     pkm_no_groups = {"form_name": "Mewtwo", "pokemon": "mewtwo",
                      "variety_slug": "mewtwo", "egg_groups": []}
-    buf2 = io.StringIO()
-    with contextlib.redirect_stdout(buf2):
-        display_egg_group_browser(pkm_no_groups)
-    out2 = buf2.getvalue()
+    dummy2 = DummyUI()
+    display_egg_group_browser(dummy2, pkm_no_groups)
+    out2 = dummy2.buf.getvalue()
     if "No egg group data" in out2:
         ok("display_egg_group_browser: empty groups → graceful message")
     else:
@@ -211,10 +250,9 @@ def _run_tests():
     # no-eggs group → cannot breed note
     pkm_legendary = {"form_name": "Mewtwo", "pokemon": "mewtwo",
                      "variety_slug": "mewtwo", "egg_groups": ["no-eggs"]}
-    buf3 = io.StringIO()
-    with contextlib.redirect_stdout(buf3):
-        display_egg_group_browser(pkm_legendary)
-    out3 = buf3.getvalue()
+    dummy3 = DummyUI()
+    display_egg_group_browser(dummy3, pkm_legendary)
+    out3 = dummy3.buf.getvalue()
     if "cannot breed" in out3:
         ok("display_egg_group_browser: no-eggs → cannot breed note")
     else:

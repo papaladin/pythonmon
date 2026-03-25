@@ -39,7 +39,6 @@ pokemon-toolkit/
   feat_team_analysis.py     Feature: team defensive vulnerability table
   feat_team_offense.py      Feature: team offensive type coverage (key O)
   feat_team_moveset.py      Feature: team moveset synergy (key S)
-  feat_stat_compare.py      Feature: side-by-side base stat comparison (key C)
   feat_egg_group.py         Feature: egg group browser + breeding partners (key E)
   feat_evolution.py         Feature: evolution chain display (embedded in option 1)
   feat_learnset_compare.py  Feature: learnset comparison between two Pokémon (key L)
@@ -333,7 +332,7 @@ They are imported by feature modules.
 |--------|------------|---------|
 | `core_stat.py` | `stat_bar`, `total_stats`, `infer_role`, `infer_speed_tier`, `compare_stats` | Stat calculations |
 | `core_egg.py` | `egg_group_name`, `format_egg_groups` | Egg group display |
-| `core_evolution.py` | `parse_trigger`, `flatten_chain`, `filter_paths_for_game` | Evolution chain logic |
+| `core_evolution.py` | Evolution chain parsing (`parse_trigger`, `flatten_chain`, `filter_paths_for_game`). Also provides `trigger_is_pure_level_up` and `is_pure_level_up_chain` to identify whether an evolution path consists entirely of level‑up triggers (used by the team builder to filter redundant stages). |
 | `core_move.py` | `score_move`, `rank_status_moves`, `select_combo`, `combo_score`, `build_counter_pool`, `build_coverage_pool`, `score_learnset`, and static tables | Move scoring and combo selection |
 | `core_team.py` | `build_team_defense`, `build_unified_rows`, `gap_label`, `build_weakness_pairs`, `weakness_types`, `se_types`, `build_offensive_coverage`, `team_offensive_gaps`, `team_defensive_gaps`, `score_candidate`, `rank_candidates`, and many others | Team analysis and builder |
 | `core_opponent.py` | `analyze_matchup`, `uncovered_threats`, `recommended_leads` | Opponent analysis |
@@ -361,7 +360,6 @@ The following is a representative list; each file's docstring describes its entr
 | `feat_team_analysis.py` | Team defensive analysis (key V) |
 | `feat_team_offense.py` | Team offensive coverage (key O) |
 | `feat_team_moveset.py` | Team moveset synergy (key S) |
-| `feat_stat_compare.py` | Stat comparison (key C) |
 | `feat_egg_group.py` | Egg group browser (key E) |
 | `feat_evolution.py` | Evolution chain display (embedded in option 1) |
 | `feat_learnset_compare.py` | Learnset comparison (key L) |
@@ -432,9 +430,50 @@ All display functions that show Pokemon names in table cells use `_abbrev(name)`
 (defined in `feat_team_analysis.py`). Short names (<= 4 chars) are returned as-is.
 This is the display contract for all team analysis tables.
 
+
 ---
 
-## 10. Design constraints (non-negotiable)
+## 10. UI abstraction layer
+
+The toolkit now separates user interface concerns from application logic using an abstract UI class.
+All direct `print()` and `input()` calls have been replaced with methods on a `UI` instance.
+The current CLI implementation (`ui_cli.py`) provides a text-based interface, but other front‑ends (e.g., a TUI using `textual`) can be added by implementing the same interface.
+
+### UI class (ui_base.py)
+
+The abstract base class defines the following methods:
+
+- `print_header()` – prints the application banner.
+- `print_menu(lines)` – prints a boxed menu.
+- `print_output(text, end)` – general‑purpose output.
+- `print_progress(text, end, flush)` – for progress counters.
+- `input_prompt(prompt) -> str` – user input.
+- `confirm(prompt) -> bool` – yes/no question.
+- `select_from_list(prompt, options, allow_none) -> str | None` – numbered list selection.
+- `select_pokemon(game_ctx) -> dict | None` – interactive Pokemon selection.
+- `select_game(pkm_ctx) -> dict | None` – interactive game selection.
+- `select_form(forms) -> tuple` – choose from a list of Pokemon forms.
+- `print_session_header(pkm_ctx, game_ctx, constraints)` – prints the context header.
+
+All interactive functions that were previously in `pkm_session.py` are now part of the UI class.
+ The pure context‑building logic remains in `pkm_session.py`.
+
+### CLI implementation (ui_cli.py)
+
+The `CLI` class implements the UI interface using standard console I/O (`print`, `input`).
+ The main loop and menu dispatch remain in `pokemain.py` (but could be moved to `ui.run()` in the future).
+ Features receive the UI instance as an argument (typically named `ui`) and use it for all user interaction.
+
+### Future extensions
+
+A TUI implementation (e.g., using `textual` or `curses`) would be added by creating a new class that inherits from `UI` and implementing its methods.
+The toolkit would then select the appropriate UI based on a command‑line flag or environment setting.
+
+
+
+---
+
+## 11. Design constraints (non-negotiable)
 
 - **Single flat folder.** All .py files and cache/ in the same directory.
 - **No pip dependencies beyond `requests`.** stdlib only for everything else.
@@ -446,11 +485,11 @@ This is the display contract for all team analysis tables.
 
 ---
 
-## 11. Embedded Data Tables and Constants
+## 12. Embedded Data Tables and Constants
 
 This section lists all static data that is **hard‑coded** in the source files (not fetched from PokeAPI or generated at runtime). It is a single‑source inventory to help with refactoring, migration to a database, or understanding where configuration values reside.
 
-### 11.1 Game and generation data
+### 12.1 Game and generation data
 
 | File | Constant | Purpose |
 |------|----------|---------|
@@ -465,7 +504,7 @@ This section lists all static data that is **hard‑coded** in the source files 
 | `pkm_pokeapi.py` | `VERSION_GROUP_TO_GEN` | Reverse mapping: version‑group slug → generation number (built from above). |
 | `pkm_pokeapi.py` | `_ROMAN` | Maps Roman numerals to integers (e.g., `"iv"` → 4). |
 
-### 11.2 Move scoring and recommendation data
+### 12.2 Move scoring and recommendation data
 
 | File | Constant | Purpose |
 |------|----------|---------|
@@ -482,7 +521,7 @@ This section lists all static data that is **hard‑coded** in the source files 
 | `feat_moveset.py` | `MAX_CONSTRAINTS` | Maximum number of locked moves (4). |
 | `feat_moveset.py` | `_MODE_LABELS` | Human‑readable labels for the three recommendation modes. |
 
-### 11.3 Team builder and analysis constants
+### 12.3 Team builder and analysis constants
 
 | File | Constant | Purpose |
 |------|----------|---------|
@@ -495,7 +534,7 @@ This section lists all static data that is **hard‑coded** in the source files 
 | `feat_team_moveset.py` | `_COL_MOVE`, `_BLOCK_SEP` | Layout constants for team moveset synergy. |
 | `feat_learnset_compare.py` | `_COL_NAME`, `_COL_TYPE`, `_COL_CAT`, `_COL_PWR`, `_COL_ACC`, `_SEP_W`, `_STAT_W` | Column widths for learnset comparison. |
 
-### 11.4 Nature and EV advisor
+### 12.4 Nature and EV advisor
 
 | File | Constant | Purpose |
 |------|----------|---------|
@@ -504,7 +543,7 @@ This section lists all static data that is **hard‑coded** in the source files 
 | `feat_nature_browser.py` | `_NATURE_MIN_GEN` | Generation in which natures were introduced (3). |
 | `feat_nature_browser.py` | `_PROFILE_NATURES` | Mapping of `(role, speed_tier)` → list of two (label, nature_name) pairs for EV profiles. |
 
-### 11.5 Egg groups and forms
+### 12.5 Egg groups and forms
 
 | File | Constant | Purpose |
 |------|----------|---------|
@@ -512,7 +551,7 @@ This section lists all static data that is **hard‑coded** in the source files 
 | `pkm_session.py` | `_FORM_GEN_KEYWORDS` | Keywords used to detect form generation (e.g., `"alolan"` → 7). |
 | `pkm_session.py` | `_MAX_SUGGESTIONS` | Maximum number of suggestions shown during fuzzy name search (8). |
 
-### 11.6 Type browser and stat comparison
+### 12.6 Type browser and stat comparison
 
 | File | Constant | Purpose |
 |------|----------|---------|
@@ -534,7 +573,7 @@ This section lists all static data that is **hard‑coded** in the source files 
 | `pkm_pokeapi.py` | `_SPECIAL_TYPES_GEN1_3` | Set of type names that were Special in Generations 1–3. |
 | `pkm_pokeapi.py` | `_LEARN_METHODS_KEPT` | Set of learn method slugs that we display (level‑up, machine, tutor, egg). |
 
-### 11.8 User interface layout
+### 12.8 User interface layout
 
 | File | Constant | Purpose |
 |------|----------|---------|

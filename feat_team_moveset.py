@@ -9,8 +9,8 @@ offensive coverage summary.
 Accessible via menu key S (needs team + game).
 
 Public API:
-  recommend_team_movesets(team_ctx, game_ctx, mode) -> list[dict]
-  run(team_ctx, game_ctx)   called from pokemain (key S)
+  recommend_team_movesets(team_ctx, game_ctx, mode, pool_cache, ui) -> list[dict]
+  run(team_ctx, game_ctx, pool_cache, ui)   called from pokemain (key S)
   main()                    standalone
 """
 
@@ -45,7 +45,8 @@ _BLOCK_SEP  = 56   # width of ═ / ─ separators
 # ── Core logic ─────────────────────────────────────────────────────────────
 
 def recommend_team_movesets(team_ctx: list, game_ctx: dict, mode: str,
-                            pool_cache: dict | None = None) -> list:
+                            pool_cache: dict | None = None,
+                            ui=None) -> list:
     """
     Compute a recommended moveset for each filled team slot.
 
@@ -73,7 +74,7 @@ def recommend_team_movesets(team_ctx: list, game_ctx: dict, mode: str,
         if pool_cache is not None and cache_key in pool_cache:
             damage_pool = pool_cache[cache_key]
         else:
-            pool        = build_candidate_pool(pkm, game_ctx)
+            pool        = build_candidate_pool(pkm, game_ctx, ui=ui)
             damage_pool = pool["damage"]
             if pool_cache is not None:
                 pool_cache[cache_key] = damage_pool
@@ -95,7 +96,7 @@ def recommend_team_movesets(team_ctx: list, game_ctx: dict, mode: str,
 
 # ── Display functions ──────────────────────────────────────────────────────
 
-def _display_member_block(result: dict, era_key: str) -> None:
+def _display_member_block(ui, result: dict, era_key: str) -> None:
     """Print the 5-line compact block for one team member."""
     form_name = result["form_name"]
     types_str = " / ".join(result["types"]) if result["types"] else "?"
@@ -104,14 +105,14 @@ def _display_member_block(result: dict, era_key: str) -> None:
     names = [m["name"] for m in result["moves"]]
     names += [None] * (4 - len(names))
 
-    print(f"  {form_name}  [{types_str}]")
-    print(f"  {format_weak_line(result['weakness_types'])}")
-    print(f"  {format_move_pair(names[0], names[1])}")
-    print(f"  {format_move_pair(names[2], names[3])}")
-    print(f"  {format_se_line(result['se_types'], era_key)}")
+    ui.print_output(f"  {form_name}  [{types_str}]")
+    ui.print_output(f"  {format_weak_line(result['weakness_types'])}")
+    ui.print_output(f"  {format_move_pair(names[0], names[1])}")
+    ui.print_output(f"  {format_move_pair(names[2], names[3])}")
+    ui.print_output(f"  {format_se_line(result['se_types'], era_key)}")
 
 
-def _display_coverage_summary(coverage: dict) -> None:
+def _display_coverage_summary(ui, coverage: dict) -> None:
     """
     Print the team offensive coverage summary block.
 
@@ -124,20 +125,20 @@ def _display_coverage_summary(coverage: dict) -> None:
     gaps    = coverage["gaps"]
     overlap = coverage["overlap"]
 
-    print("  ── Team coverage " + "─" * (_BLOCK_SEP - 17))
-    print(f"  Covered:  {len(covered)} / {total} types hit SE")
+    ui.print_output("  ── Team coverage " + "─" * (_BLOCK_SEP - 17))
+    ui.print_output(f"  Covered:  {len(covered)} / {total} types hit SE")
 
     if gaps:
-        print("  Gaps:     " + "  ".join(gaps))
+        ui.print_output("  Gaps:     " + "  ".join(gaps))
     else:
-        print("  Full coverage!")
+        ui.print_output("  Full coverage!")
 
     if overlap:
         parts = [f"{t} ({n})" for t, n in overlap]
-        print("  Overlap:  " + "  ".join(parts))
+        ui.print_output("  Overlap:  " + "  ".join(parts))
 
 
-def display_team_movesets(results: list, game_ctx: dict, mode: str) -> None:
+def display_team_movesets(ui, results: list, game_ctx: dict, mode: str) -> None:
     """
     Print the full team moveset synergy screen.
 
@@ -147,62 +148,79 @@ def display_team_movesets(results: list, game_ctx: dict, mode: str) -> None:
     era_key = game_ctx["era_key"]
     game    = game_ctx["game"]
 
-    print(f"\n  Team moveset synergy  |  {mode}  |  {game}")
-    print("  " + "═" * _BLOCK_SEP)
+    ui.print_output(f"\n  Team moveset synergy  |  {mode}  |  {game}")
+    ui.print_output("  " + "═" * _BLOCK_SEP)
 
     for i, result in enumerate(results):
         if i > 0:
-            print("  " + "─" * _BLOCK_SEP)
-        _display_member_block(result, era_key)
+            ui.print_output("  " + "─" * _BLOCK_SEP)
+        _display_member_block(ui, result, era_key)
 
-    print("  " + "═" * _BLOCK_SEP)
+    ui.print_output("  " + "═" * _BLOCK_SEP)
 
     coverage = build_offensive_coverage(results, era_key)
-    _display_coverage_summary(coverage)
-    print("  " + "═" * _BLOCK_SEP)
+    _display_coverage_summary(ui, coverage)
+    ui.print_output("  " + "═" * _BLOCK_SEP)
 
 
 # ── Interactive helpers ────────────────────────────────────────────────────
 
-def _mode_prompt() -> str:
+def _mode_prompt(ui) -> str:
     """Interactive mode selector. Returns one of the _MODES values."""
     while True:
-        print("\n  Select mode:")
-        print("    (C)overage")
-        print("    co(U)nter")
-        print("    (S)TAB")
-        choice = input("  Mode: ").strip().lower()
+        ui.print_output("\n  Select mode:")
+        ui.print_output("    (C)overage")
+        ui.print_output("    co(U)nter")
+        ui.print_output("    (S)TAB")
+        choice = ui.input_prompt("  Mode: ").strip().lower()
         if choice in _MODES:
             return _MODES[choice]
-        print("  Invalid choice — press C, U or S.")
+        ui.print_output("  Invalid choice — press C, U or S.")
 
 
 # ── Entry points ───────────────────────────────────────────────────────────
 
 def run(team_ctx: list, game_ctx: dict,
-        pool_cache: dict | None = None) -> None:
+        pool_cache: dict | None = None,
+        ui=None) -> None:
     """Menu entry point for key S — Team Moveset Synergy."""
+    if ui is None:
+        # Fallback dummy UI for standalone
+        import builtins
+        class DummyUI:
+            def print_output(self, text): builtins.print(text)
+            def input_prompt(self, prompt): return builtins.input(prompt)
+            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        ui = DummyUI()
+
     if team_size(team_ctx) == 0:
-        print("\n  Team is empty — load some Pokémon first (press T).")
+        ui.print_output("\n  Team is empty — load some Pokémon first (press T).")
         return
 
-    mode = _mode_prompt()
+    mode = _mode_prompt(ui)
     n    = team_size(team_ctx)
-    print(f"\n  Computing movesets for {n} member(s)...")
+    ui.print_output(f"\n  Computing movesets for {n} member(s)...")
     results = recommend_team_movesets(team_ctx, game_ctx, mode,
-                                      pool_cache=pool_cache)
-    display_team_movesets(results, game_ctx, mode)
+                                      pool_cache=pool_cache, ui=ui)
+    display_team_movesets(ui, results, game_ctx, mode)
 
-    print("\n  Press Enter to return to the main menu...")
-    input()
+    ui.input_prompt("\n  Press Enter to return to the main menu...")
 
 
 def main() -> None:
-    print()
-    print("  This module is not usable standalone.")
-    print("  Launch from pokemain.py instead.")
-    print()
-    input("  Press Enter to exit...")
+    # Dummy UI for standalone
+    import builtins
+    class DummyUI:
+        def print_output(self, text): builtins.print(text)
+        def input_prompt(self, prompt): return builtins.input(prompt)
+        def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+    ui = DummyUI()
+
+    ui.print_output("")
+    ui.print_output("  This module is not usable standalone.")
+    ui.print_output("  Launch from pokemain.py instead.")
+    ui.print_output("")
+    ui.input_prompt("  Press Enter to exit...")
 
 
 # ── Self-tests ─────────────────────────────────────────────────────────────
@@ -222,7 +240,7 @@ def _run_tests():
     # Most logic is now in core_team; we only test the wrapper and display.
 
     # ── recommend_team_movesets (mock pool) ─────────────────────────────────
-    def _mock_pool(pkm_ctx, game_ctx):
+    def _mock_pool(pkm_ctx, game_ctx, ui=None):
         return {"damage": [], "status": [], "skipped": 0}
 
     def _mock_combo(damage_pool, mode, weak_types, era_key, locked=None):
@@ -241,7 +259,13 @@ def _run_tests():
     game_ctx = {"era_key": "era3", "game": "Test", "game_slug": "test"}
 
     try:
-        results = recommend_team_movesets(team_ctx, game_ctx, "coverage")
+        # Use a dummy UI for the test to avoid printing
+        class DummyUI:
+            def print_output(self, text): pass
+            def input_prompt(self, prompt): return ""
+            def confirm(self, prompt): return False
+        dummy = DummyUI()
+        results = recommend_team_movesets(team_ctx, game_ctx, "coverage", ui=dummy)
         if len(results) == 1 and "form_name" in results[0]:
             ok("recommend_team_movesets: returns list of results")
         else:
@@ -259,10 +283,18 @@ def _run_tests():
         "weakness_types": ["Rock","Water","Electric"],
         "se_types": ["Grass","Bug","Steel"],
     }
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        display_team_movesets([fake_result], game_ctx, "coverage")
-    out = buf.getvalue()
+    class DummyUI2:
+        def __init__(self):
+            self.buf = io.StringIO()
+        def print_output(self, text):
+            self.buf.write(text + "\n")
+        def input_prompt(self, prompt):
+            return ""
+        def confirm(self, prompt):
+            return False
+    dummy2 = DummyUI2()
+    display_team_movesets(dummy2, [fake_result], game_ctx, "coverage")
+    out = dummy2.buf.getvalue()
     if "Charizard" in out and "Weak" in out and "SE" in out:
         ok("display_team_movesets: output contains expected elements")
     else:

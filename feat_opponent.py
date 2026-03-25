@@ -25,7 +25,7 @@ Data policy (recorded in trainers.json _meta):
   - Types are era-correct for the game (Clefable is Normal in Gen 1–5)
 
 Entry points:
-  run(team_ctx, game_ctx)   called from pokemain (key X)
+  run(team_ctx, game_ctx, ui=None)   called from pokemain (key X)
   main()                    standalone
 
 Public API:
@@ -241,13 +241,13 @@ def _version_indicator(games: list) -> str:
     return " (" + ",".join(letters) + ")"
 
 
-def pick_trainer_interactive(version_slugs: list, data: dict | None = None) -> str | None:
+def pick_trainer_interactive(ui, version_slugs: list, data: dict | None = None) -> str | None:
     """Interactive menu to pick a trainer from a list of version slugs."""
     if data is None:
         data = load_trainer_data()
     trainers = get_trainers_for_versions(version_slugs, data)
     if not trainers:
-        print(f"\n  No trainers found for versions {version_slugs}.")
+        ui.print_output(f"\n  No trainers found for versions {version_slugs}.")
         return None
     names = list_trainer_names_for_versions(version_slugs, data)
 
@@ -259,39 +259,39 @@ def pick_trainer_interactive(version_slugs: list, data: dict | None = None) -> s
         title = entry.get("title", "Unknown")
         display_names.append((name, ind, title))
 
-    print(f"\n  Select opponent  |  {', '.join(version_slugs).upper()}")
-    print("  " + "─" * 40)
+    ui.print_output(f"\n  Select opponent  |  {', '.join(version_slugs).upper()}")
+    ui.print_output("  " + "─" * 40)
     for i, (name, ind, title) in enumerate(display_names, 1):
-        print(f"   {i:2d}. {name}{ind:<12}  ({title})")
-    print("   0. Back")
-    print()
+        ui.print_output(f"   {i:2d}. {name}{ind:<12}  ({title})")
+    ui.print_output("   0. Back")
+    ui.print_output("")
 
     while True:
         try:
-            choice = input("  Enter choice: ").strip()
+            choice = ui.input_prompt("  Enter choice: ")
             if choice == "0":
                 return None
             idx = int(choice) - 1
             if 0 <= idx < len(names):
                 return names[idx]
             else:
-                print("  Invalid choice. Try again.")
+                ui.print_output("  Invalid choice. Try again.")
         except ValueError:
-            print("  Invalid input. Enter a number.")
+            ui.print_output("  Invalid input. Enter a number.")
 
 
-def display_matchup_results(results: list, trainer_name: str, team_ctx: list,
+def display_matchup_results(ui, results: list, trainer_name: str, team_ctx: list,
                             version_slugs: list) -> None:
     """Display formatted matchup analysis results."""
     if not results:
-        print("\n  No analysis available.")
+        ui.print_output("\n  No analysis available.")
         return
 
     slugs_str = ", ".join(version_slugs).upper()
-    print()
-    print("╔" + "═" * 78 + "╗")
-    print(f"║  {trainer_name.upper()} — {slugs_str:<70}║")
-    print("╚" + "═" * 78 + "╝")
+    ui.print_output("")
+    ui.print_output("╔" + "═" * 78 + "╗")
+    ui.print_output(f"║  {trainer_name.upper()} — {slugs_str:<70}║")
+    ui.print_output("╚" + "═" * 78 + "╝")
 
     for result in results:
         opp_name = result["name"]
@@ -299,87 +299,97 @@ def display_matchup_results(results: list, trainer_name: str, team_ctx: list,
         opp_level = result["level"]
         opp_moves = ", ".join(result.get("moves", [])) if "moves" in result else ""
 
-        print(f"\n  {opp_name} (Lvl {opp_level})  |  {opp_types}")
+        ui.print_output(f"\n  {opp_name} (Lvl {opp_level})  |  {opp_types}")
         if opp_moves:
-            print(f"     Moves: {opp_moves}")
-        print("  " + "─" * 76)
+            ui.print_output(f"     Moves: {opp_moves}")
+        ui.print_output("  " + "─" * 76)
 
         threats = result.get("threats", [])
         if threats:
-            print("  ⚠️  WEAK TO (opponent's moves):")
+            ui.print_output("  ⚠️  WEAK TO (opponent's moves):")
             for threat in sorted(threats, key=lambda x: -x["multiplier"]):
                 form_name = threat["form_name"]
                 mult = threat["multiplier"]
                 move_types = ", ".join(threat.get("move_types", []))
                 mult_str = f"{mult:.1f}x"
-                print(f"       • {form_name:<20}  {mult_str}  to {move_types}")
+                ui.print_output(f"       • {form_name:<20}  {mult_str}  to {move_types}")
         else:
-            print("  ✓  Team is not hit SE by your opponent's moves")
+            ui.print_output("  ✓  Team is not hit SE by your opponent's moves")
 
         resists = result.get("resists", [])
         if resists:
-            print("  ✓  RESISTS (opponent's moves):")
+            ui.print_output("  ✓  RESISTS (opponent's moves):")
             for resist in sorted(resists, key=lambda x: x["multiplier"]):
                 form_name = resist["form_name"]
                 mult = resist["multiplier"]
                 move_types = ", ".join(resist.get("move_types", []))
                 mult_str = f"{mult:.1f}x"
-                print(f"       • {form_name:<20}  {mult_str} resistance  to {move_types}")
+                ui.print_output(f"       • {form_name:<20}  {mult_str} resistance  to {move_types}")
 
         counters = result.get("counters", [])
         if counters:
-            print("  💥 HITS SE (your STAB moves):")
+            ui.print_output("  💥 HITS SE (your STAB moves):")
             for counter in counters:
                 form_name = counter["form_name"]
                 move_types = ", ".join(counter.get("move_types", []))
-                print(f"       • {form_name:<20}  with {move_types}")
+                ui.print_output(f"       • {form_name:<20}  with {move_types}")
         else:
-            print("  ❌ No STAB coverage against this opponent")
+            ui.print_output("  ❌ No STAB coverage against this opponent")
 
-    print("\n" + "=" * 80)
+    ui.print_output("")
+    ui.print_output("=" * 80)
 
     uncovered = uncovered_threats(results)
     if uncovered:
-        print(f"\n  ❌ UNCOVERED THREATS ({len(uncovered)}/{len(results)}):")
+        ui.print_output(f"\n  ❌ UNCOVERED THREATS ({len(uncovered)}/{len(results)}):")
         for threat in uncovered:
-            print(f"     • {threat['name']} (Lvl {threat['level']})  {', '.join(threat['types'])}")
+            ui.print_output(f"     • {threat['name']} (Lvl {threat['level']})  {', '.join(threat['types'])}")
     else:
-        print(f"\n  ✓ All opponents are hit SE by your STAB moves!")
+        ui.print_output(f"\n  ✓ All opponents are hit SE by your STAB moves!")
 
     leads = recommended_leads(results, team_ctx)
     if leads:
-        print(f"\n  💡 RECOMMENDED LEADS (by STAB coverage):")
+        ui.print_output(f"\n  💡 RECOMMENDED LEADS (by STAB coverage):")
         for i, lead in enumerate(leads, 1):
             coverage_count = sum(
                 1 for result in results
                 if any(c["form_name"] == lead for c in result.get("counters", []))
             )
-            print(f"     {i}. {lead:<20}  (hits {coverage_count} opponent(s) SE with STAB)")
+            ui.print_output(f"     {i}. {lead:<20}  (hits {coverage_count} opponent(s) SE with STAB)")
     else:
-        print("\n  No recommended leads available.")
+        ui.print_output("\n  No recommended leads available.")
 
-    print()
+    ui.print_output("")
 
 
 # ── Entry point: run() for pokemain integration ────────────────────────────────
 
-def run(team_ctx: list, game_ctx: dict) -> None:
+def run(team_ctx: list, game_ctx: dict, ui=None) -> None:
     """
     Called from pokemain (key X).
 
     Interactive trainer picker + analysis display.
     """
+    if ui is None:
+        # Fallback dummy UI for standalone
+        import builtins
+        class DummyUI:
+            def print_output(self, text): builtins.print(text)
+            def input_prompt(self, prompt): return builtins.input(prompt)
+            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        ui = DummyUI()
+
     if not team_ctx:
-        print("\n  No team loaded.")
-        input("\n  Press Enter to continue...")
+        ui.print_output("\n  No team loaded.")
+        ui.input_prompt("\n  Press Enter to continue...")
         return
 
     version_slugs = game_ctx.get("version_slugs", [])
     if not version_slugs:
         game_slug = game_ctx.get("game_slug", "")
         if not game_slug:
-            print("\n  No game selected.")
-            input("\n  Press Enter to continue...")
+            ui.print_output("\n  No game selected.")
+            ui.input_prompt("\n  Press Enter to continue...")
             return
         version_slugs = [game_slug]
 
@@ -387,18 +397,18 @@ def run(team_ctx: list, game_ctx: dict) -> None:
 
     data = load_trainer_data()
     if not data:
-        print("\n  Trainer data not available.")
-        input("\n  Press Enter to continue...")
+        ui.print_output("\n  Trainer data not available.")
+        ui.input_prompt("\n  Press Enter to continue...")
         return
 
-    trainer_name = pick_trainer_interactive(version_slugs, data)
+    trainer_name = pick_trainer_interactive(ui, version_slugs, data)
     if trainer_name is None:
         return
 
     trainer = get_trainer_for_versions(version_slugs, trainer_name, data)
     if not trainer:
-        print(f"\n  Trainer '{trainer_name}' not found.")
-        input("\n  Press Enter to continue...")
+        ui.print_output(f"\n  Trainer '{trainer_name}' not found.")
+        ui.input_prompt("\n  Press Enter to continue...")
         return
 
     # Build opponent_team list with resolved move types
@@ -416,38 +426,46 @@ def run(team_ctx: list, game_ctx: dict) -> None:
     results = analyze_matchup(team_ctx, opponent_team, era_key)
 
     # Display results (display function still here)
-    display_matchup_results(results, trainer_name, team_ctx, version_slugs)
+    display_matchup_results(ui, results, trainer_name, team_ctx, version_slugs)
 
-    input("  Press Enter to continue...")
+    ui.input_prompt("  Press Enter to continue...")
 
 
 # ── Main menu (standalone) ────────────────────────────────────────────────────
 
 def main() -> None:
-    print()
-    print("╔══════════════════════════════════════════╗")
-    print("║      Team vs In-Game Opponent            ║")
-    print("╚══════════════════════════════════════════╝")
+    # Dummy UI for standalone
+    import builtins
+    class DummyUI:
+        def print_output(self, text): builtins.print(text)
+        def input_prompt(self, prompt): return builtins.input(prompt)
+        def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+    ui = DummyUI()
+
+    ui.print_output("")
+    ui.print_output("╔══════════════════════════════════════════╗")
+    ui.print_output("║      Team vs In-Game Opponent            ║")
+    ui.print_output("╚══════════════════════════════════════════╝")
 
     data = load_trainer_data()
     if not data:
-        print("\n  Trainer data not loaded.")
-        input("\n  Press Enter to exit...")
+        ui.print_output("\n  Trainer data not loaded.")
+        ui.input_prompt("\n  Press Enter to exit...")
         return
 
     # Determine generation for each game slug (for sorting)
     gen_map = {slug: pokeapi.VERSION_GROUP_TO_GEN.get(slug, 99) for slug in data.keys()}
     games_sorted = sorted(data.keys(), key=lambda slug: (gen_map.get(slug, 99), slug))
 
-    print(f"\n  Games with trainer data ({len(data)}):")
+    ui.print_output(f"\n  Games with trainer data ({len(data)}):")
     for i, game_slug in enumerate(games_sorted, 1):
         names = list_trainer_names(game_slug, data)
-        print(f"    {i}. {game_slug:<30}  {len(names)} trainers")
+        ui.print_output(f"    {i}. {game_slug:<30}  {len(names)} trainers")
 
-    print("\n  Select a game to browse trainers:")
+    ui.print_output("\n  Select a game to browse trainers:")
     while True:
         try:
-            choice = input("  Enter choice (or 0 to exit): ").strip()
+            choice = ui.input_prompt("  Enter choice (or 0 to exit): ")
             if choice == "0":
                 return
             idx = int(choice) - 1
@@ -455,18 +473,18 @@ def main() -> None:
                 game_slug = games_sorted[idx]
                 break
             else:
-                print("  Invalid choice. Try again.")
+                ui.print_output("  Invalid choice. Try again.")
         except ValueError:
-            print("  Invalid input.")
+            ui.print_output("  Invalid input.")
 
     version_slugs = [game_slug]
-    trainer_name = pick_trainer_interactive(version_slugs, data)
+    trainer_name = pick_trainer_interactive(ui, version_slugs, data)
     if trainer_name is None:
         return
 
     trainer = get_trainer_for_versions(version_slugs, trainer_name, data)
     if not trainer:
-        print(f"\n  Trainer not found.")
+        ui.print_output(f"\n  Trainer not found.")
         return
 
     # For demo, use a sample team
@@ -488,9 +506,9 @@ def main() -> None:
         })
 
     results = analyze_matchup(sample_team, opponent_team, "era1")
-    display_matchup_results(results, trainer_name, sample_team, version_slugs)
+    display_matchup_results(ui, results, trainer_name, sample_team, version_slugs)
 
-    input("  Press Enter to exit...")
+    ui.input_prompt("  Press Enter to exit...")
 
 
 # ── Self-tests ────────────────────────────────────────────────────────────────
@@ -545,9 +563,15 @@ def _run_tests():
     import builtins
     real_input = builtins.input
     builtins.input = lambda p="": "1"
+    # Create dummy UI for test
+    class DummyUI:
+        def print_output(self, text): print(text)
+        def input_prompt(self, prompt): return builtins.input(prompt)
+        def confirm(self, prompt): return False
+    dummy = DummyUI()
     f = io.StringIO()
     with contextlib.redirect_stdout(f):
-        name = pick_trainer_interactive(["red-blue", "yellow"], _fixture)
+        name = pick_trainer_interactive(dummy, ["red-blue", "yellow"], _fixture)
     builtins.input = real_input
     if name == "Brock":
         ok("pick_trainer_interactive: returns correct name")
@@ -559,7 +583,7 @@ def _run_tests():
                 "threats": [], "resists": [], "counters": []}]
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        display_matchup_results(results, "Brock", [], ["red-blue"])
+        display_matchup_results(dummy, results, "Brock", [], ["red-blue"])
     out = buf.getvalue()
     if "BROCK" in out and "Geodude" in out:
         ok("display_matchup_results: renders trainer and opponent")

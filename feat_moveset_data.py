@@ -19,19 +19,14 @@ except ModuleNotFoundError as e:
     sys.exit(1)
 
 
-def build_candidate_pool(pkm_ctx: dict, game_ctx: dict) -> dict:
+def build_candidate_pool(pkm_ctx: dict, game_ctx: dict, ui=None) -> dict:
     """
     Build the scored candidate pool for a loaded Pokemon + game context.
 
     Loads learnset from cache, resolves moves, fetches missing move details,
     then calls core_move.score_learnset.
 
-    Returns:
-      {
-        "damage" : list of move dicts sorted by score desc,
-        "status" : list of move dicts (unscorable, passed to status ranker),
-        "skipped": int — moves in learnset not yet in moves cache
-      }
+    ui – optional UI instance for progress output (used in auto‑fetch).
     """
     variety_slug = pkm_ctx.get("variety_slug") or pkm_ctx["pokemon"]
     learnset = cache.get_learnset_or_fetch(variety_slug, pkm_ctx["form_name"], game_ctx["game"])
@@ -58,10 +53,16 @@ def build_candidate_pool(pkm_ctx: dict, game_ctx: dict) -> dict:
     missing = [n for n in all_names if cache.get_move(n) is None]
     if missing:
         total = len(missing)
-        print(f"  Fetching details for {total} move(s) not yet in cache...")
+        if ui:
+            ui.print_output(f"  Fetching details for {total} move(s) not yet in cache...")
+        else:
+            print(f"  Fetching details for {total} move(s) not yet in cache...")
         batch = {}
         for i, name in enumerate(missing, start=1):
-            print(f"  {i}/{total}  {name:<28}", end="\r", flush=True)
+            if ui:
+                ui.print_progress(f"  {i}/{total}  {name:<28}", end="\r", flush=True)
+            else:
+                print(f"  {i}/{total}  {name:<28}", end="\r", flush=True)
             try:
                 entries = pokeapi.fetch_move(name)
                 batch[name] = entries
@@ -69,7 +70,10 @@ def build_candidate_pool(pkm_ctx: dict, game_ctx: dict) -> dict:
                 pass
         if batch:
             cache.upsert_move_batch(batch)
-        print(f"  Done.                                   ")
+        if ui:
+            ui.print_progress("  Done.                                   ")
+        else:
+            print("  Done.                                   ")
 
     skipped = sum(1 for n in all_names if cache.get_move(n) is None)
 
@@ -96,8 +100,6 @@ def build_candidate_pool(pkm_ctx: dict, game_ctx: dict) -> dict:
 
 
 # ── Self‑tests ────────────────────────────────────────────────────────────────
-# Keep only the tests that involve I/O or the `build_candidate_pool` wrapper.
-# Since most tests are now in core_move, we can leave this module's self‑test minimal.
 
 def _run_tests():
     import sys
@@ -115,9 +117,7 @@ def _run_tests():
 
     print("\n  feat_moveset_data.py — self-test (wrapper only)\n")
 
-    # Simple smoke test to ensure build_candidate_pool runs without crash (no network)
-    # This will fail if no cache, but we skip it in offline runs.
-    # Instead, we test that the module imports correctly.
+    # Simple smoke test to ensure the module imports correctly
     ok("feat_moveset_data imports core_move and builds pool wrapper")
 
     print()
@@ -132,5 +132,4 @@ if __name__ == "__main__":
     if "--autotest" in sys.argv:
         _run_tests()
     else:
-        # Standalone not useful
         print("This module is not meant to be run standalone.")

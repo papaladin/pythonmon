@@ -3,9 +3,9 @@
 feat_moveset.py  Moveset recommendation feature.
 
 Entry points:
-  run_scored_pool(pkm_ctx, game_ctx)   — option 3: full ranked pool (no combo)
-  run(pkm_ctx, game_ctx, constraints)  — option 4: moveset recommendation
-  main()                               — standalone entry point
+  run_scored_pool(pkm_ctx, game_ctx, ui=None)   — option 3: full ranked pool (no combo)
+  run(pkm_ctx, game_ctx, constraints, ui=None)  — option 4: moveset recommendation
+  main()                                        — standalone entry point
 
 Sub-menu lets the user pick a recommendation mode:
   Coverage  — maximises type coverage (unique types hit SE)
@@ -26,7 +26,6 @@ except ModuleNotFoundError as e:
     print(f"\n  ERROR: {e}")
     print("  Make sure all files are in the same folder.\n")
     sys.exit(1)
-
 
 
 # ── Display constants ─────────────────────────────────────────────────────────
@@ -82,42 +81,40 @@ def _breakdown(row, game_gen, base_stats):
 
 # ── Combo display ─────────────────────────────────────────────────────────────
 
-def _print_combo(combo, label, game_gen, base_stats):
+def _print_combo(ui, combo, label, game_gen, base_stats):
     """Print one 4-move combo block with header label."""
-    print()
+    ui.print_output("")
     hdr = f"  {label} "
     fill = max(0, 68 - len(hdr))
-    print(hdr + "─" * fill)
-    print(f"  {'Move':<22}{'Type':<12}{'Cat':<10}{'Pwr':>5}{'Acc':>6}  Notes")
-    print("  " + "─" * 72)
+    ui.print_output(hdr + "─" * fill)
+    ui.print_output(f"  {'Move':<22}{'Type':<12}{'Cat':<10}{'Pwr':>5}{'Acc':>6}  Notes")
+    ui.print_output("  " + "─" * 72)
     for row in combo:
         pwr = str(row["power"])    if row["power"]    is not None else "--"
         acc = str(row["accuracy"]) if row["accuracy"] is not None else "--"
         bd  = _breakdown(row, game_gen, base_stats)
-        print(f"  {row['name']:<22}{row['type']:<12}{row['category']:<10}"
-              f"{pwr:>5}{acc:>5}%  {bd}")
+        ui.print_output(f"  {row['name']:<22}{row['type']:<12}{row['category']:<10}"
+                        f"{pwr:>5}{acc:>5}%  {bd}")
     if len(combo) < 4:
         empty = 4 - len(combo)
         slot_word = "slot" if empty == 1 else "slots"
-        print(f"  ({'─' * 70})")
-        print(f"  Only {len(combo)} move type(s) available — "
-              f"{empty} {slot_word} left unfilled")
+        ui.print_output(f"  ({'─' * 70})")
+        ui.print_output(f"  Only {len(combo)} move type(s) available — "
+                        f"{empty} {slot_word} left unfilled")
 
 
-def _print_status(ranked, total_status):
+def _print_status(ui, ranked, total_status):
     """Print ranked status move recommendations."""
     if not ranked:
         return
-    print()
-    print(f"  Recommended status moves  ({len(ranked)} of {total_status})")
-    print("  " + "─" * 56)
-    print(f"  {'Move':<22}{'Type':<12}{'Tier':<18}{'Quality':>7}")
-    print("  " + "─" * 56)
+    ui.print_output("")
+    ui.print_output(f"  Recommended status moves  ({len(ranked)} of {total_status})")
+    ui.print_output("  " + "─" * 56)
+    ui.print_output(f"  {'Move':<22}{'Type':<12}{'Tier':<18}{'Quality':>7}")
+    ui.print_output("  " + "─" * 56)
     for row in ranked:
-        print(f"  {row['name']:<22}{row['type']:<12}"
-              f"{row['tier_label']:<18}{row['quality']:>7}")
-
-
+        ui.print_output(f"  {row['name']:<22}{row['type']:<12}"
+                        f"{row['tier_label']:<18}{row['quality']:>7}")
 
 
 # ── Type coverage summary ─────────────────────────────────────────────────────
@@ -145,7 +142,7 @@ def _compute_coverage(combo, era_key):
     return se_types, gap_types
 
 
-def _print_coverage(combo, era_key, weak_types=None, damage_pool=None):
+def _print_coverage(ui, combo, era_key, weak_types=None, damage_pool=None):
     """
     Print type coverage summary and own-weakness coverage line.
 
@@ -157,16 +154,16 @@ def _print_coverage(combo, era_key, weak_types=None, damage_pool=None):
     se_types, gap_types = _compute_coverage(combo, era_key)
     n_types = len(calc.CHARTS[era_key][1])  # total type count for the era
 
-    print()
-    print("  ── Type coverage " + "─" * 49)
+    ui.print_output("")
+    ui.print_output("  ── Type coverage " + "─" * 49)
 
     # SE hits
     se_str = "  ".join(se_types) if se_types else "—"
-    print(f"  Hits SE  [{len(se_types):2d}/{n_types}]:  {se_str}")
+    ui.print_output(f"  Hits SE  [{len(se_types):2d}/{n_types}]:  {se_str}")
 
     # Gaps (not shown if none)
     if gap_types:
-        print(f"  Gaps     [{len(gap_types):2d}/{n_types}]:  " + "  ".join(gap_types))
+        ui.print_output(f"  Gaps     [{len(gap_types):2d}/{n_types}]:  " + "  ".join(gap_types))
 
     # Own-weakness coverage
     if weak_types:
@@ -189,11 +186,12 @@ def _print_coverage(combo, era_key, weak_types=None, damage_pool=None):
             else:
                 parts.append(f"✗ {t}")
 
-        print(f"  Weakness coverage [{len(covered):2d}/{len(weak_types):2d}]:  " + "  ".join(parts))
+        ui.print_output(f"  Weakness coverage [{len(covered):2d}/{len(weak_types):2d}]:  " + "  ".join(parts))
+
 
 # ── Pool header ───────────────────────────────────────────────────────────────
 
-def _print_header(pkm_ctx, game_ctx, pool):
+def _print_header(ui, pkm_ctx, game_ctx, pool):
     defense    = calc.compute_defense(game_ctx["era_key"],
                                       pkm_ctx["type1"], pkm_ctx["type2"])
     weaknesses = sorted([t for t, m in defense.items() if m > 1.0],
@@ -201,16 +199,16 @@ def _print_header(pkm_ctx, game_ctx, pool):
     types_str  = " / ".join(pkm_ctx["types"])
     stats      = pkm_ctx.get("base_stats", {})
 
-    print()
-    print(f"  {pkm_ctx['form_name']}  [{types_str}]  "
-          f"Atk {stats.get('attack','?')}  SpA {stats.get('special-attack','?')}")
-    print(f"  {game_ctx['game']}  (Gen {game_ctx['game_gen']})")
+    ui.print_output("")
+    ui.print_output(f"  {pkm_ctx['form_name']}  [{types_str}]  "
+                    f"Atk {stats.get('attack','?')}  SpA {stats.get('special-attack','?')}")
+    ui.print_output(f"  {game_ctx['game']}  (Gen {game_ctx['game_gen']})")
     if weaknesses:
         weak_str = "  ".join(f"{t} x{defense[t]:.0f}" for t in weaknesses)
-        print(f"  Weak to: {weak_str}")
+        ui.print_output(f"  Weak to: {weak_str}")
     d, s, sk = len(pool["damage"]), len(pool["status"]), pool["skipped"]
     skipped_note = f"  ({sk} skipped)" if sk else ""
-    print(f"  Pool: {d} damage  |  {s} status{skipped_note}")
+    ui.print_output(f"  Pool: {d} damage  |  {s} status{skipped_note}")
 
 
 # ── Locked-slot resolver ──────────────────────────────────────────────────────
@@ -252,28 +250,26 @@ _MODE_LABELS = {
     "stab"    : "STAB      —  maximises same-type moves",
 }
 
-def _show_mode(mode, damage, status_ranked, total_status,
+def _show_mode(ui, mode, damage, status_ranked, total_status,
                weak_types, era_key, game_gen, base_stats, locked):
     combo = select_combo(damage, mode, weak_types, era_key, locked=locked)
-    _print_combo(combo, _MODE_LABELS[mode], game_gen, base_stats)
-    _print_coverage(combo, era_key, weak_types, damage_pool=damage)
-    _print_status(status_ranked, total_status)
+    _print_combo(ui, combo, _MODE_LABELS[mode], game_gen, base_stats)
+    _print_coverage(ui, combo, era_key, weak_types, damage_pool=damage)
+    _print_status(ui, status_ranked, total_status)
 
 
-def _show_all(damage, status_ranked, total_status,
+def _show_all(ui, damage, status_ranked, total_status,
               weak_types, era_key, game_gen, base_stats, locked):
     modes = ("coverage", "counter", "stab")
     for i, mode in enumerate(modes):
         if i > 0:
-            print()
-            print()
+            ui.print_output("")
+            ui.print_output("")
         combo = select_combo(damage, mode, weak_types, era_key, locked=locked)
-        _print_combo(combo, _MODE_LABELS[mode], game_gen, base_stats)
-        _print_coverage(combo, era_key, weak_types, damage_pool=damage)
-    print()
-    _print_status(status_ranked, total_status)
-
-
+        _print_combo(ui, combo, _MODE_LABELS[mode], game_gen, base_stats)
+        _print_coverage(ui, combo, era_key, weak_types, damage_pool=damage)
+    ui.print_output("")
+    _print_status(ui, status_ranked, total_status)
 
 
 # ── Scored pool filter helpers ────────────────────────────────────────────────
@@ -292,7 +288,7 @@ def _adapt_pool_for_filter(pool: list) -> list:
     return [(str(i + 1), r["name"], r) for i, r in enumerate(pool)]
 
 
-def _display_filtered_scored_pool(damage: list, status_ranked: list,
+def _display_filtered_scored_pool(ui, damage: list, status_ranked: list,
                                    f: dict, game_gen: int,
                                    base_stats: dict) -> None:
     """
@@ -308,45 +304,45 @@ def _display_filtered_scored_pool(damage: list, status_ranked: list,
     total_d  = len(damage)
 
     # Filter summary
-    print(f"\n  [ filter: {_filter_summary(f)} ]")
+    ui.print_output(f"\n  [ filter: {_filter_summary(f)} ]")
 
     # Damage section
-    print()
+    ui.print_output("")
     hdr = "  ATTACK MOVES — ranked by score "
-    print(hdr + "─" * max(0, 72 - len(hdr)))
+    ui.print_output(hdr + "─" * max(0, 72 - len(hdr)))
     if filtered:
-        print(f"  {'#':<4}{'Move':<22}{'Type':<12}{'Cat':<10}"
-              f"{'Pwr':>5}{'Acc':>6}  {'Score':>7}  Notes")
-        print("  " + "─" * 80)
+        ui.print_output(f"  {'#':<4}{'Move':<22}{'Type':<12}{'Cat':<10}"
+                        f"{'Pwr':>5}{'Acc':>6}  {'Score':>7}  Notes")
+        ui.print_output("  " + "─" * 80)
         for rank, (_label, _name, row) in enumerate(filtered, start=1):
             pwr = str(row["power"])    if row["power"]    is not None else "--"
             acc = str(row["accuracy"]) if row["accuracy"] is not None else "--"
             bd  = _breakdown(row, game_gen, base_stats)
-            print(f"  {rank:<4}{row['name']:<22}{row['type']:<12}{row['category']:<10}"
-                  f"{pwr:>5}{acc:>5}%  {row['score']:>7.1f}  {bd}")
-        print(f"\n  Showing {len(filtered)} of {total_d} attack moves (filtered)")
+            ui.print_output(f"  {rank:<4}{row['name']:<22}{row['type']:<12}{row['category']:<10}"
+                            f"{pwr:>5}{acc:>5}%  {row['score']:>7.1f}  {bd}")
+        ui.print_output(f"\n  Showing {len(filtered)} of {total_d} attack moves (filtered)")
     else:
-        print("  (no moves match filter)")
+        ui.print_output("  (no moves match filter)")
 
     # Status section — apply type filter only
-    print()
+    ui.print_output("")
     hdr = "  STATUS MOVES — ranked by tier & quality "
-    print(hdr + "─" * max(0, 72 - len(hdr)))
+    ui.print_output(hdr + "─" * max(0, 72 - len(hdr)))
     if status_ranked:
         type_filter = f.get("type")
         shown_status = [r for r in status_ranked
                         if not type_filter
                         or r.get("type", "").lower() == type_filter.lower()]
         if shown_status:
-            print(f"  {'Move':<22}{'Type':<12}{'Tier':<20}{'Quality':>7}")
-            print("  " + "─" * 62)
+            ui.print_output(f"  {'Move':<22}{'Type':<12}{'Tier':<20}{'Quality':>7}")
+            ui.print_output("  " + "─" * 62)
             for row in shown_status:
-                print(f"  {row['name']:<22}{row['type']:<12}"
-                      f"{row['tier_label']:<20}{row['quality']:>7}")
+                ui.print_output(f"  {row['name']:<22}{row['type']:<12}"
+                                f"{row['tier_label']:<20}{row['quality']:>7}")
         else:
-            print("  (no status moves match filter)")
+            ui.print_output("  (no status moves match filter)")
     else:
-        print("  (none)")
+        ui.print_output("  (none)")
 
 
 # ── 8a: Learnset name set ─────────────────────────────────────────────────────
@@ -406,12 +402,6 @@ def match_move(user_input: str, valid_names: set) -> tuple:
     Returns (matched_name, status) where:
       matched_name — the canonical display name, or None
       status       — one of: "exact" | "prefix" | "ambiguous" | "not_found"
-
-    Examples:
-      ("flamethrower", {...})  → ("Flamethrower", "exact")
-      ("flame", {...})         → ("Flamethrower", "prefix")   # if unambiguous
-      ("fire", {...})          → (None, "ambiguous")           # Fire Blast + Fire Punch + ...
-      ("xyz", {...})           → (None, "not_found")
     """
     needle = user_input.strip().lower() if user_input else ""
     if not needle:
@@ -436,7 +426,7 @@ def match_move(user_input: str, valid_names: set) -> tuple:
 
 MAX_CONSTRAINTS = 4
 
-def collect_constraints(pkm_ctx: dict, game_ctx: dict,
+def collect_constraints(ui, pkm_ctx: dict, game_ctx: dict,
                         existing: list = None) -> list:
     """
     Interactive loop — lets the user add up to MAX_CONSTRAINTS locked moves.
@@ -458,7 +448,7 @@ def collect_constraints(pkm_ctx: dict, game_ctx: dict,
     """
     learnable = get_learnable_names(pkm_ctx, game_ctx)
     if not learnable:
-        print("  Could not load learnset — locked moves unavailable.")
+        ui.print_output("  Could not load learnset — locked moves unavailable.")
         return list(existing or [])
 
     locked = list(existing or [])
@@ -466,23 +456,23 @@ def collect_constraints(pkm_ctx: dict, game_ctx: dict,
     while True:
         remaining = MAX_CONSTRAINTS - len(locked)
 
-        print()
+        ui.print_output("")
         if locked:
-            print(f"  Locked moves ({len(locked)}/{MAX_CONSTRAINTS}): "
-                  f"{', '.join(locked)}")
+            ui.print_output(f"  Locked moves ({len(locked)}/{MAX_CONSTRAINTS}): "
+                            f"{', '.join(locked)}")
         else:
-            print(f"  No moves locked yet.")
+            ui.print_output(f"  No moves locked yet.")
 
         if remaining == 0:
-            print("  Maximum of 4 locked moves reached.")
+            ui.print_output("  Maximum of 4 locked moves reached.")
             break
 
-        print(f"  Enter a move to lock ({remaining} slot(s) remaining),")
-        print("  or press Enter / type 'done' to proceed to the recommendation.")
+        ui.print_output(f"  Enter a move to lock ({remaining} slot(s) remaining),")
+        ui.print_output("  or press Enter / type 'done' to proceed to the recommendation.")
         if locked:
-            print("  Type 'clear' to remove all locked moves.")
+            ui.print_output("  Type 'clear' to remove all locked moves.")
 
-        raw = input("  Move: ").strip()
+        raw = ui.input_prompt("  Move: ")
 
         # ── Exit conditions ────────────────────────────────────────────────────
         if raw.lower() in ("", "skip", "done", "q"):
@@ -490,40 +480,40 @@ def collect_constraints(pkm_ctx: dict, game_ctx: dict,
 
         if raw.lower() == "clear":
             locked = []
-            print("  Locked moves cleared.")
+            ui.print_output("  Locked moves cleared.")
             continue
 
         # ── Validate against learnset ──────────────────────────────────────────
         name, status = match_move(raw, learnable)
 
         if status == "not_found":
-            print(f"  '{raw}' not found in {pkm_ctx['form_name']}'s learnset "
-                  f"for {game_ctx['game']}.")
-            print("  Try again or press Enter to skip.")
+            ui.print_output(f"  '{raw}' not found in {pkm_ctx['form_name']}'s learnset "
+                            f"for {game_ctx['game']}.")
+            ui.print_output("  Try again or press Enter to skip.")
             continue
 
         if status == "ambiguous":
             candidates = sorted(n for n in learnable
                                 if n.lower().startswith(raw.strip().lower()))
-            print(f"  '{raw}' matches multiple moves: "
-                  f"{', '.join(candidates[:6])}"
-                  f"{'...' if len(candidates) > 6 else ''}")
-            print("  Please be more specific.")
+            ui.print_output(f"  '{raw}' matches multiple moves: "
+                            f"{', '.join(candidates[:6])}"
+                            f"{'...' if len(candidates) > 6 else ''}")
+            ui.print_output("  Please be more specific.")
             continue
 
         # status is "exact" or "prefix" — name is resolved
         if status == "prefix":
-            confirm = input(f"  Did you mean '{name}'? (y/n): ").strip().lower()
-            if confirm != "y":
+            confirm = ui.confirm(f"  Did you mean '{name}'?")
+            if not confirm:
                 continue
 
         # ── Duplicate check ────────────────────────────────────────────────────
         if name in locked:
-            print(f"  '{name}' is already locked.")
+            ui.print_output(f"  '{name}' is already locked.")
             continue
 
         locked.append(name)
-        print(f"  Locked: {name}")
+        ui.print_output(f"  Locked: {name}")
 
     return locked
 
@@ -532,7 +522,7 @@ def collect_constraints(pkm_ctx: dict, game_ctx: dict,
 
 # ── Scored pool display ───────────────────────────────────────────────────────
 
-def run_scored_pool(pkm_ctx, game_ctx):
+def run_scored_pool(pkm_ctx, game_ctx, ui=None):
     """
     Show the full scored move pool for a Pokemon + game.
     Called from pokemain.py option 3 ("Learnable move list scoring").
@@ -543,14 +533,24 @@ def run_scored_pool(pkm_ctx, game_ctx):
 
     No combo selection, no locked slots — pure ranked list.
     """
-    print_session_header(pkm_ctx, game_ctx)
-    print("\n  Building scored pool...")
+    if ui is None:
+        # Fallback for standalone (dummy)
+        import builtins
+        class DummyUI:
+            def print_output(self, text): builtins.print(text)
+            def print_progress(self, text, end="\n", flush=False): builtins.print(text, end=end, flush=flush)
+            def input_prompt(self, prompt): return builtins.input(prompt)
+            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        ui = DummyUI()
+
+    ui.print_session_header(pkm_ctx, game_ctx)
+    ui.print_output("\n  Building scored pool...")
 
     try:
-        pool = build_candidate_pool(pkm_ctx, game_ctx)
+        pool = build_candidate_pool(pkm_ctx, game_ctx, ui=ui)
     except (ConnectionError, ValueError) as e:
-        print(f"\n  Could not build pool: {e}")
-        input("  Press Enter to continue...")
+        ui.print_output(f"\n  Could not build pool: {e}")
+        ui.input_prompt("  Press Enter to continue...")
         return
 
     damage = pool["damage"]
@@ -558,66 +558,69 @@ def run_scored_pool(pkm_ctx, game_ctx):
     skipped = pool["skipped"]
 
     if not damage and not status:
-        print("\n  No moves found in pool.")
-        input("  Press Enter to continue...")
+        ui.print_output("\n  No moves found in pool.")
+        ui.input_prompt("  Press Enter to continue...")
         return
 
     variety_slug = pkm_ctx.get("variety_slug") or pkm_ctx["pokemon"]
     age = cache.get_learnset_age_days(variety_slug, game_ctx["game"])
     if age is not None and age > cache.LEARNSET_STALE_DAYS:
-        print(f"  [ learnset cached {age} days ago — press R to refresh ]")
+        ui.print_output(f"  [ learnset cached {age} days ago — press R to refresh ]")
 
     game_gen   = game_ctx["game_gen"]
     base_stats = pkm_ctx.get("base_stats", {})
 
-    _print_header(pkm_ctx, game_ctx, pool)
+    _print_header(ui, pkm_ctx, game_ctx, pool)
 
     # ── Damage moves ─────────────────────────────────────────────────────────
-    print()
+    ui.print_output("")
     hdr = "  ATTACK MOVES — ranked by score "
-    print(hdr + "─" * max(0, 72 - len(hdr)))
+    ui.print_output(hdr + "─" * max(0, 72 - len(hdr)))
     if damage:
-        print(f"  {'#':<4}{'Move':<22}{'Type':<12}{'Cat':<10}"
-              f"{'Pwr':>5}{'Acc':>6}  {'Score':>7}  Notes")
-        print("  " + "─" * 80)
+        ui.print_output(f"  {'#':<4}{'Move':<22}{'Type':<12}{'Cat':<10}"
+                        f"{'Pwr':>5}{'Acc':>6}  {'Score':>7}  Notes")
+        ui.print_output("  " + "─" * 80)
         for rank, row in enumerate(damage, start=1):
             pwr = str(row["power"])    if row["power"]    is not None else "--"
             acc = str(row["accuracy"]) if row["accuracy"] is not None else "--"
             bd  = _breakdown(row, game_gen, base_stats)
-            print(f"  {rank:<4}{row['name']:<22}{row['type']:<12}{row['category']:<10}"
-                  f"{pwr:>5}{acc:>5}%  {row['score']:>7.1f}  {bd}")
+            ui.print_output(f"  {rank:<4}{row['name']:<22}{row['type']:<12}{row['category']:<10}"
+                            f"{pwr:>5}{acc:>5}%  {row['score']:>7.1f}  {bd}")
     else:
-        print("  (none)")
+        ui.print_output("  (none)")
 
     if skipped:
-        print(f"\n({skipped} move(s) skipped — no data available for this game)")
+        ui.print_output(f"\n({skipped} move(s) skipped — no data available for this game)")
 
     # ── Status moves ─────────────────────────────────────────────────────────
-    print()
+    ui.print_output("")
     hdr = "  STATUS MOVES — ranked by tier & quality "
-    print(hdr + "─" * max(0, 72 - len(hdr)))
+    ui.print_output(hdr + "─" * max(0, 72 - len(hdr)))
     if status:
         status_ranked = rank_status_moves(status, top_n=len(status))  # show all
-        print(f"  {'Move':<22}{'Type':<12}{'Tier':<20}{'Quality':>7}")
-        print("  " + "─" * 62)
+        ui.print_output(f"  {'Move':<22}{'Type':<12}{'Tier':<20}{'Quality':>7}")
+        ui.print_output("  " + "─" * 62)
         for row in status_ranked:
-            print(f"  {row['name']:<22}{row['type']:<12}"
-                  f"{row['tier_label']:<20}{row['quality']:>7}")
+            ui.print_output(f"  {row['name']:<22}{row['type']:<12}"
+                            f"{row['tier_label']:<20}{row['quality']:>7}")
     else:
-        print("  (none)")
+        ui.print_output("  (none)")
 
-    choice = input("\n  Filter? (f to filter, Enter to return): ").strip().lower()
+    choice = ui.input_prompt("\n  Filter? (f to filter, Enter to return): ").lower()
     if choice == "f":
         from feat_movepool import _prompt_filter
-        f = _prompt_filter()
+        f = _prompt_filter(ui)
         if any(v is not None for v in f.values()):
-            _display_filtered_scored_pool(damage, status_ranked, f,
+            # Build status_ranked again if needed
+            status_ranked = rank_status_moves(status, top_n=len(status)) if status else []
+            _display_filtered_scored_pool(ui, damage, status_ranked, f,
                                           game_gen, base_stats)
         else:
-            print("  (no filter set)")
-        input("\n  Press Enter to continue...")
+            ui.print_output("  (no filter set)")
+        ui.input_prompt("\n  Press Enter to continue...")
 
-def run(pkm_ctx, game_ctx, constraints=None):
+
+def run(pkm_ctx, game_ctx, constraints=None, ui=None):
     """
     Display moveset recommendation sub-menu.
     Called from pokemain.py with both contexts loaded.
@@ -627,28 +630,38 @@ def run(pkm_ctx, game_ctx, constraints=None):
       2. Prompt user for locked moves (collect_constraints)
       3. Display all three modes at once (Coverage / Counter / STAB)
     """
-    print_session_header(pkm_ctx, game_ctx)
-    print("\n  Building moveset pool...")
+    if ui is None:
+        # Fallback for standalone (dummy)
+        import builtins
+        class DummyUI:
+            def print_output(self, text): builtins.print(text)
+            def print_progress(self, text, end="\n", flush=False): builtins.print(text, end=end, flush=flush)
+            def input_prompt(self, prompt): return builtins.input(prompt)
+            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        ui = DummyUI()
+
+    ui.print_session_header(pkm_ctx, game_ctx)
+    ui.print_output("\n  Building moveset pool...")
 
     try:
-        pool = build_candidate_pool(pkm_ctx, game_ctx)
+        pool = build_candidate_pool(pkm_ctx, game_ctx, ui=ui)
     except (ConnectionError, ValueError) as e:
-        print(f"\n  Could not build pool: {e}")
-        input("  Press Enter to continue...")
+        ui.print_output(f"\n  Could not build pool: {e}")
+        ui.input_prompt("  Press Enter to continue...")
         return
 
     if not pool["damage"] and not pool["status"]:
-        print("\n  No moves found in pool.")
-        input("  Press Enter to continue...")
+        ui.print_output("\n  No moves found in pool.")
+        ui.input_prompt("  Press Enter to continue...")
         return
 
     variety_slug = pkm_ctx.get("variety_slug") or pkm_ctx["pokemon"]
     age = cache.get_learnset_age_days(variety_slug, game_ctx["game"])
     if age is not None and age > cache.LEARNSET_STALE_DAYS:
-        print(f"  [ learnset cached {age} days ago — press R to refresh ]")
+        ui.print_output(f"  [ learnset cached {age} days ago — press R to refresh ]")
 
     # ── Step 1: collect locked moves ─────────────────────────────────────────
-    locked_names = collect_constraints(pkm_ctx, game_ctx, existing=[])
+    locked_names = collect_constraints(ui, pkm_ctx, game_ctx, existing=[])
     locked, unmatched = _resolve_locked(locked_names, pool["damage"])
 
     # ── Step 2: display all three modes ──────────────────────────────────────
@@ -665,21 +678,21 @@ def run(pkm_ctx, game_ctx, constraints=None):
     status_ranked = rank_status_moves(status, top_n=3)
 
     if not damage:
-        print("\n  No scoreable damage moves found in pool.")
-        input("  Press Enter to continue...")
+        ui.print_output("\n  No scoreable damage moves found in pool.")
+        ui.input_prompt("  Press Enter to continue...")
         return
 
-    _print_header(pkm_ctx, game_ctx, pool)
+    _print_header(ui, pkm_ctx, game_ctx, pool)
 
     if unmatched:
-        print(f"  Note: locked moves not found in pool: {', '.join(unmatched)}")
+        ui.print_output(f"  Note: locked moves not found in pool: {', '.join(unmatched)}")
     if locked:
-        print(f"  Locked: {', '.join(r['name'] for r in locked)}")
+        ui.print_output(f"  Locked: {', '.join(r['name'] for r in locked)}")
 
-    _show_all(damage, status_ranked, len(status),
+    _show_all(ui, damage, status_ranked, len(status),
               weak_types, era_key, game_gen, base_stats, locked)
 
-    input("\n  Press Enter to continue...")
+    ui.input_prompt("\n  Press Enter to continue...")
 
 
 # ── Standalone entry point ────────────────────────────────────────────────────
@@ -702,8 +715,16 @@ def main():
     if pkm_ctx is None:
         return
 
-    run(pkm_ctx, game_ctx, constraints=[])
+    # Use a dummy UI for standalone
+    import builtins
+    class DummyUI:
+        def print_output(self, text): builtins.print(text)
+        def print_progress(self, text, end="\n", flush=False): builtins.print(text, end=end, flush=flush)
+        def input_prompt(self, prompt): return builtins.input(prompt)
+        def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+    ui = DummyUI()
 
+    run(pkm_ctx, game_ctx, constraints=[], ui=ui)
 
 
 # ── Self-tests ────────────────────────────────────────────────────────────────
@@ -711,6 +732,7 @@ def main():
 def _run_tests(with_cache=False):
     import sys, os, tempfile
     import pkm_cache as _cache
+    import io
 
     errors = []
     def ok(label):   print(f"  [OK]   {label}")
@@ -799,8 +821,6 @@ def _run_tests(with_cache=False):
     else: fail("_compute_coverage Normal gap Ghost", f"gaps={gaps_n}")
 
     # ── _print_combo: short-combo note ──────────────────────────────────────
-    import io as _io2, sys as _sys2
-
     _short_combo = [
         {"name":"Thunderbolt","type":"Electric","category":"Special","power":95,
          "accuracy":100,"priority":0,"drain":0,"effect_chance":0,
@@ -815,16 +835,17 @@ def _run_tests(with_cache=False):
          "counters_weaknesses":[],"is_stab":False,"score":1,"is_two_turn":True,
          "low_accuracy":False,"ailment":None},
     ]
-    _buf_sc = _io2.StringIO()
-    _sys2.stdout = _buf_sc
-    _print_combo(_short_combo, "TEST", 1, {"attack": 90, "special-attack": 90})
-    _sys2.stdout = _sys2.__stdout__
-    _out_sc = _buf_sc.getvalue()
-
-    if "Only 3 move type(s) available" in _out_sc and "1 slot left unfilled" in _out_sc:
+    class DummyUI:
+        def __init__(self): self.buf = io.StringIO()
+        def print_output(self, text=""): self.buf.write(text + "\n")
+        def print_progress(self, text, end="\n", flush=False): self.buf.write(text + "\n")
+    dummy = DummyUI()
+    _print_combo(dummy, _short_combo, "TEST", 1, {"attack": 90, "special-attack": 90})
+    out_sc = dummy.buf.getvalue()
+    if "Only 3 move type(s) available" in out_sc and "1 slot left unfilled" in out_sc:
         ok("_print_combo: short-combo note shown for 3-move combo")
     else:
-        fail("_print_combo: short-combo note missing", _out_sc)
+        fail("_print_combo: short-combo note missing", out_sc)
 
     # Full 4-move combo: no note
     _full_combo = _short_combo + [
@@ -833,20 +854,16 @@ def _run_tests(with_cache=False):
          "counters_weaknesses":[],"is_stab":True,"score":1,"is_two_turn":False,
          "low_accuracy":False,"ailment":None},
     ]
-    _buf_fc = _io2.StringIO()
-    _sys2.stdout = _buf_fc
-    _print_combo(_full_combo, "TEST", 1, {"attack": 90, "special-attack": 90})
-    _sys2.stdout = _sys2.__stdout__
-    _out_fc = _buf_fc.getvalue()
-
-    if "unfilled" not in _out_fc:
+    dummy2 = DummyUI()
+    _print_combo(dummy2, _full_combo, "TEST", 1, {"attack": 90, "special-attack": 90})
+    out_fc = dummy2.buf.getvalue()
+    if "unfilled" not in out_fc:
         ok("_print_combo: no short-combo note for full 4-move combo")
     else:
-        fail("_print_combo: spurious note on 4-move combo", _out_fc)
+        fail("_print_combo: spurious note on 4-move combo", out_fc)
 
     # ── _print_coverage: no-move-in-pool annotation ─────────────────────────
     # Simulate Lapras scenario: Electric weakness, no Ground move in pool
-    import io as _io
     _combo = [
         {"type": "Ice",     "counters_weaknesses": ["Grass"]},
         {"type": "Water",   "counters_weaknesses": ["Rock"]},
@@ -854,35 +871,30 @@ def _run_tests(with_cache=False):
         {"type": "Fighting","counters_weaknesses": ["Rock"]},
     ]
     _pool = _combo   # no Ground move → Electric not coverable from pool
-    _buf = _io.StringIO()
-    import sys as _sys
-    _sys.stdout = _buf
-    _print_coverage(_combo, "era2",
+    dummy3 = DummyUI()
+    _print_coverage(dummy3, _combo, "era2",
                     weak_types=["Electric","Grass","Fighting","Rock"],
                     damage_pool=_pool)
-    _sys.stdout = _sys.__stdout__
-    _out = _buf.getvalue()
-    if "✗ Electric (no move in pool)" in _out:
+    out = dummy3.buf.getvalue()
+    if "✗ Electric (no move in pool)" in out:
         ok("_print_coverage: truly uncoverable weakness annotated")
     else:
-        fail("_print_coverage: missing no-move-in-pool annotation", _out)
-    if "(no move in pool)" not in _out.replace("✗ Electric (no move in pool)", ""):
+        fail("_print_coverage: missing no-move-in-pool annotation", out)
+    if "(no move in pool)" not in out.replace("✗ Electric (no move in pool)", ""):
         ok("_print_coverage: coverable weaknesses NOT annotated")
     else:
-        fail("_print_coverage: false annotation on coverable weakness", _out)
+        fail("_print_coverage: false annotation on coverable weakness", out)
 
     # damage_pool=None: legacy behaviour — no annotation at all
-    _buf2 = _io.StringIO()
-    _sys.stdout = _buf2
-    _print_coverage(_combo, "era2",
+    dummy4 = DummyUI()
+    _print_coverage(dummy4, _combo, "era2",
                     weak_types=["Electric","Grass"],
                     damage_pool=None)
-    _sys.stdout = _sys.__stdout__
-    _out2 = _buf2.getvalue()
-    if "(no move in pool)" not in _out2:
+    out2 = dummy4.buf.getvalue()
+    if "(no move in pool)" not in out2:
         ok("_print_coverage: no annotation when damage_pool=None")
     else:
-        fail("_print_coverage: unexpected annotation with damage_pool=None", _out2)
+        fail("_print_coverage: unexpected annotation with damage_pool=None", out2)
 
     # ── _resolve_locked ──────────────────────────────────────────────────────
     pool = [{"name": "Earthquake"}, {"name": "Dragon Claw"},

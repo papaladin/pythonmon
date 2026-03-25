@@ -1641,3 +1641,97 @@ The lazy‑fetch approach, while functional, introduces delays on first use. Aft
 ### Test count
 - No new tests; the sync script is not unit‑tested due to its long‑running nature, but it is manually verified.
 - All existing tests continue to pass.
+
+
+----
+
+
+## §112 — V2 Package 4.1: UI abstraction layer
+
+### What changed
+- New files: `ui_base.py`, `ui_cli.py`
+- Modified: all `feat_*.py` to accept a `ui` parameter and use it for I/O
+- Modified: `pokemain.py` to instantiate `CLI` and pass `ui` to features
+- Modified: `pkm_session.py` – interactive functions moved to UI layer
+- Modified: `ARCHITECTURE.md` – documented the new UI layer
+- Modified: `README.md` – no user‑visible change; updated file list
+
+### Why
+To separate UI concerns from application logic, enabling future front‑ends (e.g., a TUI) without rewriting core features. The existing CLI behaviour is unchanged, but all output and input now go through a common interface.
+
+### Key decisions
+- The UI base class is abstract; the CLI implementation wraps existing interactive code.
+- Interactive selection functions (`select_pokemon`, `select_game`, etc.) are now part of the UI, not `pkm_session`.
+- All feature `run()` functions now accept an optional `ui` parameter (default `None` creates a dummy UI for standalone mode).
+- The main loop remains in `pokemain.py` (not moved to `ui.run()`), preserving the current menu structure.
+- The `end` parameter was added to `print_output` to support grid printing in the egg group browser.
+
+### Bugs fixed
+- Added missing `end` parameter to `UI.print_output` and `CLI.print_output` to allow printing without newline.
+- Updated all `feat_*.py` files to use `ui.print_output()` consistently, eliminating direct `print` calls.
+
+### Test count
+All existing tests pass; no new tests added (behaviour unchanged).
+
+---
+
+## §113 — Team builder: filter out pure level‑up evolutions
+
+### What changed
+- Modified: `core_evolution.py` – added `trigger_is_pure_level_up` and `is_pure_level_up_chain` functions; added 8 new tests (28 total)
+- Modified: `feat_team_builder.py` – integrated evolution filtering into `build_suggestion_pool`; added 2 new tests (59 total)
+- Modified: `README.md`, `ARCHITECTURE.md` – updated documentation
+
+### Why
+When the team builder suggested Pokémon to fill gaps, it would often list all stages of a level‑up‑only evolution chain (e.g., Dratini, Dragonair, Dragonite) even though only the final stage is useful in most cases. The filtering now removes lower stages when a higher stage also matches the team's needs, unless the evolution involves a trade, item, or special condition (where both forms may be relevant).
+
+### Key decisions
+- A trigger is considered pure level‑up if it contains the word "Level" and none of the keywords `Trade`, `Use`, `Friendship`, `Happiness`, `Item`, `Move`, `Time`, or `Location`.
+- The filtering is applied after candidate pool construction and uses the cached evolution chains. If a chain is missing from the cache, no filtering is performed for that candidate (safe fallback).
+- Mixed chains (e.g., Seadra → Kingdra) are not filtered because the higher stage is not obtained purely by level‑up.
+
+### Bugs found during testing
+- Initial test expected all three stages of a mixed chain to remain, but the logic correctly removed the base stage when a pure level‑up intermediate stage existed. Test expectation was adjusted to match intended behaviour.
+
+### Test count
+`core_evolution.py`: 28 tests (was 20). `feat_team_builder.py`: 59 tests (was 57). Full suite: unchanged.
+
+---
+
+## §114 — Remove standalone stat comparison (merge into learnset comparison)
+
+### What changed
+- Modified: `pokemain.py` – removed menu entry `C` and its handler; removed import of `feat_stat_compare`
+- Modified: `README.md` – updated menu and features to reflect removal; added note in learnset comparison about stat header
+- Modified: `ARCHITECTURE.md` – removed references to `feat_stat_compare.py` from file list and feature modules
+
+### Why
+The stat comparison screen (key C) was largely redundant because the learnset comparison (key L) already includes a detailed stat header with the same information (base stats, total, role, speed tier). Consolidating reduces menu clutter and simplifies the user experience. Users who only want stat comparison can still get it by using L and ignoring the move sections.
+
+### Key decisions
+- The `feat_stat_compare.py` module is retained (it is still used by `feat_learnset_compare.py` for the stat header and by `feat_nature_browser.py` for role/speed tier). It is simply no longer a standalone menu feature.
+- No functionality is lost; the learnset comparison now serves as the single entry point for comparing two Pokémon.
+
+### Test count
+No new tests; all existing tests pass.
+
+---
+
+## §115 — Main menu reorganisation
+
+### What changed
+- Modified: `pokemain.py` – rewrote `_build_menu_lines` to group menu entries logically and place the three core actions (game, Pokemon, team) at the top.
+- Removed the standalone stat comparison entry (already merged in §114).
+- Updated condition visibility for several features to match the new layout.
+
+### Why
+The previous menu structure was cluttered and the ordering was ad‑hoc. Grouping features by required context makes the menu easier to scan and use. Placing game, Pokemon, and team management at the top reflects their primary role in setting up a session.
+
+### Key decisions
+- Features are now grouped in this order: core actions, game‑only features, Pokemon‑dependent features, numbered moveset features, team features, cache utilities, quit.
+- Separators and blank lines are used to visually distinguish sections.
+- The `R` (refresh) key is now only shown when a Pokemon is loaded.
+- The `MOVE` and `W` keys remain available for users who prefer not to run a full `--sync`.
+
+### Test count
+No new tests; all existing tests pass.
