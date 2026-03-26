@@ -8,7 +8,7 @@ grouped into three sections:
   - Unique to Pokemon B
   - Shared by both
 
-A brief stat comparison header (from feat_stat_compare) is shown above the
+A brief stat comparison header (from core_stat) is shown above the
 learnset sections for context.
 
 Entry points:
@@ -112,24 +112,24 @@ def _fmt_row(r: dict) -> str:
             f"  {acc+'%':>{_COL_ACC}}")
 
 
-def _print_col_headers(ui) -> None:
-    ui.print_output(f"  {'Move':<{_COL_NAME}}"
+async def _print_col_headers(ui) -> None:
+    await ui.print_output(f"  {'Move':<{_COL_NAME}}"
                     f"  {'Type':<{_COL_TYPE}}"
                     f"  {'Category':<{_COL_CAT}}"
                     f"  {'Pwr':>{_COL_PWR}}"
                     f"  {'Acc':>{_COL_ACC}}")
-    ui.print_output("  " + "-" * _SEP_W)
+    await ui.print_output("  " + "-" * _SEP_W)
 
 
-def _print_section(ui, title: str, rows: list) -> None:
+async def _print_section(ui, title: str, rows: list) -> None:
     fill = max(0, _SEP_W - len(title) - 12)
-    ui.print_output(f"\n  -- {title} ({len(rows)} moves) " + "-" * fill)
+    await ui.print_output(f"\n  -- {title} ({len(rows)} moves) " + "-" * fill)
     if not rows:
-        ui.print_output("  (none)")
+        await ui.print_output("  (none)")
         return
-    _print_col_headers(ui)
+    await _print_col_headers(ui)
     for r in rows:
-        ui.print_output(_fmt_row(r))
+        await ui.print_output(_fmt_row(r))
 
 
 def _type_str(pkm: dict) -> str:
@@ -137,7 +137,7 @@ def _type_str(pkm: dict) -> str:
     return f"{pkm['type1']} / {t2}" if t2 != "None" else pkm["type1"]
 
 
-def _print_stat_header(ui, pkm_a: dict, pkm_b: dict) -> None:
+async def _print_stat_header(ui, pkm_a: dict, pkm_b: dict) -> None:
     """Brief stat comparison header shown above the learnset sections."""
     bs_a  = pkm_a.get("base_stats", {})
     bs_b  = pkm_b.get("base_stats", {})
@@ -178,30 +178,30 @@ def _print_stat_header(ui, pkm_a: dict, pkm_b: dict) -> None:
     _left_w = 26
     name_a  = f"{pkm_a['form_name']}  [{_type_str(pkm_a)}]"
     name_b  = f"{pkm_b['form_name']}  [{_type_str(pkm_b)}]"
-    ui.print_output(f"  {'':8}  {name_a:<{_left_w}}  {name_b}")
-    ui.print_output("  " + "=" * _STAT_W)
+    await ui.print_output(f"  {'':8}  {name_a:<{_left_w}}  {name_b}")
+    await ui.print_output("  " + "=" * _STAT_W)
     for r in rows:
         ma = "★" if r["winner"] == "a" else ("•" if r["winner"] == "tie" else " ")
         mb = "★" if r["winner"] == "b" else ("•" if r["winner"] == "tie" else " ")
         left_val = f"{r['val_a']:>3} {ma}"
-        ui.print_output(f"  {_LABELS.get(r['key'], r['key']):<8}  {left_val:<{_left_w}}  {r['val_b']:>3} {mb}")
-    ui.print_output("  " + "-" * _STAT_W)
+        await ui.print_output(f"  {_LABELS.get(r['key'], r['key']):<8}  {left_val:<{_left_w}}  {r['val_b']:>3} {mb}")
+    await ui.print_output("  " + "-" * _STAT_W)
     left_total = f"{tot_a:>3} {mark_a}"
-    ui.print_output(f"  {'Total':<8}  {left_total:<{_left_w}}  {tot_b:>3} {mark_b}")
-    ui.print_output(f"  {'Role':<8}  {role_a:<{_left_w}}  {role_b}")
-    ui.print_output("  " + "=" * _STAT_W)
+    await ui.print_output(f"  {'Total':<8}  {left_total:<{_left_w}}  {tot_b:>3} {mark_b}")
+    await ui.print_output(f"  {'Role':<8}  {role_a:<{_left_w}}  {role_b}")
+    await ui.print_output("  " + "=" * _STAT_W)
 
 
-def display_learnset_comparison(ui, pkm_a: dict, pkm_b: dict, game_ctx: dict) -> None:
+async def display_learnset_comparison(ui, pkm_a: dict, pkm_b: dict, game_ctx: dict) -> None:
     """Full learnset comparison screen."""
     name_a = pkm_a["form_name"]
     name_b = pkm_b["form_name"]
     game   = game_ctx["game"]
 
-    ui.print_output(f"\n  Learnset comparison  |  {game}")
-    ui.print_output(f"  {name_a}  vs  {name_b}")
+    await ui.print_output(f"\n  Learnset comparison  |  {game}")
+    await ui.print_output(f"  {name_a}  vs  {name_b}")
 
-    _print_stat_header(ui, pkm_a, pkm_b)
+    await _print_stat_header(ui, pkm_a, pkm_b)
 
     def _load(pkm):
         slug = pkm.get("variety_slug") or pkm["pokemon"]
@@ -211,10 +211,10 @@ def display_learnset_comparison(ui, pkm_a: dict, pkm_b: dict, game_ctx: dict) ->
     ls_b = _load(pkm_b)
 
     if ls_a is None:
-        ui.print_output(f"  Could not load learnset for {name_a}.")
+        await ui.print_output(f"  Could not load learnset for {name_a}.")
         return
     if ls_b is None:
-        ui.print_output(f"  Could not load learnset for {name_b}.")
+        await ui.print_output(f"  Could not load learnset for {name_b}.")
         return
 
     moves_a = _flat_moves(ls_a, name_a)
@@ -225,66 +225,74 @@ def display_learnset_comparison(ui, pkm_a: dict, pkm_b: dict, game_ctx: dict) ->
     rows_only_b = _build_move_rows(diff["only_b"], game_ctx)
     rows_shared = _build_move_rows(diff["shared"],  game_ctx)
 
-    _print_section(ui, f"Unique to {name_a}", rows_only_a)
-    _print_section(ui, f"Unique to {name_b}", rows_only_b)
-    _print_section(ui, "Shared by both",      rows_shared)
+    await _print_section(ui, f"Unique to {name_a}", rows_only_a)
+    await _print_section(ui, f"Unique to {name_b}", rows_only_b)
+    await _print_section(ui, "Shared by both",      rows_shared)
 
-    ui.print_output(f"\n  Total: {name_a} {len(moves_a)} moves  |  "
+    await ui.print_output(f"\n  Total: {name_a} {len(moves_a)} moves  |  "
                     f"{name_b} {len(moves_b)} moves  |  "
                     f"{len(diff['shared'])} shared")
 
 
 # ── Entry points ──────────────────────────────────────────────────────────────
 
-def run(pkm_ctx: dict, game_ctx: dict, ui=None) -> None:
+async def run(pkm_ctx: dict, game_ctx: dict, ui=None) -> None:
     """Called from pokemain (key L)."""
     if ui is None:
-        # Fallback for standalone
+        # Fallback dummy UI for standalone
         import builtins
         class DummyUI:
-            def print_output(self, text): builtins.print(text)
-            def input_prompt(self, prompt): return builtins.input(prompt)
-            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
+            async def input_prompt(self, prompt): return builtins.input(prompt)
+            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+            async def select_pokemon(self, game_ctx=None):
+                from pkm_session import select_pokemon as _sp
+                return _sp(game_ctx)
         ui = DummyUI()
 
-    ui.print_output(f"\n  Comparing {pkm_ctx['form_name']}'s learnset with...")
-    pkm_b = select_pokemon(game_ctx=game_ctx)
+    await ui.print_output(f"\n  Comparing {pkm_ctx['form_name']}'s learnset with...")
+    pkm_b = await ui.select_pokemon(game_ctx=game_ctx)
     if pkm_b is None:
-        ui.print_output("  No Pokemon selected.")
+        await ui.print_output("  No Pokemon selected.")
         return
-    display_learnset_comparison(ui, pkm_ctx, pkm_b, game_ctx)
-    ui.input_prompt("\n  Press Enter to continue...")
+    await display_learnset_comparison(ui, pkm_ctx, pkm_b, game_ctx)
+    await ui.input_prompt("\n  Press Enter to continue...")
 
 
 def main() -> None:
     # Dummy UI for standalone
     import builtins
+    import asyncio
+
     class DummyUI:
-        def print_output(self, text): builtins.print(text)
-        def input_prompt(self, prompt): return builtins.input(prompt)
-        def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        async def print_output(self, text, end="\n"): builtins.print(text, end=end)
+        async def input_prompt(self, prompt): return builtins.input(prompt)
+        async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        async def select_pokemon(self, game_ctx=None):
+            from pkm_session import select_pokemon as _sp
+            return _sp(game_ctx)
     ui = DummyUI()
 
-    ui.print_output("")
-    ui.print_output("╔══════════════════════════════════════════╗")
-    ui.print_output("║         Learnset Comparison              ║")
-    ui.print_output("╚══════════════════════════════════════════╝")
+    asyncio.run(ui.print_output(""))
+    asyncio.run(ui.print_output("╔══════════════════════════════════════════╗"))
+    asyncio.run(ui.print_output("║         Learnset Comparison              ║"))
+    asyncio.run(ui.print_output("╚══════════════════════════════════════════╝"))
     game_ctx = select_game()
     if game_ctx is None:
         sys.exit(0)
-    ui.print_output("\n  First Pokemon:")
+    asyncio.run(ui.print_output("\n  First Pokemon:"))
     pkm_a = select_pokemon(game_ctx=game_ctx)
     if pkm_a is None:
         sys.exit(0)
-    ui.print_output("\n  Second Pokemon:")
+    asyncio.run(ui.print_output("\n  Second Pokemon:"))
     pkm_b = select_pokemon(game_ctx=game_ctx)
     if pkm_b is None:
         sys.exit(0)
-    display_learnset_comparison(ui, pkm_a, pkm_b, game_ctx)
-    ui.input_prompt("\n  Press Enter to exit...")
+    asyncio.run(display_learnset_comparison(ui, pkm_a, pkm_b, game_ctx))
+    asyncio.run(ui.input_prompt("\n  Press Enter to exit..."))
 
 
-# ── Self-tests ────────────────────────────────────────────────────────────────
+# ── Self‑tests (synchronous) ─────────────────────────────────────────────────
 
 def _run_tests():
     errors = []
@@ -434,18 +442,21 @@ def _run_tests():
         return None
     cache.get_learnset_or_fetch = _mock_fetch
 
-    # Dummy UI for test
+    # Dummy UI for test (async but we'll run synchronously)
     class DummyUI:
         def __init__(self):
             self.buf = io.StringIO()
-        def print_output(self, text):
+        async def print_output(self, text):
             self.buf.write(text + "\n")
-        def input_prompt(self, prompt):
+        async def input_prompt(self, prompt):
             return ""
-        def confirm(self, prompt):
+        async def confirm(self, prompt):
             return False
+        async def select_pokemon(self, game_ctx=None):
+            return None
     dummy = DummyUI()
-    display_learnset_comparison(dummy, _pkm_a, _pkm_b, game_ctx_fake)
+    import asyncio
+    asyncio.run(display_learnset_comparison(dummy, _pkm_a, _pkm_b, game_ctx_fake))
     out = dummy.buf.getvalue()
     cache.get_learnset_or_fetch = _orig_fetch
 

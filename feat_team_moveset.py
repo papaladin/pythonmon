@@ -44,9 +44,9 @@ _BLOCK_SEP  = 56   # width of ═ / ─ separators
 
 # ── Core logic ─────────────────────────────────────────────────────────────
 
-def recommend_team_movesets(team_ctx: list, game_ctx: dict, mode: str,
-                            pool_cache: dict | None = None,
-                            ui=None) -> list:
+async def recommend_team_movesets(team_ctx: list, game_ctx: dict, mode: str,
+                                  pool_cache: dict | None = None,
+                                  ui=None) -> list:
     """
     Compute a recommended moveset for each filled team slot.
 
@@ -74,13 +74,13 @@ def recommend_team_movesets(team_ctx: list, game_ctx: dict, mode: str,
         if pool_cache is not None and cache_key in pool_cache:
             damage_pool = pool_cache[cache_key]
         else:
-            pool        = build_candidate_pool(pkm, game_ctx, ui=ui)
+            pool        = await build_candidate_pool(pkm, game_ctx, ui=ui)
             damage_pool = pool["damage"]
             if pool_cache is not None:
                 pool_cache[cache_key] = damage_pool
 
         weak_ty = weakness_types(pkm, era_key)
-        combo   = select_combo(damage_pool, mode, weak_ty, era_key)
+        combo   = select_combo(damage_pool, mode, weak_ty, era_key)  # no await
         se      = se_types(combo, era_key)
 
         results.append({
@@ -96,7 +96,7 @@ def recommend_team_movesets(team_ctx: list, game_ctx: dict, mode: str,
 
 # ── Display functions ──────────────────────────────────────────────────────
 
-def _display_member_block(ui, result: dict, era_key: str) -> None:
+async def _display_member_block(ui, result: dict, era_key: str) -> None:
     """Print the 5-line compact block for one team member."""
     form_name = result["form_name"]
     types_str = " / ".join(result["types"]) if result["types"] else "?"
@@ -105,14 +105,14 @@ def _display_member_block(ui, result: dict, era_key: str) -> None:
     names = [m["name"] for m in result["moves"]]
     names += [None] * (4 - len(names))
 
-    ui.print_output(f"  {form_name}  [{types_str}]")
-    ui.print_output(f"  {format_weak_line(result['weakness_types'])}")
-    ui.print_output(f"  {format_move_pair(names[0], names[1])}")
-    ui.print_output(f"  {format_move_pair(names[2], names[3])}")
-    ui.print_output(f"  {format_se_line(result['se_types'], era_key)}")
+    await ui.print_output(f"  {form_name}  [{types_str}]")
+    await ui.print_output(f"  {format_weak_line(result['weakness_types'])}")
+    await ui.print_output(f"  {format_move_pair(names[0], names[1])}")
+    await ui.print_output(f"  {format_move_pair(names[2], names[3])}")
+    await ui.print_output(f"  {format_se_line(result['se_types'], era_key)}")
 
 
-def _display_coverage_summary(ui, coverage: dict) -> None:
+async def _display_coverage_summary(ui, coverage: dict) -> None:
     """
     Print the team offensive coverage summary block.
 
@@ -125,20 +125,20 @@ def _display_coverage_summary(ui, coverage: dict) -> None:
     gaps    = coverage["gaps"]
     overlap = coverage["overlap"]
 
-    ui.print_output("  ── Team coverage " + "─" * (_BLOCK_SEP - 17))
-    ui.print_output(f"  Covered:  {len(covered)} / {total} types hit SE")
+    await ui.print_output("  ── Team coverage " + "─" * (_BLOCK_SEP - 17))
+    await ui.print_output(f"  Covered:  {len(covered)} / {total} types hit SE")
 
     if gaps:
-        ui.print_output("  Gaps:     " + "  ".join(gaps))
+        await ui.print_output("  Gaps:     " + "  ".join(gaps))
     else:
-        ui.print_output("  Full coverage!")
+        await ui.print_output("  Full coverage!")
 
     if overlap:
         parts = [f"{t} ({n})" for t, n in overlap]
-        ui.print_output("  Overlap:  " + "  ".join(parts))
+        await ui.print_output("  Overlap:  " + "  ".join(parts))
 
 
-def display_team_movesets(ui, results: list, game_ctx: dict, mode: str) -> None:
+async def display_team_movesets(ui, results: list, game_ctx: dict, mode: str) -> None:
     """
     Print the full team moveset synergy screen.
 
@@ -148,82 +148,84 @@ def display_team_movesets(ui, results: list, game_ctx: dict, mode: str) -> None:
     era_key = game_ctx["era_key"]
     game    = game_ctx["game"]
 
-    ui.print_output(f"\n  Team moveset synergy  |  {mode}  |  {game}")
-    ui.print_output("  " + "═" * _BLOCK_SEP)
+    await ui.print_output(f"\n  Team moveset synergy  |  {mode}  |  {game}")
+    await ui.print_output("  " + "═" * _BLOCK_SEP)
 
     for i, result in enumerate(results):
         if i > 0:
-            ui.print_output("  " + "─" * _BLOCK_SEP)
-        _display_member_block(ui, result, era_key)
+            await ui.print_output("  " + "─" * _BLOCK_SEP)
+        await _display_member_block(ui, result, era_key)
 
-    ui.print_output("  " + "═" * _BLOCK_SEP)
+    await ui.print_output("  " + "═" * _BLOCK_SEP)
 
     coverage = build_offensive_coverage(results, era_key)
-    _display_coverage_summary(ui, coverage)
-    ui.print_output("  " + "═" * _BLOCK_SEP)
+    await _display_coverage_summary(ui, coverage)
+    await ui.print_output("  " + "═" * _BLOCK_SEP)
 
 
 # ── Interactive helpers ────────────────────────────────────────────────────
 
-def _mode_prompt(ui) -> str:
+async def _mode_prompt(ui) -> str:
     """Interactive mode selector. Returns one of the _MODES values."""
     while True:
-        ui.print_output("\n  Select mode:")
-        ui.print_output("    (C)overage")
-        ui.print_output("    co(U)nter")
-        ui.print_output("    (S)TAB")
-        choice = ui.input_prompt("  Mode: ").strip().lower()
+        await ui.print_output("\n  Select mode:")
+        await ui.print_output("    (C)overage")
+        await ui.print_output("    co(U)nter")
+        await ui.print_output("    (S)TAB")
+        choice = (await ui.input_prompt("  Mode: ")).strip().lower()
         if choice in _MODES:
             return _MODES[choice]
-        ui.print_output("  Invalid choice — press C, U or S.")
+        await ui.print_output("  Invalid choice — press C, U or S.")
 
 
 # ── Entry points ───────────────────────────────────────────────────────────
 
-def run(team_ctx: list, game_ctx: dict,
-        pool_cache: dict | None = None,
-        ui=None) -> None:
+async def run(team_ctx: list, game_ctx: dict,
+              pool_cache: dict | None = None,
+              ui=None) -> None:
     """Menu entry point for key S — Team Moveset Synergy."""
     if ui is None:
         # Fallback dummy UI for standalone
         import builtins
         class DummyUI:
-            def print_output(self, text): builtins.print(text)
-            def input_prompt(self, prompt): return builtins.input(prompt)
-            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
+            async def input_prompt(self, prompt): return builtins.input(prompt)
+            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
         ui = DummyUI()
 
     if team_size(team_ctx) == 0:
-        ui.print_output("\n  Team is empty — load some Pokémon first (press T).")
+        await ui.print_output("\n  Team is empty — load some Pokémon first (press T).")
         return
 
-    mode = _mode_prompt(ui)
+    mode = await _mode_prompt(ui)
     n    = team_size(team_ctx)
-    ui.print_output(f"\n  Computing movesets for {n} member(s)...")
-    results = recommend_team_movesets(team_ctx, game_ctx, mode,
-                                      pool_cache=pool_cache, ui=ui)
-    display_team_movesets(ui, results, game_ctx, mode)
+    await ui.print_output(f"\n  Computing movesets for {n} member(s)...")
+    results = await recommend_team_movesets(team_ctx, game_ctx, mode,
+                                            pool_cache=pool_cache, ui=ui)
+    await display_team_movesets(ui, results, game_ctx, mode)
 
-    ui.input_prompt("\n  Press Enter to return to the main menu...")
+    await ui.input_prompt("\n  Press Enter to return to the main menu...")
 
 
 def main() -> None:
     # Dummy UI for standalone
     import builtins
+    import asyncio
+
     class DummyUI:
-        def print_output(self, text): builtins.print(text)
-        def input_prompt(self, prompt): return builtins.input(prompt)
-        def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        async def print_output(self, text, end="\n"): builtins.print(text, end=end)
+        async def input_prompt(self, prompt): return builtins.input(prompt)
+        async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
     ui = DummyUI()
 
-    ui.print_output("")
-    ui.print_output("  This module is not usable standalone.")
-    ui.print_output("  Launch from pokemain.py instead.")
-    ui.print_output("")
-    ui.input_prompt("  Press Enter to exit...")
+    asyncio.run(ui.print_output(""))
+    asyncio.run(ui.print_output("  This module is not usable standalone."))
+    asyncio.run(ui.print_output("  Launch from pokemain.py instead."))
+    asyncio.run(ui.print_output(""))
+    asyncio.run(ui.input_prompt("  Press Enter to exit..."))
 
 
-# ── Self-tests ─────────────────────────────────────────────────────────────
+# ── Self-tests (updated to async) ─────────────────────────────────────────────
 
 def _run_tests():
     errors = []
@@ -240,9 +242,10 @@ def _run_tests():
     # Most logic is now in core_team; we only test the wrapper and display.
 
     # ── recommend_team_movesets (mock pool) ─────────────────────────────────
-    def _mock_pool(pkm_ctx, game_ctx, ui=None):
+    async def _mock_pool(pkm_ctx, game_ctx, ui=None):
         return {"damage": [], "status": [], "skipped": 0}
 
+    # Synchronous mock for select_combo (real function is sync)
     def _mock_combo(damage_pool, mode, weak_types, era_key, locked=None):
         return []
 
@@ -261,11 +264,12 @@ def _run_tests():
     try:
         # Use a dummy UI for the test to avoid printing
         class DummyUI:
-            def print_output(self, text): pass
-            def input_prompt(self, prompt): return ""
-            def confirm(self, prompt): return False
+            async def print_output(self, text): pass
+            async def input_prompt(self, prompt): return ""
+            async def confirm(self, prompt): return False
         dummy = DummyUI()
-        results = recommend_team_movesets(team_ctx, game_ctx, "coverage", ui=dummy)
+        import asyncio
+        results = asyncio.run(recommend_team_movesets(team_ctx, game_ctx, "coverage", ui=dummy))
         if len(results) == 1 and "form_name" in results[0]:
             ok("recommend_team_movesets: returns list of results")
         else:
@@ -286,14 +290,14 @@ def _run_tests():
     class DummyUI2:
         def __init__(self):
             self.buf = io.StringIO()
-        def print_output(self, text):
+        async def print_output(self, text):
             self.buf.write(text + "\n")
-        def input_prompt(self, prompt):
+        async def input_prompt(self, prompt):
             return ""
-        def confirm(self, prompt):
+        async def confirm(self, prompt):
             return False
     dummy2 = DummyUI2()
-    display_team_movesets(dummy2, [fake_result], game_ctx, "coverage")
+    asyncio.run(display_team_movesets(dummy2, [fake_result], game_ctx, "coverage"))
     out = dummy2.buf.getvalue()
     if "Charizard" in out and "Weak" in out and "SE" in out:
         ok("display_team_movesets: output contains expected elements")

@@ -188,7 +188,7 @@ def _run_tests():
 
     print("\n  core_evolution.py — self-test\n")
 
-    # ── parse_trigger tests (unchanged) ──────────────────────────────────────
+    # ── parse_trigger tests ──────────────────────────────────────────────────
     def _d(trigger_name, **kwargs):
         d = {"trigger": {"name": trigger_name}}
         if "min_level" in kwargs:
@@ -234,7 +234,7 @@ def _run_tests():
     r = parse_trigger(_d("other"))
     ok("parse_trigger: unknown trigger → Special condition", r == "Special condition")
 
-    # ── flatten_chain tests (unchanged) ──────────────────────────────────────
+    # ── flatten_chain tests ──────────────────────────────────────────────────
     def _node(slug, details=None, children=None):
         return {
             "species": {"name": slug},
@@ -283,7 +283,7 @@ def _run_tests():
     except RecursionError:
         ok("flatten_chain: max_depth guard → no crash, returns partial paths", False)
 
-    # ── filter_paths_for_game tests (unchanged) ──────────────────────────────
+    # ── filter_paths_for_game tests ──────────────────────────────────────────
     _GEN_MAP = {
         "eevee": 1, "vaporeon": 1, "jolteon": 1, "flareon": 1,
         "espeon": 2, "umbreon": 2,

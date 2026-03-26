@@ -74,7 +74,7 @@ def _names_cell(names: list, width: int) -> str:
     return result
 
 
-def _print_unified_table(ui, rows: list, n_members: int) -> None:
+async def _print_unified_table(ui, rows: list, n_members: int) -> None:
     """Print the full unified type table."""
     # Header
     sep = (f"  {'-'*_COL_TYPE}"
@@ -92,9 +92,9 @@ def _print_unified_table(ui, rows: list, n_members: int) -> None:
            f" | {'Resistance':<{_R_SPAN}}"
            f" | {'Immunity':<{_I_SPAN}}"
            f" | {'Comments'}")
-    ui.print_output("")
-    ui.print_output(hdr)
-    ui.print_output(sep)
+    await ui.print_output("")
+    await ui.print_output(hdr)
+    await ui.print_output(sep)
 
     for r in rows:
         weak_names   = [_weak_tag(n, m)   for n, m in r["weak_members"]]
@@ -117,10 +117,10 @@ def _print_unified_table(ui, rows: list, n_members: int) -> None:
                 f" | {rs_cnt:>{_COL_CNT}}  {rs_cell:<{_COL_RNAMES}}"
                 f" | {im_cnt:>{_COL_CNT}}  {im_cell:<{_COL_INAMES}}"
                 f" | {gap}")
-        ui.print_output(line)
+        await ui.print_output(line)
 
 
-def _print_weakness_pairs(ui, pairs: list) -> None:
+async def _print_weakness_pairs(ui, pairs: list) -> None:
     """Print the shared-weakness section for all qualifying pairs."""
     if not pairs:
         return
@@ -128,44 +128,44 @@ def _print_weakness_pairs(ui, pairs: list) -> None:
     name_col = min(26, max(len(f"{p['name_a']} + {p['name_b']}") for p in pairs))
     sep_w    = name_col + 2 + 40
 
-    ui.print_output("  Shared weaknesses (pairs with \u2265 2 in common)")
-    ui.print_output("  " + "\u2500" * sep_w)
+    await ui.print_output("  Shared weaknesses (pairs with \u2265 2 in common)")
+    await ui.print_output("  " + "\u2500" * sep_w)
     for p in pairs:
         label    = f"{p['name_a']} + {p['name_b']}"
         types_str = "  ".join(p["shared_types"])
         count_str = f"({p['shared_count']} shared)"
         severity  = gap_pair_label(p["shared_count"])
         suffix    = f"  {severity}" if severity else ""
-        ui.print_output(f"  {label:<{name_col}}  {types_str:<34}{count_str}{suffix}")
+        await ui.print_output(f"  {label:<{name_col}}  {types_str:<34}{count_str}{suffix}")
 
 
 # ── Main display ──────────────────────────────────────────────────────────────
 
-def display_team_analysis(ui, team_ctx: list, game_ctx: dict) -> None:
+async def display_team_analysis(ui, team_ctx: list, game_ctx: dict) -> None:
     era_key  = game_ctx["era_key"]
     game     = game_ctx["game"]
     filled   = team_size(team_ctx)
 
     if filled == 0:
-        ui.print_output("\n  Team is empty -- load some Pokemon first (press T).")
+        await ui.print_output("\n  Team is empty -- load some Pokemon first (press T).")
         return
 
     # ── Roster header ─────────────────────────────────────────────────────────
-    ui.print_output(f"\n  Team defensive analysis  |  {game}")
-    ui.print_output("  " + "=" * 56)
+    await ui.print_output(f"\n  Team defensive analysis  |  {game}")
+    await ui.print_output("  " + "=" * 56)
     for _idx, pkm in team_slots(team_ctx):
         dual = (f"{pkm['type1']} / {pkm['type2']}"
                 if pkm["type2"] != "None" else pkm["type1"])
-        ui.print_output(f"  {pkm['form_name']:<24}  {dual}")
-    ui.print_output("  " + "=" * 56)
+        await ui.print_output(f"  {pkm['form_name']:<24}  {dual}")
+    await ui.print_output("  " + "=" * 56)
 
     # ── Unified table ─────────────────────────────────────────────────────────
     team_def = build_team_defense(team_ctx, era_key)
     rows     = build_unified_rows(team_def, era_key)
 
-    ui.print_output("\n  Weakness / Resistance / Immunity: count + member names")
-    ui.print_output("  (x4) suffix on weak member  |  (x0.25) suffix on double-resist  |  Comments = gap classification")
-    _print_unified_table(ui, rows, filled)
+    await ui.print_output("\n  Weakness / Resistance / Immunity: count + member names")
+    await ui.print_output("  (x4) suffix on weak member  |  (x0.25) suffix on double-resist  |  Comments = gap classification")
+    await _print_unified_table(ui, rows, filled)
 
     # ── Gap summary ───────────────────────────────────────────────────────────
     criticals = [r["type"] for r in rows
@@ -179,58 +179,60 @@ def display_team_analysis(ui, team_ctx: list, game_ctx: dict) -> None:
                               len(r["resist_members"]) + len(r["immune_members"])) == ".  MINOR"]
 
     if criticals or majors or minors:
-        ui.print_output("")
+        await ui.print_output("")
         if criticals:
-            ui.print_output(f"  !! CRITICAL gaps : {' / '.join(criticals)}")
+            await ui.print_output(f"  !! CRITICAL gaps : {' / '.join(criticals)}")
         if majors:
-            ui.print_output(f"  !  MAJOR gaps    : {' / '.join(majors)}")
+            await ui.print_output(f"  !  MAJOR gaps    : {' / '.join(majors)}")
         if minors:
-            ui.print_output(f"  .  MINOR gaps    : {' / '.join(minors)}")
+            await ui.print_output(f"  .  MINOR gaps    : {' / '.join(minors)}")
     else:
-        ui.print_output("\n  No significant gaps detected.")
+        await ui.print_output("\n  No significant gaps detected.")
 
     # ── Weakness overlap heatmap ──────────────────────────────────────────────
     pairs = build_weakness_pairs(team_ctx, era_key)
     if pairs:
-        ui.print_output("")
-        _print_weakness_pairs(ui, pairs)
+        await ui.print_output("")
+        await _print_weakness_pairs(ui, pairs)
 
 
 # ── Entry points ──────────────────────────────────────────────────────────────
 
-def run(team_ctx: list, game_ctx: dict, ui=None) -> None:
+async def run(team_ctx: list, game_ctx: dict, ui=None) -> None:
     """Called from pokemain."""
     if ui is None:
         # Fallback dummy UI for standalone
         import builtins
         class DummyUI:
-            def print_output(self, text): builtins.print(text)
-            def input_prompt(self, prompt): return builtins.input(prompt)
-            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
+            async def input_prompt(self, prompt): return builtins.input(prompt)
+            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
         ui = DummyUI()
-    display_team_analysis(ui, team_ctx, game_ctx)
-    ui.input_prompt("\n  Press Enter to continue...")
+    await display_team_analysis(ui, team_ctx, game_ctx)
+    await ui.input_prompt("\n  Press Enter to continue...")
 
 
 def main() -> None:
     # Dummy UI for standalone
     import builtins
+    import asyncio
+
     class DummyUI:
-        def print_output(self, text): builtins.print(text)
-        def input_prompt(self, prompt): return builtins.input(prompt)
-        def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        async def print_output(self, text, end="\n"): builtins.print(text, end=end)
+        async def input_prompt(self, prompt): return builtins.input(prompt)
+        async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
     ui = DummyUI()
 
-    ui.print_output("")
-    ui.print_output("+===========================================+")
-    ui.print_output("|     Team Defensive Analysis               |")
-    ui.print_output("+===========================================+")
+    asyncio.run(ui.print_output(""))
+    asyncio.run(ui.print_output("+===========================================+"))
+    asyncio.run(ui.print_output("|     Team Defensive Analysis               |"))
+    asyncio.run(ui.print_output("+===========================================+"))
 
     try:
         from pkm_session import select_game, select_pokemon
         from feat_team_loader import new_team, add_to_team, TeamFullError
     except ModuleNotFoundError as e:
-        ui.print_output(f"\n  ERROR: {e}")
+        asyncio.run(ui.print_output(f"\n  ERROR: {e}"))
         sys.exit(1)
 
     game_ctx = select_game()
@@ -238,22 +240,22 @@ def main() -> None:
         sys.exit(0)
 
     team_ctx = new_team()
-    ui.print_output("\n  Add up to 6 Pokemon (blank name to stop).")
+    asyncio.run(ui.print_output("\n  Add up to 6 Pokemon (blank name to stop)."))
     for _ in range(6):
         pkm = select_pokemon(game_ctx=game_ctx)
         if pkm is None:
             break
         try:
             team_ctx, slot = add_to_team(team_ctx, pkm)
-            ui.print_output(f"  Added to slot {slot + 1}.")
+            asyncio.run(ui.print_output(f"  Added to slot {slot + 1}."))
         except TeamFullError:
             break
 
-    display_team_analysis(ui, team_ctx, game_ctx)
-    ui.input_prompt("\n  Press Enter to exit...")
+    asyncio.run(display_team_analysis(ui, team_ctx, game_ctx))
+    asyncio.run(ui.input_prompt("\n  Press Enter to exit..."))
 
 
-# ── Self-tests ────────────────────────────────────────────────────────────────
+# ── Self-tests (unchanged, but we need to adapt to async) ─────────────────────
 
 def _run_tests():
     import io, contextlib
@@ -280,14 +282,15 @@ def _run_tests():
     class DummyUI:
         def __init__(self):
             self.buf = io.StringIO()
-        def print_output(self, text):
+        async def print_output(self, text):
             self.buf.write(text + "\n")
-        def input_prompt(self, prompt):
+        async def input_prompt(self, prompt):
             return ""
-        def confirm(self, prompt):
+        async def confirm(self, prompt):
             return False
     dummy = DummyUI()
-    display_team_analysis(dummy, team1, game_ctx)
+    import asyncio
+    asyncio.run(display_team_analysis(dummy, team1, game_ctx))
     out = dummy.buf.getvalue()
     if "Rock" in out and "Charizard" in out:
         ok("display_team_analysis: output contains expected info")
@@ -331,15 +334,17 @@ def _run_tests():
     ]
     buf2 = io.StringIO()
     class DummyUI2:
-        def print_output(self, text):
-            buf2.write(text + "\n")
-        def input_prompt(self, prompt):
+        def __init__(self):
+            self.buf = buf2
+        async def print_output(self, text):
+            self.buf.write(text + "\n")
+        async def input_prompt(self, prompt):
             return ""
-        def confirm(self, prompt):
+        async def confirm(self, prompt):
             return False
     dummy2 = DummyUI2()
-    _print_weakness_pairs(dummy2, pairs)
-    out2 = buf2.getvalue()
+    asyncio.run(_print_weakness_pairs(dummy2, pairs))
+    out2 = dummy2.buf.getvalue()
     if "Charizard + Lapras" in out2 and "!! CRITICAL" in out2:
         ok("_print_weakness_pairs: works")
     else:

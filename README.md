@@ -28,6 +28,8 @@ python pokemain.py --refresh-evolution <n>      # force-refresh one Pokemon's ev
 python pokemain.py --help                     # show usage summary and exit
 python pokemain.py --game "Scarlet / Violet"  # pre-select a game, skipping the selection prompt
 python pokemain.py --sync                     # pre‑load all Pokémon, moves, etc. into SQLite database
+python pokemain.py --cli                      # use CLI UI
+python pokemain.py --tui                      # use TUI (built with Textual) UI
 ```
 
 First run requires a network connection to populate the cache. After that, all
@@ -38,6 +40,9 @@ machine tables in bulk — recommended before first moveset run.
 **Database location:** The SQLite database (`pokemon.db`) is stored in the same cache directory as before (`cache/`). 
 On macOS, if running the bundled app, it is placed in `~/Library/Application Support/PokemonToolkit/cache/`. 
 On Windows/Linux, it lives next to the executable.
+
+**Bundled executable:** The pre‑built executable launches the Terminal UI (TUI) by default.  
+If you prefer the classic CLI, run it with `--cli` (e.g., `./pokemain --cli`).
 
 ---
 

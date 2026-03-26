@@ -116,7 +116,6 @@ SUITES = [
     ("feat_team_analysis",        "feat_team_analysis.py",   ["--autotest"],               []),
     ("feat_team_offense",         "feat_team_offense.py",    ["--autotest"],               []),
     ("feat_team_moveset",         "feat_team_moveset.py",    ["--autotest"],               []),
-    ("feat_stat_compare",         "feat_stat_compare.py",    ["--autotest"],               []),
     ("feat_egg_group",            "feat_egg_group.py",       ["--autotest"],               []),
     ("feat_evolution",            "feat_evolution.py",       ["--autotest"],               []),
     ("feat_learnset_compare",     "feat_learnset_compare.py", ["--autotest"],               []),

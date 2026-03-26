@@ -18,6 +18,8 @@ except ModuleNotFoundError as e:
     print("  Make sure all files are in the same folder.\n")
     sys.exit(1)
 
+# Import total_stats from core_stat
+from core_stat import total_stats
 
 # ── Constants for display (used in formatting functions) ──────────────────────
 _NAME_ABBREV = 4          # characters to keep when abbreviating Pokémon names
@@ -41,6 +43,7 @@ _W_OFFENSIVE   = 10
 _W_DEFENSIVE   = 8
 _W_WEAK_PAIR   = 6
 _W_ROLE        = 4
+_W_BST         = 5   # weight for total base stat bonus
 _LOOKAHEAD_END = 2
 
 
@@ -558,6 +561,14 @@ def score_candidate(candidate_types: list, team_ctx: list, era_key: str,
         + role_bonus              * _W_ROLE
     )
 
+    # BST bonus (normalized to 0–1 scale, multiplied by weight)
+    bst_bonus = 0
+    if base_stats and isinstance(base_stats, dict):
+        total = total_stats(base_stats)  # sum of all 6 stats
+        # Normalize to 0–1 (max ~720)
+        bst_bonus = (total / 720) * _W_BST
+    total_intrinsic = intrinsic + bst_bonus
+
     # Lookahead score
     remaining_off_gaps = [g for g in off_gaps if g not in off_covered]
     patch = patchability_score(remaining_off_gaps, era_key)
@@ -565,7 +576,7 @@ def score_candidate(candidate_types: list, team_ctx: list, era_key: str,
     weight = _LOOKAHEAD_END if slots_remaining <= 2 else 1
     lookahead = patch / max(slots_remaining, 1) * weight
 
-    return intrinsic + lookahead
+    return total_intrinsic + lookahead
 
 
 def rank_candidates(candidates: list, team_ctx: list, era_key: str,

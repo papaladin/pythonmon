@@ -44,31 +44,31 @@ _STAT_LABELS = [
 ]
 
 
-def _print_base_stats(ui, base_stats: dict, form_name: str) -> None:
+async def _print_base_stats(ui, base_stats: dict, form_name: str) -> None:
     """Print base stats as a labelled bar chart, followed by role and speed tier."""
     if not base_stats:
         return
-    ui.print_output(f"\n  Base stats — {form_name}")
-    ui.print_output("  " + "─" * _SEP_WIDTH)
+    await ui.print_output(f"\n  Base stats — {form_name}")
+    await ui.print_output("  " + "─" * _SEP_WIDTH)
     total = 0
     for key, label in _STAT_LABELS:
         val = base_stats.get(key, 0)
         total += val
         bar = stat_bar(val)
-        ui.print_output(f"  {label:<4}  {val:>3}  {bar}")
-    ui.print_output("  " + "─" * _SEP_WIDTH)
-    ui.print_output(f"  {'Total':>8}  {total:>3}")
+        await ui.print_output(f"  {label:<4}  {val:>3}  {bar}")
+    await ui.print_output("  " + "─" * _SEP_WIDTH)
+    await ui.print_output(f"  {'Total':>8}  {total:>3}")
     role = infer_role(base_stats)
     tier = infer_speed_tier(base_stats)
     spe  = base_stats.get("speed", 0)
     role_str = f"{role.capitalize()} attacker"
     tier_str = f"{tier.capitalize()} (base {spe})"
-    ui.print_output(f"  {'Role':>8}  {role_str}  |  Speed: {tier_str}")
+    await ui.print_output(f"  {'Role':>8}  {role_str}  |  Speed: {tier_str}")
 
 
 # ── Abilities display ─────────────────────────────────────────────────────────
 
-def _print_abilities_section(ui, abilities: list, form_name: str) -> None:
+async def _print_abilities_section(ui, abilities: list, form_name: str) -> None:
     """Print abilities with short effects, using the ability index for names/effects."""
     if not abilities:
         return
@@ -78,8 +78,8 @@ def _print_abilities_section(ui, abilities: list, form_name: str) -> None:
     except (ImportError, OSError, ValueError):
         index = None
 
-    ui.print_output(f"\n  Abilities — {form_name}")
-    ui.print_output("  " + "─" * _SEP_WIDTH)
+    await ui.print_output(f"\n  Abilities — {form_name}")
+    await ui.print_output("  " + "─" * _SEP_WIDTH)
     for ab in abilities:
         slug      = ab.get("slug", "")
         is_hidden = ab.get("is_hidden", False)
@@ -90,65 +90,73 @@ def _print_abilities_section(ui, abilities: list, form_name: str) -> None:
             name   = slug.replace("-", " ").title()
             effect = "(press A to load ability data)"
         tag = "  [Hidden]" if is_hidden else ""
-        ui.print_output(f"  {name}{tag}")
+        await ui.print_output(f"  {name}{tag}")
         if effect:
-            ui.print_output(f"    {effect}")
+            await ui.print_output(f"    {effect}")
+
+
+# ── Type chart (formatted as string) ─────────────────────────────────────────
+
+def _format_type_chart(type1: str, type2: str, game: str, era_key: str) -> str:
+    """Return the type chart as a string, suitable for printing via UI."""
+    import io
+    import contextlib
+    f = io.StringIO()
+    with contextlib.redirect_stdout(f):
+        calc.print_results(type1, type2, game, era_key)
+    return f.getvalue()
 
 
 # ── Core display ──────────────────────────────────────────────────────────────
 
-def run(pkm_ctx: dict, game_ctx: dict, constraints: list = None, ui=None) -> None:
+async def run(pkm_ctx: dict, game_ctx: dict, constraints: list = None, ui=None) -> None:
     """
     Display type vulnerabilities and resistances.
     Called from pokemain with both contexts already loaded.
     """
     if ui is None:
-        # Fallback to direct print for standalone (not ideal but works)
-        # For now, we'll keep it simple; the caller should always pass ui.
-        # We'll raise an error if ui is None in the main code path.
+        # Fallback dummy UI for standalone
         import builtins
         class DummyUI:
-            def print_output(self, text): builtins.print(text)
-            def input_prompt(self, prompt): return builtins.input(prompt)
-            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
+            async def input_prompt(self, prompt): return builtins.input(prompt)
+            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
         ui = DummyUI()
 
-    ui.print_session_header(pkm_ctx, game_ctx, constraints)
+    await ui.print_session_header(pkm_ctx, game_ctx, constraints)
 
     form_name  = pkm_ctx.get("form_name", pkm_ctx.get("pokemon", ""))
     base_stats = pkm_ctx.get("base_stats", {})
     abilities  = pkm_ctx.get("abilities", [])
 
-    _print_base_stats(ui, base_stats, form_name)
-    _print_abilities_section(ui, abilities, form_name)
+    await _print_base_stats(ui, base_stats, form_name)
+    await _print_abilities_section(ui, abilities, form_name)
 
     # Egg groups — shown when egg_groups field is present
     egg_groups = pkm_ctx.get("egg_groups", [])
     if egg_groups:
-        ui.print_output(f"\n  Egg groups — {form_name}")
-        ui.print_output("  " + "─" * _SEP_WIDTH)
-        ui.print_output(f"  {format_egg_groups(egg_groups)}")
+        await ui.print_output(f"\n  Egg groups — {form_name}")
+        await ui.print_output("  " + "─" * _SEP_WIDTH)
+        await ui.print_output(f"  {format_egg_groups(egg_groups)}")
 
-    # Type chart (calc.print_results prints directly; we need to adapt it)
-    # We'll redirect its prints to ui? For now, keep as is.
-    # But we should ideally have calc.print_results use a UI. We'll keep it as is.
-    calc.print_results(
+    # Type chart — capture and print
+    chart_output = _format_type_chart(
         pkm_ctx["type1"],
         pkm_ctx["type2"],
         game_ctx["game"],
         game_ctx["era_key"]
     )
+    await ui.print_output(chart_output)
 
     # Evolution chain — shown at the bottom of option 1
     from feat_evolution import get_or_fetch_chain, display_evolution_block
-    paths = get_or_fetch_chain(pkm_ctx, ui=ui)
+    paths = await get_or_fetch_chain(pkm_ctx, ui=ui)  # <-- ADDED AWAIT
     if paths is not None:
-        # Pass ui to display_evolution_block
-        display_evolution_block(pkm_ctx, paths,
-                                game_gen=game_ctx.get("game_gen"),
-                                ui=ui)
+        await display_evolution_block(pkm_ctx, paths,
+                                      game_gen=game_ctx.get("game_gen"),
+                                      ui=ui)
 
-    ui.input_prompt("\n  Press Enter to continue...")
+    await ui.input_prompt("\n  Press Enter to continue...")
 
 
 # ── Standalone entry point ────────────────────────────────────────────────────
@@ -174,11 +182,12 @@ def main() -> None:
         # In standalone, we don't have a UI instance; we'll use a dummy
         import builtins
         class DummyUI:
-            def print_output(self, text): builtins.print(text)
-            def input_prompt(self, prompt): return builtins.input(prompt)
-            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
+            async def input_prompt(self, prompt): return builtins.input(prompt)
+            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
         ui = DummyUI()
-        run(pkm_ctx, game_ctx, ui=ui)
+        import asyncio
+        asyncio.run(run(pkm_ctx, game_ctx, ui=ui))
 
     else:
         # Manual type entry

@@ -37,7 +37,7 @@ except ModuleNotFoundError as e:
 
 # ── Type lookup helpers (cache-aware) ─────────────────────────────────────────
 
-def _get_types_for_slug(slug: str, ui=None) -> list[str]:
+async def _get_types_for_slug(slug: str, ui=None) -> list[str]:
     """
     Return the type list for a species slug.
     Tries the pokemon cache first (instant). Falls back to fetching from
@@ -53,7 +53,7 @@ def _get_types_for_slug(slug: str, ui=None) -> list[str]:
     try:
         import pkm_pokeapi as pokeapi
         if ui:
-            ui.print_output(f"  Fetching types for {slug}...", end=" ", flush=True)
+            await ui.print_output(f"  Fetching types for {slug}...", end=" ", flush=True)
         else:
             print(f"  Fetching types for {slug}...", end=" ", flush=True)
         data = pokeapi.fetch_pokemon(slug)
@@ -62,13 +62,13 @@ def _get_types_for_slug(slug: str, ui=None) -> list[str]:
         if forms:
             types = forms[0].get("types", [])
             if ui:
-                ui.print_output(f"done.")
+                await ui.print_output(f"done.")
             else:
                 print(f"done.")
             return types
     except (ValueError, ConnectionError):
         if ui:
-            ui.print_output(f"failed.")
+            await ui.print_output(f"failed.")
         else:
             print(f"failed.")
     return []
@@ -94,7 +94,7 @@ def _get_species_gen(slug: str) -> int | None:
 
 # ── Cache-aware chain fetch ───────────────────────────────────────────────────
 
-def get_or_fetch_chain(pkm_ctx: dict, ui=None) -> list | None:
+async def get_or_fetch_chain(pkm_ctx: dict, ui=None) -> list | None:
     """
     Return the flattened evolution chain paths for the loaded Pokemon.
 
@@ -116,14 +116,14 @@ def get_or_fetch_chain(pkm_ctx: dict, ui=None) -> list | None:
     try:
         import pkm_pokeapi as pokeapi
         if ui:
-            ui.print_output("  Loading evolution chain...", end=" ", flush=True)
+            await ui.print_output("  Loading evolution chain...", end=" ", flush=True)
         else:
             print("  Loading evolution chain...", end=" ", flush=True)
         node = pokeapi.fetch_evolution_chain(chain_id)
         paths = flatten_chain(node)
         cache.save_evolution_chain(chain_id, paths)
         if ui:
-            ui.print_output("done.")
+            await ui.print_output("done.")
         else:
             print("done.")
         return paths
@@ -136,9 +136,9 @@ def get_or_fetch_chain(pkm_ctx: dict, ui=None) -> list | None:
 _SEP_WIDTH = 46
 
 
-def display_evolution_block(pkm_ctx: dict, paths: list,
-                            game_gen: int | None = None,
-                            ui=None) -> None:
+async def display_evolution_block(pkm_ctx: dict, paths: list,
+                                  game_gen: int | None = None,
+                                  ui=None) -> None:
     """
     Print the compact evolution chain block for embedding in option 1.
 
@@ -150,10 +150,9 @@ def display_evolution_block(pkm_ctx: dict, paths: list,
         # Fallback dummy UI for standalone
         import builtins
         class DummyUI:
-            def print_output(self, text): builtins.print(text)
-            def print_progress(self, text, end="\n", flush=False): builtins.print(text, end=end, flush=flush)
-            def input_prompt(self, prompt): return builtins.input(prompt)
-            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
+            async def input_prompt(self, prompt): return builtins.input(prompt)
+            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
         ui = DummyUI()
 
     current_slug = pkm_ctx.get("pokemon", "")
@@ -169,32 +168,32 @@ def display_evolution_block(pkm_ctx: dict, paths: list,
     # Apply game-gen filter
     display_paths = filter_paths_for_game(paths, game_gen, species_gen_map) if game_gen else paths
 
-    ui.print_output(f"\n  Evolution chain")
-    ui.print_output("  " + "─" * _SEP_WIDTH)
+    await ui.print_output(f"\n  Evolution chain")
+    await ui.print_output("  " + "─" * _SEP_WIDTH)
 
     # Pre-fetch types for all unique slugs not already in cache
     need_fetch = [s for s in all_slugs if cache.get_pokemon(s) is None]
     if need_fetch:
-        ui.print_output(f"  Fetching types for {len(need_fetch)} stage(s)...",
+        await ui.print_output(f"  Fetching types for {len(need_fetch)} stage(s)...",
                         end=" ", flush=True)
         for s in need_fetch:
-            _get_types_for_slug(s, ui=ui)   # side-effect: populates cache
-        ui.print_output("done.")
+            await _get_types_for_slug(s, ui=ui)   # side-effect: populates cache
+        await ui.print_output("done.")
 
     if len(display_paths) == 1 and len(display_paths[0]) == 1:
         # Single-stage — does not evolve (or all evolutions filtered for this game)
         stage = display_paths[0][0]
-        types = _get_types_for_slug(stage["slug"], ui=ui)
+        types = await _get_types_for_slug(stage["slug"], ui=ui)
         marker = " ★" if stage["slug"] == current_slug else ""
         no_evo_note = "no further evolution in this game" \
             if game_gen and len(paths) > 1 else "does not evolve"
-        ui.print_output(f"  {stage['slug'].replace('-', ' ').title()} "
+        await ui.print_output(f"  {stage['slug'].replace('-', ' ').title()} "
                         f"{_type_tag(types)}{marker}  — {no_evo_note}")
     else:
         for path in display_paths:
             parts = []
             for i, stage in enumerate(path):
-                types = _get_types_for_slug(stage["slug"], ui=ui)
+                types = await _get_types_for_slug(stage["slug"], ui=ui)
                 marker = " ★" if stage["slug"] == current_slug else ""
                 name = stage["slug"].replace("-", " ").title()
                 entry = f"{name} {_type_tag(types)}{marker}"
@@ -202,10 +201,10 @@ def display_evolution_block(pkm_ctx: dict, paths: list,
                     parts.append(f"→  {stage['trigger']}  →  {entry}")
                 else:
                     parts.append(entry)
-            ui.print_output("  " + "  ".join(parts))
+            await ui.print_output("  " + "  ".join(parts))
 
-    ui.print_output("")
-    ui.print_output("  ★ = current Pokémon")
+    await ui.print_output("")
+    await ui.print_output("  ★ = current Pokémon")
 
 
 # ── Self‑tests ────────────────────────────────────────────────────────────────
@@ -224,12 +223,13 @@ def _run_tests():
     _orig_get = globals().get("get_or_fetch_chain")
     _orig_types = globals().get("_get_types_for_slug")
 
-    def _mock_types(slug, ui=None):
+    # Async mock for _get_types_for_slug
+    async def _mock_types(slug, ui=None):
         return {"charmander": ["Fire"], "charmeleon": ["Fire"],
                 "charizard": ["Fire", "Flying"], "eevee": ["Normal"],
                 "espeon": ["Psychic"], "umbreon": ["Dark"]}.get(slug, [])
 
-    def _mock_chain(pkm_ctx, ui=None):
+    async def _mock_chain(pkm_ctx, ui=None):
         return [
             [{"slug": "charmander", "trigger": ""},
              {"slug": "charmeleon", "trigger": "Level 16"},
@@ -239,25 +239,26 @@ def _run_tests():
     _sys.modules[__name__].get_or_fetch_chain = _mock_chain
     _sys.modules[__name__]._get_types_for_slug = _mock_types
 
-    # Dummy UI for test
+    # Dummy UI for test (async methods)
     class DummyUI:
         def __init__(self):
             self.buf = io.StringIO()
-        def print_output(self, text, end="\n"):
+        async def print_output(self, text, end="\n"):
             self.buf.write(text + end)
-        def print_progress(self, text, end="\n", flush=False):
-            self.buf.write(text + end)
-        def input_prompt(self, prompt):
+        async def input_prompt(self, prompt):
             return ""
-        def confirm(self, prompt):
+        async def confirm(self, prompt):
             return False
 
     try:
         pkm_charizard = {"pokemon": "charizard", "evolution_chain_id": 1}
         dummy = DummyUI()
-        display_evolution_block(pkm_charizard,
-                                _mock_chain(pkm_charizard),
-                                ui=dummy)
+        import asyncio
+        async def run_display():
+            await display_evolution_block(pkm_charizard,
+                                          await _mock_chain(pkm_charizard),
+                                          ui=dummy)
+        asyncio.run(run_display())
         out = dummy.buf.getvalue()
 
         if "Charmander" in out and "Charmeleon" in out and "Charizard" in out:
@@ -300,9 +301,8 @@ if __name__ == "__main__":
         # Standalone not intended, but we provide a dummy UI
         import builtins
         class DummyUI:
-            def print_output(self, text): builtins.print(text)
-            def print_progress(self, text, end="\n", flush=False): builtins.print(text, end=end, flush=flush)
-            def input_prompt(self, prompt): return builtins.input(prompt)
-            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+            async def print_output(self, text): builtins.print(text)
+            async def input_prompt(self, prompt): return builtins.input(prompt)
+            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
         ui = DummyUI()
         print("\nThis module is not meant to be run standalone.")

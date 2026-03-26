@@ -85,27 +85,27 @@ def _ability_display_name(slug: str, index: dict) -> str:
     return slug.replace("-", " ").title()
 
 
-def _print_ability_row(ui, name: str, gen: int, short_effect: str) -> None:
+async def _print_ability_row(ui, name: str, gen: int, short_effect: str) -> None:
     """Print one row of the ability list table."""
     gen_s    = _gen_label(gen)
     wrapped  = _wrap(short_effect, _C_EFFECT)
     first    = wrapped[0]
-    ui.print_output(f"  {name:<{_C_NAME}}{_GAP}{gen_s:<{_C_GEN}}{_GAP}{first}")
+    await ui.print_output(f"  {name:<{_C_NAME}}{_GAP}{gen_s:<{_C_GEN}}{_GAP}{first}")
     for extra in wrapped[1:]:
-        ui.print_output("  " + " " * _C_NAME + _GAP + " " * _C_GEN + _GAP + extra)
+        await ui.print_output("  " + " " * _C_NAME + _GAP + " " * _C_GEN + _GAP + extra)
 
 
-def _print_ability_table_header(ui) -> None:
+async def _print_ability_table_header(ui) -> None:
     header = (f"  {'Ability':<{_C_NAME}}{_GAP}{'Gen':<{_C_GEN}}"
               f"{_GAP}{'Effect (short)'}")
     sep    = "  " + "─" * (len(header) - 2)
-    ui.print_output(header)
-    ui.print_output(sep)
+    await ui.print_output(header)
+    await ui.print_output(sep)
 
 
 # ── Ability list (all) ────────────────────────────────────────────────────────
 
-def _print_all_abilities(ui, index: dict) -> None:
+async def _print_all_abilities(ui, index: dict) -> None:
     """Print all abilities grouped by generation."""
     # Group by gen
     groups: dict[int, list] = {}
@@ -115,10 +115,10 @@ def _print_all_abilities(ui, index: dict) -> None:
 
     for gen in sorted(groups):
         entries = sorted(groups[gen], key=lambda r: r[0].lower())
-        ui.print_output(f"\n  ── Generation {gen} " + "─" * 48)
-        _print_ability_table_header(ui)
+        await ui.print_output(f"\n  ── Generation {gen} " + "─" * 48)
+        await _print_ability_table_header(ui)
         for name, g, effect, _slug in entries:
-            _print_ability_row(ui, name, g, effect)
+            await _print_ability_row(ui, name, g, effect)
 
 
 # ── Ability detail (drill-in) ─────────────────────────────────────────────────
@@ -140,40 +140,42 @@ def _fetch_ability_detail(slug: str) -> dict | None:
         cache.save_ability_detail(slug, detail)
         return detail
     except ConnectionError as e:
+        # Use print here because this is a network error, but we can also use ui.print_output if we had ui.
+        # For now, keep print; it will appear in console but not in TUI.
         print(f"\n  Connection error: {e}")
         return None
 
 
-def _print_ability_detail(ui, slug: str, index: dict) -> None:
+async def _print_ability_detail(ui, slug: str, index: dict) -> None:
     """Fetch and print full details for one ability."""
     entry = index.get(slug)
     if entry is None:
-        ui.print_output(f"\n  Ability '{slug}' not found in index.")
+        await ui.print_output(f"\n  Ability '{slug}' not found in index.")
         return
 
     name    = entry["name"]
     gen     = entry.get("gen", 0)
     s_eff   = entry.get("short_effect", "")
 
-    ui.print_output(f"\n  {'─'*68}")
-    ui.print_output(f"  {name}  (Gen {gen})")
-    ui.print_output(f"  {'─'*68}")
-    ui.print_output(f"\n  Short effect:  {s_eff}")
+    await ui.print_output(f"\n  {'─'*68}")
+    await ui.print_output(f"  {name}  (Gen {gen})")
+    await ui.print_output(f"  {'─'*68}")
+    await ui.print_output(f"\n  Short effect:  {s_eff}")
 
     detail = _fetch_ability_detail(slug)
     if detail:
         full = detail.get("effect", "")
         if full and full != s_eff:
-            ui.print_output(f"\n  Full effect:")
+            await ui.print_output(f"\n  Full effect:")
             for line in _wrap(full, 68, indent="    "):
-                ui.print_output(f"    {line}")
+                await ui.print_output(f"    {line}")
 
         pokemon_list = detail.get("pokemon", [])
         if pokemon_list:
             # Split into normal and hidden ability holders
             normal = [p for p in pokemon_list if not p.get("is_hidden")]
             hidden = [p for p in pokemon_list if p.get("is_hidden")]
-            ui.print_output(f"\n  Pokémon with this ability ({len(normal)} normal"
+            await ui.print_output(f"\n  Pokémon with this ability ({len(normal)} normal"
                   f"{f', {len(hidden)} hidden' if hidden else ''}):")
             names_normal = sorted(p["name"] for p in normal)
             names_hidden = sorted(p["name"] for p in hidden)
@@ -183,50 +185,50 @@ def _print_ability_detail(ui, slug: str, index: dict) -> None:
                     continue
                 is_hidden_chunk = chunk is names_hidden
                 if is_hidden_chunk:
-                    ui.print_output("")
-                    ui.print_output("  Hidden:")
+                    await ui.print_output("")
+                    await ui.print_output("  Hidden:")
                 label = "    "
                 for i in range(0, len(chunk), 3):
                     row = "  ".join(f"{n:<22}" for n in chunk[i:i+3])
-                    ui.print_output(f"  {label}{row}")
-    ui.print_output("")
+                    await ui.print_output(f"  {label}{row}")
+    await ui.print_output("")
 
 
 # ── Pokémon abilities display ─────────────────────────────────────────────────
 
-def _print_pkm_abilities(ui, pkm_ctx: dict, index: dict) -> None:
+async def _print_pkm_abilities(ui, pkm_ctx: dict, index: dict) -> None:
     """Display the abilities of the currently loaded Pokémon."""
     abilities = pkm_ctx.get("abilities", [])
     form_name = pkm_ctx.get("form_name", pkm_ctx.get("pokemon", "?"))
 
     if not abilities:
-        ui.print_output(f"\n  No ability data for {form_name}.")
-        ui.print_output("  Press R in the main menu to refresh Pokémon data.")
+        await ui.print_output(f"\n  No ability data for {form_name}.")
+        await ui.print_output("  Press R in the main menu to refresh Pokémon data.")
         return
 
-    ui.print_output(f"\n  Abilities for {form_name}:")
-    ui.print_output("  " + "─" * 60)
+    await ui.print_output(f"\n  Abilities for {form_name}:")
+    await ui.print_output("  " + "─" * 60)
     for ab in abilities:
         slug      = ab.get("slug", "")
         is_hidden = ab.get("is_hidden", False)
         name      = _ability_display_name(slug, index)
         tag       = "  [Hidden Ability]" if is_hidden else ""
         short_eff = index.get(slug, {}).get("short_effect", "(effect unknown)")
-        ui.print_output(f"\n  {name}{tag}")
+        await ui.print_output(f"\n  {name}{tag}")
         for line in _wrap(short_eff, 64, indent="    "):
-            ui.print_output(f"    {line}")
-    ui.print_output("")
+            await ui.print_output(f"    {line}")
+    await ui.print_output("")
 
 
-# ── Search / filter ───────────────────────────────────────────────────────────
+# ── Search / drill-in (uses persistent input bar) ───────────────────────────
 
-def _search_and_drill(ui, index: dict) -> None:
+async def _search_and_drill(ui, index: dict) -> None:
     """
     Prompt user for an ability name, find matches, and drill into the detail.
     Loops until user enters nothing.
     """
     while True:
-        query = ui.input_prompt("\n  Search ability (Enter to skip): ").strip().lower()
+        query = (await ui.input_prompt("\n  Search ability (Enter to skip): ")).strip().lower()
         if not query:
             return
 
@@ -237,38 +239,40 @@ def _search_and_drill(ui, index: dict) -> None:
         ]
 
         if not matches:
-            ui.print_output(f"  No ability found matching '{query}'.")
+            await ui.print_output(f"  No ability found matching '{query}'.")
             continue
 
         if len(matches) == 1:
-            _print_ability_detail(ui, matches[0][0], index)
+            await _print_ability_detail(ui, matches[0][0], index)
         else:
             matches.sort(key=lambda r: r[1]["name"].lower())
-            ui.print_output(f"\n  {len(matches)} abilities match '{query}':")
+            await ui.print_output(f"\n  {len(matches)} abilities match '{query}':")
             for i, (slug, entry) in enumerate(matches, 1):
-                ui.print_output(f"  {i:3d}. {entry['name']}")
+                await ui.print_output(f"  {i:3d}. {entry['name']}")
             try:
-                idx = int(ui.input_prompt("  Enter number to drill in (0 to cancel): ").strip())
+                idx = int((await ui.input_prompt("  Enter number to drill in (0 to cancel): ")).strip())
                 if 1 <= idx <= len(matches):
-                    _print_ability_detail(ui, matches[idx - 1][0], index)
+                    await _print_ability_detail(ui, matches[idx - 1][0], index)
             except ValueError:
                 pass
 
 
 # ── Main entry point ─────────────────────────────────────────────────────────
 
-def run(game_ctx=None, pkm_ctx=None, ui=None) -> None:
+async def run(game_ctx=None, pkm_ctx=None, ui=None) -> None:
     """
     Ability browser entry point.  Always accessible; warns for Gen 1/2 games.
+    After listing all abilities, the user can search for a specific ability
+    and drill into its details. The loop continues until the user enters
+    an empty query.
     """
     if ui is None:
         # Fallback dummy UI for standalone
         import builtins
         class DummyUI:
-            def print_output(self, text): builtins.print(text)
-            def print_progress(self, text, end="\n", flush=False): builtins.print(text, end=end, flush=flush)
-            def input_prompt(self, prompt): return builtins.input(prompt)
-            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
+            async def input_prompt(self, prompt): return builtins.input(prompt)
+            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
         ui = DummyUI()
 
     # Gen 1/2 warning
@@ -276,35 +280,36 @@ def run(game_ctx=None, pkm_ctx=None, ui=None) -> None:
         game_gen  = game_ctx.get("game_gen", 1)
         game_name = game_ctx.get("game", f"Gen {game_gen}")
         if game_gen < _ABILITY_MIN_GEN:
-            ui.print_output(f"\n  ⚠  Abilities did not exist in {game_name}.")
-            ui.print_output(    "     They were introduced in Generation 3 (Ruby / Sapphire).")
-            ui.print_output(    "     The browser below is shown for reference only.\n")
+            await ui.print_output(f"\n  ⚠  Abilities did not exist in {game_name}.")
+            await ui.print_output(    "     They were introduced in Generation 3 (Ruby / Sapphire).")
+            await ui.print_output(    "     The browser below is shown for reference only.\n")
 
     # Load ability index
     index = cache.get_abilities_index_or_fetch()
     if index is None:
-        ui.print_output("\n  Could not load ability data (network unavailable and no cache).")
+        await ui.print_output("\n  Could not load ability data (network unavailable and no cache).")
         return
 
     # If Pokémon loaded: show its abilities first
     if pkm_ctx is not None:
-        _print_pkm_abilities(ui, pkm_ctx, index)
+        await _print_pkm_abilities(ui, pkm_ctx, index)
 
     # Full list
-    ui.print_output("  All abilities by generation  (search below to drill in)")
-    _print_all_abilities(ui, index)
+    await ui.print_output("  All abilities by generation  (search below to drill in)")
+    await _print_all_abilities(ui, index)
 
-    # Search / drill-in
-    _search_and_drill(ui, index)
+    # Search / drill-in (works in both CLI and TUI)
+    await _search_and_drill(ui, index)
 
 
 # ── Standalone entry point ────────────────────────────────────────────────────
 
 def main() -> None:
-    run()
+    import asyncio
+    asyncio.run(run())
 
 
-# ── Unit tests ────────────────────────────────────────────────────────────────
+# ── Unit tests (unchanged) ────────────────────────────────────────────────────
 
 def _run_tests(with_cache: bool = False) -> None:
     passed = 0
@@ -357,14 +362,14 @@ def _run_tests(with_cache: bool = False) -> None:
     }
     buf = _io.StringIO()
     _sys.stdout = buf
-    # Create a dummy UI that writes to buf and matches the real signature
+    # Create a dummy UI that writes to buf
     class DummyUI:
-        def print_output(self, text): _sys.stdout.write(text + "\n")
-        def print_progress(self, text, end="\n", flush=False): _sys.stdout.write(text + "\n")
-        def input_prompt(self, prompt): return ""
-        def confirm(self, prompt): return False
+        async def print_output(self, text, end="\n"): _sys.stdout.write(text + "\n")
+        async def input_prompt(self, prompt): return ""
+        async def confirm(self, prompt): return False
     dummy = DummyUI()
-    _print_pkm_abilities(dummy, fake_pkm, fake_index)
+    import asyncio
+    asyncio.run(_print_pkm_abilities(dummy, fake_pkm, fake_index))
     _sys.stdout = _sys.__stdout__
     out = buf.getvalue()
 
@@ -380,7 +385,7 @@ def _run_tests(with_cache: bool = False) -> None:
     # Empty abilities list
     buf2 = _io.StringIO()
     _sys.stdout = buf2
-    _print_pkm_abilities(dummy, {"form_name": "Lapras", "abilities": []}, fake_index)
+    asyncio.run(_print_pkm_abilities(dummy, {"form_name": "Lapras", "abilities": []}, fake_index))
     _sys.stdout = _sys.__stdout__
     out2 = buf2.getvalue()
     check("_print_pkm_abilities: empty abilities shows fallback message",
@@ -420,7 +425,7 @@ def _run_tests(with_cache: bool = False) -> None:
 
     print()
     if failed:
-        print(f"  {passed} passed, {failed} failed out of {passed + failed} tests.")
+        print(f"  {passed} passed, {failed} failed out of {passed+failed} tests.")
         sys.exit(1)
     else:
         print(f"  {passed} passed, 0 failed out of {passed} tests.")

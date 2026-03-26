@@ -1735,3 +1735,198 @@ The previous menu structure was cluttered and the ordering was ad‑hoc. Groupin
 
 ### Test count
 No new tests; all existing tests pass.
+
+
+---
+
+## §117 — TUI foundation (split‑pane layout)
+
+### What changed
+- Added `textual` to `requirements.txt`.
+- Created `ui_tui.py` with a basic `TUI` class that inherits from `UI` and launches a textual app with a split‑pane layout.
+- The left pane shows context (game, Pokémon, team) and menu options built by `menu_builder`.
+- The right pane shows feature output via `print_output`.
+- Interactive methods (`input_prompt`, `confirm`, `select_from_list`, etc.) currently fall back to console input (blocking).
+- Key handling is stubbed; only `Q`, `G`, `P`, `T` are partially implemented.
+
+### Why
+To provide a richer user interface that keeps context visible and allows mouse/keyboard navigation. This is the first step toward a full TUI.
+
+### Key decisions
+- The TUI is an alternative UI implementation, selectable via `--tui`. The CLI remains the default.
+- The `TUI` class maintains its own state (contexts) and uses `textual` widgets for display.
+- For now, interactive prompts are still handled by the console, but the layout and output rendering are already functional.
+- The menu is built using the same `menu_builder` functions as the CLI, ensuring consistency.
+
+### Next steps
+- Replace blocking interactive methods with textual modals.
+- Implement full key bindings for all menu actions.
+- Add scrollable output, colors, and formatting.
+
+---
+
+## §118 — Full async conversion and TUI enhancement
+
+### What changed
+
+**UI abstraction completion**
+- All UI methods (`input_prompt`, `confirm`, `select_from_list`, `select_pokemon`, etc.) are now async.
+- Every feature module (`feat_*.py`) now has an `async def run()` and uses `await` for all UI calls.
+- The `CLI` and `TUI` classes implement the abstract `UI` interface with async methods.
+- `pokemain.py` now only handles flags, instantiates the appropriate UI, and calls `await ui.run()`.
+- The main menu loop moved into `CLI.run()`; `TUI.run()` starts the textual app.
+- `menu_builder.py` created to build context and menu lines, used by both UIs.
+
+**TUI implementation**
+- Added `textual` to `requirements.txt`.
+- Created `ui_tui.py` with a split‑pane layout (left: context + menu, right: output).
+- Added persistent input bar at the bottom for text input, eliminating the need for console blocking.
+- Implemented modal screens:
+  - `GameSelectionScreen` – select a game from a list
+  - `PokemonSelectionScreen` – search and select a Pokémon
+  - `FormSelectionScreen` – choose a form when multiple exist
+  - `InputModal` – simple text input (used by `input_prompt`)
+  - `ConfirmModal` – yes/no confirmation
+  - `ListSelectionModal` – choose from a numbered list (used by `select_from_list`)
+- Added `_wait_for_modal` helper to push a screen and wait for a result.
+- Key bindings now handle all menu keys (G, P, T, M, B, N, A, L, E, V, O, S, H, X, Y, W, R, 1–4, Q).
+- The `print_output` method appends to the right‑pane `TextArea`; `print_progress` is implemented but currently adds new lines instead of overwriting (acceptable for now).
+
+**Feature conversions**
+- All feature files (`feat_*.py`) were converted to async, with `print` replaced by `await ui.print_output` and `input` by `await ui.input_prompt`.
+- The type chart in `feat_quick_view.py` is captured via `contextlib.redirect_stdout` and printed via `ui.print_output` so it appears in the TUI.
+- `feat_learnset_compare.py` now uses `ui.select_pokemon` to pick the second Pokémon, which in TUI shows the modal.
+- `feat_team_loader.py` was made async; the team management menu now uses the persistent input bar for commands.
+- `feat_team_builder.py` now has an async `fetch_needed_rosters` that uses `ui.print_progress` (though progress appears as separate lines).
+- `feat_opponent.py` uses async modals for trainer selection.
+
+**Test fixes**
+- All `--autotest` suites were updated to run synchronously; where needed, dummy UI classes now have the same signature as real UI methods.
+- `asyncio.run` is used in test functions to run async code.
+
+**Menu reorganisation and removal of stat comparison**
+- The main menu was regrouped: core actions (G, P, T) at the top, then game‑only features, Pokémon‑dependent features, team features, cache utilities.
+- The standalone stat comparison (key C) was removed; its functions are still used by the learnset comparison and nature browser.
+
+**Team builder evolution filtering**
+- Added `trigger_is_pure_level_up` and `is_pure_level_up_chain` to `core_evolution.py`.
+- In `feat_team_builder.build_suggestion_pool`, lower‑stage pure level‑up evolutions are filtered out when a higher stage is also a candidate (e.g., Dratini → Dragonair → Dragonite only keeps Dragonite). Mixed chains (e.g., Seadra → Kingdra) keep both.
+
+**Key binding changes**
+- The move table pre‑load was changed from `MOVE` (multi‑character) to the single key `Y` to avoid conflict with move lookup (`M`).
+- `W` still pre‑loads the TM/HM table and now works in the TUI.
+
+### Why
+To provide a fully functional terminal UI that keeps context visible and eliminates console‑blocking prompts. The async conversion ensures that the TUI remains responsive and can handle modals. Removing the redundant stat comparison reduces menu clutter. Filtering evolution stages in the team builder improves suggestion quality.
+
+### Key decisions
+- Keep the CLI as the default; the TUI is an alternative launched with `--tui`.
+- Use `textual` for the TUI because of its rich widget set and ease of development.
+- Use modals for complex selections (games, Pokémon, forms, list choices) and the persistent input bar for simple text prompts.
+- All feature modules must be async and await UI calls, which required extensive but straightforward refactoring.
+- The `_is_tui` helper was removed because the TUI now handles prompts natively (except the movepool filter, which is now skipped in TUI).
+- `calc.print_results` is captured to ensure its output appears in the TUI’s right pane.
+
+### Bugs fixed during testing
+- Added missing `end` parameter to `print_output` to allow grid printing in egg group browser.
+- Fixed `TextArea.write` error by using `insert` instead.
+- Resolved `NoActiveWorker` error by implementing `_wait_for_modal` with `push_screen` and a future.
+- Corrected the test dummy UI to accept `flush` and `end` parameters.
+- Adjusted test expectations for mixed evolution chains (Horsea → Seadra → Kingdra) to match filtering logic.
+
+### Test count
+All existing tests pass; new tests added for `core_evolution` (8) and `feat_team_builder` (2). Full offline test count remains stable.
+
+### Next steps
+- Improve `print_progress` to update the same line instead of appending new lines.
+- Add colours and formatting to the TUI output.
+- Consider adding a command palette or mouse support.
+- Investigate making the move filter prompt optional in TUI (currently skipped entirely).
+
+---
+
+## §119 — Main menu reorganisation and stat comparison removal
+
+### What changed
+- Modified `pokemain.py` – rewrote `_build_menu_lines` to group menu entries logically: core actions (G, P, T) at the top, then game‑only features, Pokémon‑dependent features, numbered moveset features, team features, and cache utilities.
+- Removed the `C` (stat comparison) menu entry and its handler.
+- Removed the import of `feat_stat_compare` from `pokemain.py`.
+- Deleted `feat_stat_compare.py` – its functions are now imported from `core_stat.py` by `feat_learnset_compare.py` and `feat_nature_browser.py`.
+- Updated `README.md` and `ARCHITECTURE.md` to reflect the removal.
+- Added a note in the learnset comparison description that a stat header is shown above the move tables.
+
+### Why
+The previous menu was cluttered and did not follow a clear logical grouping. Placing the most frequently used actions at the top makes session setup faster. Removing the standalone stat comparison reduces menu noise, as the same information is already shown in the learnset comparison screen.
+
+### Key decisions
+- Features are now grouped by required context: core actions, game‑only features, Pokémon‑dependent features, numbered moveset features, team features, cache utilities.
+- Separators and blank lines visually separate sections.
+- The `R` (refresh) key is shown only when a Pokémon is loaded.
+- The `MOVE` and `W` keys remain available for users who prefer not to run a full `--sync`.
+
+### Test count
+No new tests; all existing tests pass.
+
+---
+
+## §120 — Team builder evolution filtering
+
+### What changed
+- Added `trigger_is_pure_level_up` and `is_pure_level_up_chain` to `core_evolution.py` (8 new tests).
+- Modified `feat_team_builder.build_suggestion_pool` to filter out lower‑stage pure level‑up evolutions when a higher stage is also a candidate.
+- Added 2 new tests in `feat_team_builder` to verify the filtering for the Dratini line (all pure) and the Horsea/Seadra/Kingdra line (mixed).
+- Updated `ARCHITECTURE.md` to note the new core functions.
+
+### Why
+When the team builder suggested Pokémon to fill gaps, it often listed all stages of a level‑up‑only evolution chain (e.g., Dratini, Dragonair, Dragonite) even though only the final stage is useful in most cases. The filtering now removes lower stages when a higher stage also matches the team's needs, unless the evolution involves a trade, item, or special condition (where both forms may be relevant).
+
+### Key decisions
+- A trigger is considered pure level‑up if it contains the word "Level" and none of the keywords `Trade`, `Use`, `Friendship`, `Happiness`, `Item`, `Move`, `Time`, or `Location`.
+- The filtering is applied after candidate pool construction and uses the cached evolution chains. If a chain is missing from the cache, no filtering is performed for that candidate (safe fallback).
+- Mixed chains (e.g., Seadra → Kingdra) are not filtered because the higher stage is not obtained purely by level‑up.
+
+### Bugs found during testing
+- Initial test expected all three stages of a mixed chain to remain, but the logic correctly removed the base stage when a pure level‑up intermediate stage existed. Test expectation was adjusted to match intended behaviour.
+
+### Test count
+`core_evolution.py`: 28 tests (was 20). `feat_team_builder.py`: 59 tests (was 57). Full suite unchanged.
+
+---
+
+## §121 — Move table pre‑load key change and TM/HM table fix in TUI
+
+### What changed
+- Modified `menu_builder.py` – changed the menu line for pre‑loading moves from `MOVE.` to `Y.    Pre-load move table`.
+- Updated `ui_cli.py` – changed the handler for `"move"` to `"y"`.
+- Updated `ui_tui.py` – added handlers for `"y"` (move table) and `"w"` (TM/HM table), both now use the persistent input bar and modals for confirmation.
+- Removed the `"move"` entry from `_MENU_CHOICES` in `pokemain.py` (documentation only).
+- Updated `README.md` to reflect the new keys.
+
+### Why
+The `MOVE` key conflicted with the move lookup key `M` (the first character of `MOVE` triggered the lookup before the full string could be entered). Changing it to a single key `Y` resolves the conflict and makes the interface consistent with other single‑letter commands. The TM/HM table pre‑load (`W`) was not implemented in the TUI; this change adds it.
+
+### Key decisions
+- Keep the same functionality as in the CLI: `Y` (move table) and `W` (TM/HM table) work identically in both interfaces.
+- In the TUI, the prompts and confirmations use modals (for confirmation) and the persistent input bar (for the `F`/`R` selection), so no console blocking occurs.
+
+### Test count
+No new tests; all existing tests pass.
+
+---
+
+## §122 — Default UI for frozen builds
+
+### What changed
+- Modified `pokemain.py` – added `--cli` flag; when frozen (`sys.frozen`), the TUI is now the default interface.
+- Updated `build.py` – added `--hidden-import textual` to ensure `textual` is bundled.
+- Updated `README.md` – documented the new defaults and the `--cli` flag.
+
+### Why
+The TUI is the more user‑friendly interface and should be the default for end users who download the standalone executable. The `--cli` flag allows power users or those on low‑resource terminals to fall back to the classic interface.
+
+### Key decisions
+- The CLI remains the default when running from source, to avoid requiring `textual` for development.
+- `textual` is explicitly hidden‑imported to guarantee it is included in the frozen bundle.
+
+### Test count
+No new tests; existing tests pass.

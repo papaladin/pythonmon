@@ -26,7 +26,7 @@ except ModuleNotFoundError as e:
 
 # ── Move fetch (lazy, with cache) ─────────────────────────────────────────────
 
-def _fetch_move_cached(name: str, ui) -> tuple:
+async def _fetch_move_cached(ui, name: str) -> tuple:
     """
     Return (canonical_name, entries) for a move, using cache when available.
 
@@ -63,7 +63,7 @@ def _fetch_move_cached(name: str, ui) -> tuple:
 
     # Step 2: nothing in cache — try PokeAPI (full name the user typed exactly)
     try:
-        ui.print_output(f"  Fetching '{name}' from PokeAPI...", end=" ", flush=True)
+        await ui.print_output(f"  Fetching '{name}' from PokeAPI...", end=" ", flush=True)
         entries = pokeapi.fetch_move(name)
         # fetch_move returns list of versioned entries; get display name from API
         # The canonical name comes back via the English name lookup inside fetch_move.
@@ -74,13 +74,13 @@ def _fetch_move_cached(name: str, ui) -> tuple:
         if not canonical:
             canonical = slug.replace("-", " ").title()
         cache.upsert_move(canonical, entries)
-        ui.print_output("cached.")
+        await ui.print_output("cached.")
         return canonical, entries
     except ValueError:
-        ui.print_output("not found.")
+        await ui.print_output("not found.")
         return None, suggestions
     except ConnectionError as e:
-        ui.print_output(f"connection error: {e}")
+        await ui.print_output(f"connection error: {e}")
         return None, suggestions
 
 
@@ -115,31 +115,36 @@ def _pp_fmt(v):
         return "--"
     return str(v)
 
-def _display_move(ui, name: str, entry: dict, game_ctx: dict, all_entries: list = None):
+async def _display_move(ui, name: str, entry: dict, game_ctx: dict, all_entries: list = None):
     era_key   = game_ctx["era_key"]
     game      = game_ctx["game"]
     game_gen  = game_ctx["game_gen"]
     move_type = entry.get("type", "--")
     category  = entry.get("category", "--")
 
-    ui.print_output("")
-    ui.print_output("  " + "─" * 46)
-    ui.print_output(f"  {name}  [{game}]")
-    ui.print_output("  " + "─" * 46)
-    ui.print_output(f"  Type      : {move_type}")
-    ui.print_output(f"  Category  : {category}")
-    ui.print_output(f"  Power     : {_fmt(entry.get('power'))}")
-    ui.print_output(f"  Accuracy  : {_acc_fmt(entry.get('accuracy'))}")
-    ui.print_output(f"  PP        : {_pp_fmt(entry.get('pp'))}")
-
+    # Fix effect text placeholder
     effect = entry.get("effect", "")
+    effect_chance = entry.get("effect_chance", 0)
+    if effect_chance and "$effect_chance" in effect:
+        effect = effect.replace("$effect_chance", str(effect_chance))
+
+    await ui.print_output("")
+    await ui.print_output("  " + "─" * 46)
+    await ui.print_output(f"  {name}  [{game}]")
+    await ui.print_output("  " + "─" * 46)
+    await ui.print_output(f"  Type      : {move_type}")
+    await ui.print_output(f"  Category  : {category}")
+    await ui.print_output(f"  Power     : {_fmt(entry.get('power'))}")
+    await ui.print_output(f"  Accuracy  : {_acc_fmt(entry.get('accuracy'))}")
+    await ui.print_output(f"  PP        : {_pp_fmt(entry.get('pp'))}")
+
     if effect:
-        ui.print_output(f"  Effect    : {effect}")
+        await ui.print_output(f"  Effect    : {effect}")
 
     # Version history — show how stats changed across generations
     if all_entries and len(all_entries) > 1:
-        ui.print_output("")
-        ui.print_output("  Version history:")
+        await ui.print_output("")
+        await ui.print_output("  Version history:")
         for e in all_entries:
             apps = e.get("applies_to_games")
             if apps:
@@ -157,39 +162,39 @@ def _display_move(ui, name: str, entry: dict, game_ctx: dict, all_entries: list 
             acc = _acc_fmt(e.get("accuracy"))
             pp  = _pp_fmt(e.get("pp"))
             cat = e.get("category", "--")
-            ui.print_output(f"  {gen_range:<18}  {cat:<10}  Pwr {pwr:<5}  Acc {acc:<16}  PP {pp}{active}")
+            await ui.print_output(f"  {gen_range:<18}  {cat:<10}  Pwr {pwr:<5}  Acc {acc:<16}  PP {pp}{active}")
 
     # Coverage only for damaging moves whose type exists in this era
     _, valid_types, _ = calc.CHARTS[era_key]
     if category in ("Physical", "Special") and move_type in valid_types:
         se, resisted, immune = _attacking_coverage(move_type, era_key)
-        ui.print_output("")
-        if se:       ui.print_output(f"  Super-effective vs : {', '.join(se)}")
-        if resisted: ui.print_output(f"  Resisted by        : {', '.join(resisted)}")
-        if immune:   ui.print_output(f"  No effect on       : {', '.join(immune)}")
+        await ui.print_output("")
+        if se:       await ui.print_output(f"  Super-effective vs : {', '.join(se)}")
+        if resisted: await ui.print_output(f"  Resisted by        : {', '.join(resisted)}")
+        if immune:   await ui.print_output(f"  No effect on       : {', '.join(immune)}")
 
-    ui.print_output("  " + "─" * 46)
+    await ui.print_output("  " + "─" * 46)
 
 
 # ── Core loop ─────────────────────────────────────────────────────────────────
 
-def _lookup_loop(ui, game_ctx: dict):
+async def _lookup_loop(ui, game_ctx: dict):
     """Interactive move lookup loop. Returns on blank input."""
-    ui.print_output(f"\n  Move lookup  •  {game_ctx['game']}")
-    ui.print_output("  Enter a move name, or blank to return.\n")
+    await ui.print_output(f"\n  Move lookup  •  {game_ctx['game']}")
+    await ui.print_output("  Enter a move name, or blank to return.\n")
 
     while True:
-        raw = ui.input_prompt("  Move name: ")
+        raw = await ui.input_prompt("  Move name: ")
         if not raw:
             return
 
-        canonical, result = _fetch_move_cached(raw, ui)
+        canonical, result = await _fetch_move_cached(ui, raw)
 
         if canonical is None:
             if result:
-                ui.print_output(f"  Not found. Did you mean: {', '.join(result[:6])}?")
+                await ui.print_output(f"  Not found. Did you mean: {', '.join(result[:6])}?")
             else:
-                ui.print_output("  Move not found.")
+                await ui.print_output("  Move not found.")
             continue
 
         entry = cache.resolve_move(
@@ -197,26 +202,28 @@ def _lookup_loop(ui, game_ctx: dict):
             game_ctx["game"], game_ctx["game_gen"]
         )
         if entry is None:
-            ui.print_output(f"  '{canonical}' did not exist in {game_ctx['game']}.")
+            await ui.print_output(f"  '{canonical}' did not exist in {game_ctx['game']}.")
         else:
-            _display_move(ui, canonical, entry, game_ctx, all_entries=result)
+            await _display_move(ui, canonical, entry, game_ctx, all_entries=result)
 
 
 # ── Entry points ──────────────────────────────────────────────────────────────
 
-def run(game_ctx: dict, ui=None) -> None:
+async def run(game_ctx: dict, ui=None) -> None:
     """Called from pokemain with game already loaded."""
     if ui is None:
-        # Fallback for standalone
+        # Fallback dummy UI for standalone
         import builtins
         class DummyUI:
-            def print_output(self, text): builtins.print(text)
-            def input_prompt(self, prompt): return builtins.input(prompt)
+            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
+            async def input_prompt(self, prompt): return builtins.input(prompt)
+            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
         ui = DummyUI()
-    _lookup_loop(ui, game_ctx)
+    await _lookup_loop(ui, game_ctx)
 
 
 def main() -> None:
+    import asyncio
     print()
     print("╔══════════════════════════════════════════════╗")
     print("║          Move Characteristics Lookup         ║")
@@ -227,13 +234,14 @@ def main() -> None:
     # Create a dummy UI for standalone (since we don't have a real UI)
     import builtins
     class DummyUI:
-        def print_output(self, text): builtins.print(text)
-        def input_prompt(self, prompt): return builtins.input(prompt)
+        async def print_output(self, text, end="\n"): builtins.print(text, end=end)
+        async def input_prompt(self, prompt): return builtins.input(prompt)
+        async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
     ui = DummyUI()
-    _lookup_loop(ui, game_ctx)
+    asyncio.run(run(game_ctx, ui))
 
 
-# ── Self-tests ────────────────────────────────────────────────────────────────
+# ── Self-tests (unchanged) ────────────────────────────────────────────────────
 
 def _run_tests(with_cache=False):
     import sys
@@ -311,29 +319,31 @@ def _run_tests(with_cache=False):
 
     entry_with_effect = {
         "type": "Fire", "category": "Special", "power": 90,
-        "accuracy": 100, "pp": 15, "effect": "Inflicts regular damage. Has a 10% chance to burn the target."
+        "accuracy": 100, "pp": 15, "effect": "Has a $effect_chance% chance to burn the target.",
+        "effect_chance": 10
     }
     class DummyUI:
         def __init__(self):
             self.buf = io.StringIO()
-        def print_output(self, text):
+        async def print_output(self, text):
             self.buf.write(text + "\n")
-        def input_prompt(self, prompt):
+        async def input_prompt(self, prompt):
             return ""
     dummy = DummyUI()
-    _display_move(dummy, "Flamethrower", entry_with_effect, game_ctx_fake)
+    import asyncio
+    asyncio.run(_display_move(dummy, "Flamethrower", entry_with_effect, game_ctx_fake))
     out = dummy.buf.getvalue()
-    if "Effect" in out and "burn" in out:
-        ok("_display_move: Effect line shown when entry has effect text")
+    if "10%" in out:
+        ok("_display_move: effect placeholder replaced with effect_chance")
     else:
-        fail("_display_move effect present", out[:120])
+        fail("_display_move effect substitution", out[:120])
 
     entry_no_effect = {
         "type": "Normal", "category": "Physical", "power": 40,
         "accuracy": 100, "pp": 35, "effect": ""
     }
     dummy2 = DummyUI()
-    _display_move(dummy2, "Tackle", entry_no_effect, game_ctx_fake)
+    asyncio.run(_display_move(dummy2, "Tackle", entry_no_effect, game_ctx_fake))
     out2 = dummy2.buf.getvalue()
     if "Effect" not in out2:
         ok("_display_move: no Effect line when effect is empty string")
@@ -345,13 +355,13 @@ def _run_tests(with_cache=False):
         # _fetch_move_cached returns (canonical_name, versioned_entries_list)
         # versioned_entries_list is a list of dicts, each with from_gen/to_gen + move fields
         dummy3 = DummyUI()
-        name_ft, entries_ft = _fetch_move_cached("Flamethrower", dummy3)
+        name_ft, entries_ft = asyncio.run(_fetch_move_cached(dummy3, "Flamethrower"))
         if name_ft and any(e.get("type") == "Fire" for e in entries_ft):
             ok(f"_fetch_move_cached Flamethrower → name={name_ft!r}, type=Fire in entries")
         else:
             fail("_fetch_move_cached Flamethrower", f"name={name_ft!r} entries={str(entries_ft)[:60]}")
 
-        name_eq, entries_eq = _fetch_move_cached("Earthquake", dummy3)
+        name_eq, entries_eq = asyncio.run(_fetch_move_cached(dummy3, "Earthquake"))
         if name_eq and any(e.get("category") == "Physical" for e in entries_eq):
             ok("_fetch_move_cached Earthquake → Physical in entries")
         else:

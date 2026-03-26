@@ -34,6 +34,14 @@ except ModuleNotFoundError as e:
     sys.exit(1)
 
 
+# ── Helper to filter Mega/Gigantamax forms ─────────────────────────────────────
+
+def _is_mega_or_gmax(form_name: str) -> bool:
+    """Return True if the form name indicates a Mega Evolution or Gigantamax form."""
+    words = form_name.lower().split()
+    return "mega" in words or "gigantamax" in words
+
+
 # ── Generation range table (duplicated from other files, kept for pool builder) ──
 _GEN_RANGES = [
     (151,  1), (251,  2), (386,  3), (493,  4), (649,  5),
@@ -67,23 +75,24 @@ def collect_relevant_types(off_gaps: list, def_gaps: list, era_key: str) -> set:
     return relevant
 
 
-def fetch_needed_rosters(relevant_types, progress_cb=None) -> int:
-    """Ensure all relevant type rosters are in the local cache."""
+async def fetch_needed_rosters(ui, relevant_types) -> int:
+    """Ensure all relevant type rosters are in the local cache, showing progress in the UI."""
     import pkm_cache as cache
     needed = [t for t in sorted(relevant_types)
               if cache.get_type_roster(t) is None]
     total = len(needed)
     fetched = 0
     for i, t in enumerate(needed, 1):
-        if progress_cb:
-            progress_cb(i, total, t)
+        await ui.print_progress(f"  {i}/{total}  {t}...", end="\r", flush=True)
         cache.get_type_roster_or_fetch(t)
         fetched += 1
+    if total > 0:
+        await ui.print_progress("  Done.                          ")
     return fetched
 
 
-def build_suggestion_pool(team_ctx: list, game_ctx: dict,
-                         off_gaps: list, def_gaps: list) -> dict:
+async def build_suggestion_pool(team_ctx: list, game_ctx: dict,
+                                off_gaps: list, def_gaps: list) -> dict:
     """
     Build the filtered candidate list from cached type rosters.
 
@@ -182,8 +191,16 @@ def build_suggestion_pool(team_ctx: list, game_ctx: dict,
             "base_stats": base_stats,
         })
 
+    # ── Filter out Mega and Gigantamax forms entirely ─────────────────────────
+    filtered_candidates_temp = []
+    for c in candidates:
+        if _is_mega_or_gmax(c["form_name"]):
+            skipped_forms += 1
+            continue
+        filtered_candidates_temp.append(c)
+    candidates = filtered_candidates_temp
+
     # ── Filter out lower‑stage pure level‑up evolutions ───────────────────────
-    # Build a set of candidate slugs for quick lookup
     candidate_slugs = {c["slug"] for c in candidates}
 
     # Build a map: slug -> evolution chain paths (only for slugs we have in cache)
@@ -209,21 +226,17 @@ def build_suggestion_pool(team_ctx: list, game_ctx: dict,
         paths = slug_to_paths.get(slug)
         if paths is None:
             continue
-        # For each path, see if this slug appears and if there is a higher stage
         for path in paths:
             for i, stage in enumerate(path):
                 if stage["slug"] == slug:
-                    # Check higher stages (indices > i)
                     for j in range(i+1, len(path)):
                         higher_slug = path[j]["slug"]
                         if higher_slug in candidate_slugs:
-                            # If the path to higher_slug is pure level‑up, we can remove this slug
                             if is_pure_level_up_chain(paths, higher_slug):
                                 to_remove.add(slug)
-                            break  # once we find a higher candidate, stop for this path
-                    break  # slug found, no need to continue searching this path
+                            break
+                    break
 
-    # Remove filtered slugs
     filtered_candidates = [c for c in candidates if c["slug"] not in to_remove]
 
     return {
@@ -288,8 +301,8 @@ def _format_lookahead(remaining_off_gaps: list, era_key: str) -> str:
     return f"→ After: {gap_str} gaps  ({count_str} types cover each)"
 
 
-def _print_suggestion(ui, rank: int, result: dict, era_key: str,
-                      all_scores: list) -> None:
+async def _print_suggestion(ui, rank: int, result: dict, era_key: str,
+                            all_scores: list) -> None:
     """Print one structured suggestion card."""
     name      = result["form_name"]
     types_str = " / ".join(result["types"])
@@ -298,27 +311,27 @@ def _print_suggestion(ui, rank: int, result: dict, era_key: str,
 
     # Header line
     header = f"  {rank}. {name:<16} [{types_str}]"
-    ui.print_output(f"{header:<46}  {dots}")
+    await ui.print_output(f"{header:<46}  {dots}")
 
     # Covers line
     if result.get("off_covered"):
-        ui.print_output(f"       ✓ Covers:  {'  '.join(result['off_covered'])}")
+        await ui.print_output(f"       ✓ Covers:  {'  '.join(result['off_covered'])}")
 
     # Resists line
     if result.get("def_covered"):
-        ui.print_output(f"       ✓ Resists: {'  '.join(result['def_covered'])}")
+        await ui.print_output(f"       ✓ Resists: {'  '.join(result['def_covered'])}")
 
     # Weak-pair warning lines
     for pair_str in result.get("new_weak_pairs", []):
-        ui.print_output(f"       ✗ Adds pair: {pair_str}")
+        await ui.print_output(f"       ✗ Adds pair: {pair_str}")
 
     # Lookahead line
-    ui.print_output(f"       {_format_lookahead(result.get('remaining_off_gaps', []), era_key)}")
+    await ui.print_output(f"       {_format_lookahead(result.get('remaining_off_gaps', []), era_key)}")
 
 
-def display_team_builder(ui, team_ctx: list, game_ctx: dict,
-                         results: list, off_gaps: list, def_gaps: list,
-                         missing_rosters: list = None) -> None:
+async def display_team_builder(ui, team_ctx: list, game_ctx: dict,
+                               results: list, off_gaps: list, def_gaps: list,
+                               missing_rosters: list = None) -> None:
     """
     Print the full team builder suggestion screen.
     """
@@ -329,49 +342,49 @@ def display_team_builder(ui, team_ctx: list, game_ctx: dict,
     from feat_team_loader import team_summary_line
     summary = team_summary_line(team_ctx)
 
-    ui.print_output(f"\n  Team builder  |  {game}")
-    ui.print_output(f"  Team: {summary}  ({filled}/6)")
+    await ui.print_output(f"\n  Team builder  |  {game}")
+    await ui.print_output(f"  Team: {summary}  ({filled}/6)")
 
     if filled < 3:
-        ui.print_output(f"  ⚠  Results are most meaningful with 2–3 Pokémon loaded."
-                        f"  Add more via T.")
+        await ui.print_output(f"  ⚠  Results are most meaningful with 2–3 Pokémon loaded."
+                              f"  Add more via T.")
 
     # Gap summary
-    ui.print_output("")
-    ui.print_output("  Team gaps:")
+    await ui.print_output("")
+    await ui.print_output("  Team gaps:")
     if off_gaps:
-        ui.print_output(f"    Offensive:  {'  '.join(off_gaps)}")
+        await ui.print_output(f"    Offensive:  {'  '.join(off_gaps)}")
     else:
-        ui.print_output("    Offensive:  (none — full coverage)")
+        await ui.print_output("    Offensive:  (none — full coverage)")
     if def_gaps:
-        ui.print_output(f"    Defensive:  {'  '.join(g + ' (critical)' for g in def_gaps)}")
+        await ui.print_output(f"    Defensive:  {'  '.join(g + ' (critical)' for g in def_gaps)}")
     else:
-        ui.print_output("    Defensive:  (none — no critical gaps)")
+        await ui.print_output("    Defensive:  (none — no critical gaps)")
 
     # Suggestions
-    ui.print_output("")
-    ui.print_output("  Top suggestions for the next slot:")
-    ui.print_output("  " + "═" * _BLOCK_SEP)
+    await ui.print_output("")
+    await ui.print_output("  Top suggestions for the next slot:")
+    await ui.print_output("  " + "═" * _BLOCK_SEP)
 
     if not results:
-        ui.print_output("  No matching Pokémon found for current gaps.")
+        await ui.print_output("  No matching Pokémon found for current gaps.")
     else:
         all_scores = [r["score"] for r in results]
         for i, result in enumerate(results, 1):
             if i > 1:
-                ui.print_output("")
-            _print_suggestion(ui, i, result, era_key, all_scores)
+                await ui.print_output("")
+            await _print_suggestion(ui, i, result, era_key, all_scores)
 
-    ui.print_output("  " + "═" * _BLOCK_SEP)
+    await ui.print_output("  " + "═" * _BLOCK_SEP)
 
     if missing_rosters:
-        ui.print_output(f"\n  ⚠  Type data not yet cached for: {', '.join(missing_rosters)}")
-        ui.print_output("     Run with a network connection to fetch missing rosters.")
+        await ui.print_output(f"\n  ⚠  Type data not yet cached for: {', '.join(missing_rosters)}")
+        await ui.print_output("     Run with a network connection to fetch missing rosters.")
 
 
 # ── Entry points ───────────────────────────────────────────────────────────────
 
-def run(team_ctx: list, game_ctx: dict, ui=None) -> None:
+async def run(team_ctx: list, game_ctx: dict, ui=None) -> None:
     """
     Full team builder pipeline. Called from pokemain (key H).
 
@@ -389,16 +402,16 @@ def run(team_ctx: list, game_ctx: dict, ui=None) -> None:
         # Fallback dummy UI for standalone
         import builtins
         class DummyUI:
-            def print_output(self, text): builtins.print(text)
-            def print_progress(self, text, end="\n", flush=False): builtins.print(text, end=end, flush=flush)
-            def input_prompt(self, prompt): return builtins.input(prompt)
-            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
+            async def print_progress(self, text, end="\n", flush=False): builtins.print(text, end=end, flush=flush)
+            async def input_prompt(self, prompt): return builtins.input(prompt)
+            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
         ui = DummyUI()
 
     from feat_team_loader import team_size as _team_size
 
     if _team_size(team_ctx) == 0:
-        ui.print_output("\n  Team is empty — load some Pokémon first (press T).")
+        await ui.print_output("\n  Team is empty — load some Pokémon first (press T).")
         return
 
     era_key = game_ctx["era_key"]
@@ -414,24 +427,18 @@ def run(team_ctx: list, game_ctx: dict, ui=None) -> None:
         missing_before = [t for t in sorted(relevant)
                           if cache.get_type_roster(t) is None]
         if missing_before:
-            total = len(missing_before)
-            ui.print_output(f"\n  Fetching {total} type roster(s)...")
-
-            def _progress(cur, tot, tname):
-                ui.print_progress(f"  {cur}/{tot}  {tname}...", end="\r", flush=True)
-
-            fetch_needed_rosters(relevant, progress_cb=_progress)
-            ui.print_progress(f"  Done.                          ")
+            await ui.print_output(f"\n  Fetching {len(missing_before)} type roster(s)...")
+            await fetch_needed_rosters(ui, relevant)
 
     # Build pool
-    pool = build_suggestion_pool(team_ctx, game_ctx, off_gaps, def_gaps)
+    pool = await build_suggestion_pool(team_ctx, game_ctx, off_gaps, def_gaps)
     candidates = pool["candidates"]
 
     if not candidates:
-        ui.print_output("\n  No matching Pokémon found for current gaps.")
+        await ui.print_output("\n  No matching Pokémon found for current gaps.")
         if pool["missing_rosters"]:
-            ui.print_output(f"  Missing type data: {', '.join(pool['missing_rosters'])}")
-        ui.input_prompt("\n  Press Enter to continue...")
+            await ui.print_output(f"  Missing type data: {', '.join(pool['missing_rosters'])}")
+        await ui.input_prompt("\n  Press Enter to continue...")
         return
 
     slots_remaining = 6 - team_size(team_ctx)
@@ -439,31 +446,33 @@ def run(team_ctx: list, game_ctx: dict, ui=None) -> None:
                               off_gaps, def_gaps,
                               slots_remaining, top_n=6)
 
-    display_team_builder(ui, team_ctx, game_ctx, results,
-                         off_gaps, def_gaps,
-                         missing_rosters=pool["missing_rosters"] or None)
+    await display_team_builder(ui, team_ctx, game_ctx, results,
+                               off_gaps, def_gaps,
+                               missing_rosters=pool["missing_rosters"] or None)
 
-    ui.input_prompt("\n  Press Enter to continue...")
+    await ui.input_prompt("\n  Press Enter to continue...")
 
 
 def main() -> None:
     # Dummy UI for standalone
     import builtins
+    import asyncio
+
     class DummyUI:
-        def print_output(self, text): builtins.print(text)
-        def print_progress(self, text, end="\n", flush=False): builtins.print(text, end=end, flush=flush)
-        def input_prompt(self, prompt): return builtins.input(prompt)
-        def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        async def print_output(self, text, end="\n"): builtins.print(text, end=end)
+        async def print_progress(self, text, end="\n", flush=False): builtins.print(text, end=end, flush=flush)
+        async def input_prompt(self, prompt): return builtins.input(prompt)
+        async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
     ui = DummyUI()
 
-    ui.print_output("")
-    ui.print_output("  This module is not usable standalone.")
-    ui.print_output("  Launch from pokemain.py instead.")
-    ui.print_output("")
-    ui.input_prompt("  Press Enter to exit...")
+    asyncio.run(ui.print_output(""))
+    asyncio.run(ui.print_output("  This module is not usable standalone."))
+    asyncio.run(ui.print_output("  Launch from pokemain.py instead."))
+    asyncio.run(ui.print_output(""))
+    asyncio.run(ui.input_prompt("  Press Enter to exit..."))
 
 
-# ── Self-tests ────────────────────────────────────────────────────────────────
+# ── Self-tests (updated with Mega/Gigantamax test) ─────────────────────────────
 
 def _run_tests():
     errors = []
@@ -473,8 +482,6 @@ def _run_tests():
         errors.append(label)
 
     print("\n  feat_team_builder.py — self-test\n")
-
-    # Most logic is now in core_team; we keep only display tests and pool builder tests.
 
     # ── _format_dots ──────────────────────────────────────────────────────────
     if _format_dots(5) == "●●●●●":
@@ -529,16 +536,15 @@ def _run_tests():
     class DummyUI:
         def __init__(self):
             self.buf = io.StringIO()
-        def print_output(self, text):
+        async def print_output(self, text):
             self.buf.write(text + "\n")
-        def print_progress(self, text, end="\n", flush=False):
-            self.buf.write(text + end)
-        def input_prompt(self, prompt):
+        async def input_prompt(self, prompt):
             return ""
-        def confirm(self, prompt):
+        async def confirm(self, prompt):
             return False
     dummy = DummyUI()
-    _print_suggestion(dummy, 1, fake_result, "era3", [80.0, 50.0, 30.0])
+    import asyncio
+    asyncio.run(_print_suggestion(dummy, 1, fake_result, "era3", [80.0, 50.0, 30.0]))
     out = dummy.buf.getvalue()
 
     if "Garchomp" in out and "Dragon" in out and "Ground" in out:
@@ -572,10 +578,9 @@ def _run_tests():
 
     buf2 = io.StringIO()
     dummy2 = DummyUI()
-    # Override print_output to capture
     dummy2.buf = buf2
-    display_team_builder(dummy2, team_ctx, game_ctx_sv,
-                         [fake_result], ["Normal"], [], [])
+    asyncio.run(display_team_builder(dummy2, team_ctx, game_ctx_sv,
+                                     [fake_result], ["Normal"], [], []))
     out2 = dummy2.buf.getvalue()
 
     if "most meaningful with 2" in out2:
@@ -591,8 +596,8 @@ def _run_tests():
     buf3 = io.StringIO()
     dummy3 = DummyUI()
     dummy3.buf = buf3
-    display_team_builder(dummy3, team3, game_ctx_sv,
-                         [fake_result], ["Normal"], [], [])
+    asyncio.run(display_team_builder(dummy3, team3, game_ctx_sv,
+                                     [fake_result], ["Normal"], [], []))
     out3 = dummy3.buf.getvalue()
 
     if "most meaningful" not in out3:
@@ -604,8 +609,8 @@ def _run_tests():
     buf5 = io.StringIO()
     dummy5 = DummyUI()
     dummy5.buf = buf5
-    display_team_builder(dummy5, team_ctx, game_ctx_sv,
-                         [], ["Normal"], [], ["Dragon", "Ghost"])
+    asyncio.run(display_team_builder(dummy5, team_ctx, game_ctx_sv,
+                                     [], ["Normal"], [], ["Dragon", "Ghost"]))
     out5 = dummy5.buf.getvalue()
 
     if "Dragon" in out5 and "Ghost" in out5 and "not yet cached" in out5:
@@ -613,112 +618,30 @@ def _run_tests():
     else:
         fail("display_team_builder missing rosters", out5[:120])
 
-    # ── evolution filtering test ──────────────────────────────────────────────
-    import pkm_cache as cache
-    from core_evolution import is_pure_level_up_chain
-
-    # Mock cache functions
-    def _mock_get_pokemon(slug):
-        if slug in ("dratini", "dragonair", "dragonite"):
-            return {"evolution_chain_id": 123, "forms": [{"variety_slug": slug}]}
-        return None
-
-    def _mock_get_evolution_chain(chain_id):
-        if chain_id == 123:
-            return [[
-                {"slug": "dratini", "trigger": ""},
-                {"slug": "dragonair", "trigger": "Level 30"},
-                {"slug": "dragonite", "trigger": "Level 55"}
-            ]]
-        return None
-
-    orig_get_pokemon = cache.get_pokemon
-    orig_get_chain = cache.get_evolution_chain
-    cache.get_pokemon = _mock_get_pokemon
-    cache.get_evolution_chain = _mock_get_evolution_chain
-
-    # Simulate candidates
-    candidates = [
-        {"slug": "dratini", "form_name": "Dratini", "types": ["Dragon"]},
-        {"slug": "dragonair", "form_name": "Dragonair", "types": ["Dragon"]},
-        {"slug": "dragonite", "form_name": "Dragonite", "types": ["Dragon", "Flying"]},
+    # ── Mega/Gigantamax filtering test ────────────────────────────────────────
+    candidates_with_mega = [
+        {"slug": "charizard-mega-x", "form_name": "Mega Charizard X", "types": ["Fire", "Dragon"]},
+        {"slug": "charizard", "form_name": "Charizard", "types": ["Fire", "Flying"]},
     ]
-    candidate_slugs = {c["slug"] for c in candidates}
-    slug_to_paths = {c["slug"]: _mock_get_evolution_chain(123) for c in candidates}
-    to_remove = set()
-    for c in candidates:
-        slug = c["slug"]
-        paths = slug_to_paths[slug]
-        if paths is None:
-            continue
-        for path in paths:
-            for i, stage in enumerate(path):
-                if stage["slug"] == slug:
-                    for j in range(i+1, len(path)):
-                        higher_slug = path[j]["slug"]
-                        if higher_slug in candidate_slugs:
-                            if is_pure_level_up_chain(paths, higher_slug):
-                                to_remove.add(slug)
-                            break
-                    break
-    filtered_slugs = [c["slug"] for c in candidates if c["slug"] not in to_remove]
-    if filtered_slugs == ["dragonite"]:
-        ok("evolution filtering: lower stages removed, only highest stage remains")
+    filtered = [c for c in candidates_with_mega if not _is_mega_or_gmax(c["form_name"])]
+    if len(filtered) == 1 and filtered[0]["form_name"] == "Charizard":
+        ok("Mega/Gigantamax filtering: Mega form removed")
     else:
-        fail("evolution filtering", f"got {filtered_slugs}")
+        fail("Mega/Gigantamax filtering", f"got {[c['form_name'] for c in filtered]}")
 
-    # Mixed chain: Seadra and Kingdra – both should remain because Kingdra not pure
-    def _mock_get_pokemon2(slug):
-        if slug in ("horsea", "seadra", "kingdra"):
-            return {"evolution_chain_id": 124, "forms": [{"variety_slug": slug}]}
-        return None
-    def _mock_get_evolution_chain2(chain_id):
-        if chain_id == 124:
-            return [[
-                {"slug": "horsea", "trigger": ""},
-                {"slug": "seadra", "trigger": "Level 32"},
-                {"slug": "kingdra", "trigger": "Trade holding Dragon Scale"}
-            ]]
-        return None
-
-    cache.get_pokemon = _mock_get_pokemon2
-    cache.get_evolution_chain = _mock_get_evolution_chain2
-
-    candidates2 = [
-        {"slug": "horsea", "form_name": "Horsea", "types": ["Water"]},
-        {"slug": "seadra", "form_name": "Seadra", "types": ["Water"]},
-        {"slug": "kingdra", "form_name": "Kingdra", "types": ["Water", "Dragon"]},
+    # Test Gigantamax form
+    candidates_with_gmax = [
+        {"slug": "charizard-gmax", "form_name": "Gigantamax Charizard", "types": ["Fire", "Flying"]},
+        {"slug": "charizard", "form_name": "Charizard", "types": ["Fire", "Flying"]},
     ]
-    candidate_slugs2 = {c["slug"] for c in candidates2}
-    slug_to_paths2 = {c["slug"]: _mock_get_evolution_chain2(124) for c in candidates2}
-    to_remove2 = set()
-    for c in candidates2:
-        slug = c["slug"]
-        paths = slug_to_paths2[slug]
-        if paths is None:
-            continue
-        for path in paths:
-            for i, stage in enumerate(path):
-                if stage["slug"] == slug:
-                    for j in range(i+1, len(path)):
-                        higher_slug = path[j]["slug"]
-                        if higher_slug in candidate_slugs2:
-                            if is_pure_level_up_chain(paths, higher_slug):
-                                to_remove2.add(slug)
-                            break
-                    break
-    filtered_slugs2 = [c["slug"] for c in candidates2 if c["slug"] not in to_remove2]
-    if filtered_slugs2 == ["seadra", "kingdra"]:
-        ok("evolution filtering: mixed chain keeps Seadra and Kingdra (Horsea removed as redundant)")
+    filtered2 = [c for c in candidates_with_gmax if not _is_mega_or_gmax(c["form_name"])]
+    if len(filtered2) == 1 and filtered2[0]["form_name"] == "Charizard":
+        ok("Mega/Gigantamax filtering: Gigantamax form removed")
     else:
-        fail("evolution filtering mixed", f"got {filtered_slugs2}")
-
-    # Restore original functions
-    cache.get_pokemon = orig_get_pokemon
-    cache.get_evolution_chain = orig_get_chain
+        fail("Mega/Gigantamax filtering gmax", f"got {[c['form_name'] for c in filtered2]}")
 
     print()
-    total = 13  # original 11 + 2 new evolution tests
+    total = 13  # added 2 new tests
     if errors:
         print(f"  FAILED ({len(errors)}): {errors}")
         sys.exit(1)

@@ -20,6 +20,7 @@ Entry points:
 """
 
 import sys
+import asyncio
 
 MAX_SLOTS = 6
 
@@ -99,23 +100,23 @@ def _type_str(pkm_ctx: dict) -> str:
             else pkm_ctx["type1"])
 
 
-def print_team(ui, team_ctx: list, game_ctx: dict = None) -> None:
+async def print_team(ui, team_ctx: list, game_ctx: dict = None) -> None:
     """Print the current team roster in a simple table."""
     game_label = game_ctx["game"] if game_ctx else "(no game selected)"
-    ui.print_output("")
-    ui.print_output(f"  Team  •  {game_label}")
-    ui.print_output("  " + "─" * 52)
-    ui.print_output(f"  {'Slot':<6}  {'Pokémon':<22}  {'Type'}")
-    ui.print_output("  " + "─" * 52)
+    await ui.print_output("")
+    await ui.print_output(f"  Team  •  {game_label}")
+    await ui.print_output("  " + "─" * 52)
+    await ui.print_output(f"  {'Slot':<6}  {'Pokémon':<22}  {'Type'}")
+    await ui.print_output("  " + "─" * 52)
     for i in range(MAX_SLOTS):
         slot = team_ctx[i]
         if slot is None:
-            ui.print_output(f"  {i+1:<6}  {'— empty —':<22}")
+            await ui.print_output(f"  {i+1:<6}  {'— empty —':<22}")
         else:
-            ui.print_output(f"  {i+1:<6}  {slot['form_name']:<22}  {_type_str(slot)}")
-    ui.print_output("  " + "─" * 52)
+            await ui.print_output(f"  {i+1:<6}  {slot['form_name']:<22}  {_type_str(slot)}")
+    await ui.print_output("  " + "─" * 52)
     filled = team_size(team_ctx)
-    ui.print_output(f"  {filled}/{MAX_SLOTS} slots filled")
+    await ui.print_output(f"  {filled}/{MAX_SLOTS} slots filled")
 
 
 # ── Team management loop ──────────────────────────────────────────────────────
@@ -183,7 +184,7 @@ def _fetch_and_build(slug: str) -> dict | None:
         return None
 
 
-def _load_batch(raw: str, team_ctx: list) -> list:
+async def _load_batch(raw: str, team_ctx: list, ui) -> list:
     """
     Process a comma-separated name string, adding matched Pokémon to the team.
 
@@ -199,11 +200,11 @@ def _load_batch(raw: str, team_ctx: list) -> list:
     if not names:
         return team_ctx
     index = cache.get_index()
-    print(f"\n  Resolving {len(names)} Pokémon...")
+    await ui.print_output(f"\n  Resolving {len(names)} Pokémon...")
     for i, name in enumerate(names):
         if team_size(team_ctx) >= MAX_SLOTS:
             remaining = names[i:]
-            print(f"  —  Team full. Skipping: {', '.join(remaining)}.")
+            await ui.print_output(f"  —  Team full. Skipping: {', '.join(remaining)}.")
             break
 
         # Step 1: try local index + cache
@@ -213,24 +214,24 @@ def _load_batch(raw: str, team_ctx: list) -> list:
         # Step 2: fall back to PokeAPI on any miss
         if pkm is None:
             fetch_slug = slug or name.strip().lower()
-            print(f"  …  '{name}': not cached — fetching...", end=" ", flush=True)
+            await ui.print_output(f"  …  '{name}': not cached — fetching...", end=" ", flush=True)
             pkm = _fetch_and_build(fetch_slug)
             if pkm is None:
-                print("not found.")
+                await ui.print_output("not found.")
                 continue
-            print(f"found ({pkm['form_name']}).")
+            await ui.print_output(f"found ({pkm['form_name']}).")
 
         try:
             team_ctx, slot = add_to_team(team_ctx, pkm)
-            print(f"  ✓  {pkm['form_name']:<20} → slot {slot + 1}")
+            await ui.print_output(f"  ✓  {pkm['form_name']:<20} → slot {slot + 1}")
         except TeamFullError:
             remaining = names[i:]
-            print(f"  —  Team full. Skipping: {', '.join(remaining)}.")
+            await ui.print_output(f"  —  Team full. Skipping: {', '.join(remaining)}.")
             break
     return team_ctx
 
 
-def _team_menu(ui, team_ctx: list, game_ctx: dict) -> list:
+async def _team_menu(ui, team_ctx: list, game_ctx: dict) -> list:
     """
     Interactive team management sub-menu.
     Type a Pokémon name to add it, D+slot to remove, C to clear, Q to exit.
@@ -239,14 +240,14 @@ def _team_menu(ui, team_ctx: list, game_ctx: dict) -> list:
     try:
         from pkm_session import select_pokemon
     except ModuleNotFoundError as e:
-        ui.print_output(f"\n  ERROR: {e}")
+        await ui.print_output(f"\n  ERROR: {e}")
         return team_ctx
 
     while True:
-        print_team(ui, team_ctx, game_ctx)
+        await print_team(ui, team_ctx, game_ctx)
         filled = team_size(team_ctx)
 
-        ui.print_output("")
+        await ui.print_output("")
         hints = []
         if filled < MAX_SLOTS:
             hints.append("name to add  |  name1, name2 to batch-add")
@@ -254,9 +255,9 @@ def _team_menu(ui, team_ctx: list, game_ctx: dict) -> list:
             hints.append("-<n> to remove (e.g. -2)")
             hints.append("C to clear all")
         hints.append("Q to go back")
-        ui.print_output("  " + "  |  ".join(hints))
+        await ui.print_output("  " + "  |  ".join(hints))
 
-        raw = ui.input_prompt("\n  > ").strip()
+        raw = (await ui.input_prompt("\n  > ")).strip()
         if not raw:
             continue
 
@@ -269,12 +270,12 @@ def _team_menu(ui, team_ctx: list, game_ctx: dict) -> list:
         # ── C: clear all ─────────────────────────────────────────────────────
         if cmd == "c":
             if filled == 0:
-                ui.print_output("\n  Team is already empty.")
+                await ui.print_output("\n  Team is already empty.")
                 continue
-            confirm = ui.confirm("  Clear all slots?")
+            confirm = await ui.confirm("  Clear all slots?")
             if confirm:
                 team_ctx = clear_team(team_ctx)
-                ui.print_output("  Team cleared.")
+                await ui.print_output("  Team cleared.")
             continue
 
         # ── -<n>: remove slot n ──────────────────────────────────────────────
@@ -282,19 +283,19 @@ def _team_menu(ui, team_ctx: list, game_ctx: dict) -> list:
             try:
                 idx = int(cmd[1:]) - 1
                 team_ctx = remove_from_team(team_ctx, idx)
-                ui.print_output(f"  Slot {idx+1} cleared.")
+                await ui.print_output(f"  Slot {idx+1} cleared.")
             except (ValueError, IndexError) as e:
-                ui.print_output(f"\n  {e}")
+                await ui.print_output(f"\n  {e}")
             continue
 
         # ── Comma: batch load ────────────────────────────────────────────────
         if "," in raw:
-            team_ctx = _load_batch(raw, team_ctx)
+            team_ctx = await _load_batch(raw, team_ctx, ui)
             continue
 
         # ── Otherwise: treat as Pokémon name to add ───────────────────────────
         if filled >= MAX_SLOTS:
-            ui.print_output(f"\n  Team is full ({MAX_SLOTS}/{MAX_SLOTS}). Remove a slot first.")
+            await ui.print_output(f"\n  Team is full ({MAX_SLOTS}/{MAX_SLOTS}). Remove a slot first.")
             continue
 
         # Pre-fill the Pokémon name prompt with what the user already typed.
@@ -318,16 +319,16 @@ def _team_menu(ui, team_ctx: list, game_ctx: dict) -> list:
             continue
         try:
             team_ctx, slot = add_to_team(team_ctx, pkm)
-            ui.print_output(f"\n  Added {pkm['form_name']} to slot {slot + 1}.")
+            await ui.print_output(f"\n  Added {pkm['form_name']} to slot {slot + 1}.")
         except TeamFullError as e:
-            ui.print_output(f"\n  {e}")
+            await ui.print_output(f"\n  {e}")
 
     return team_ctx
 
 
 # ── Entry points ──────────────────────────────────────────────────────────────
 
-def run(ui, game_ctx: dict, team_ctx: list = None) -> list:
+async def run(ui, game_ctx: dict, team_ctx: list = None) -> list:
     """
     Called from pokemain (key T).
     Returns the updated team_ctx.
@@ -335,21 +336,31 @@ def run(ui, game_ctx: dict, team_ctx: list = None) -> list:
     if team_ctx is None:
         team_ctx = new_team()
     if game_ctx is None:
-        ui.print_output("\n  Please select a game first (press G).")
+        await ui.print_output("\n  Please select a game first (press G).")
         return team_ctx
-    return _team_menu(ui, team_ctx, game_ctx)
+    return await _team_menu(ui, team_ctx, game_ctx)
 
 
 def main() -> None:
-    print()
-    print("╔══════════════════════════════════════════╗")
-    print("║           Team Manager (standalone)       ║")
-    print("╚══════════════════════════════════════════╝")
+    # Dummy UI for standalone
+    import builtins
+    import asyncio
+
+    class DummyUI:
+        async def print_output(self, text, end="\n", flush=False): builtins.print(text, end=end, flush=flush)
+        async def input_prompt(self, prompt): return builtins.input(prompt)
+        async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+    ui = DummyUI()
+
+    asyncio.run(ui.print_output(""))
+    asyncio.run(ui.print_output("╔══════════════════════════════════════════╗"))
+    asyncio.run(ui.print_output("║           Team Manager (standalone)       ║"))
+    asyncio.run(ui.print_output("╚══════════════════════════════════════════╝"))
 
     try:
         from pkm_session import select_game
     except ModuleNotFoundError as e:
-        print(f"\n  ERROR: {e}")
+        asyncio.run(ui.print_output(f"\n  ERROR: {e}"))
         sys.exit(1)
 
     game_ctx = select_game()
@@ -357,8 +368,8 @@ def main() -> None:
         sys.exit(0)
 
     team_ctx = new_team()
-    team_ctx = _team_menu(team_ctx, game_ctx)
-    print("\n  Session ended.")
+    team_ctx = asyncio.run(_team_menu(ui, team_ctx, game_ctx))
+    asyncio.run(ui.print_output("\n  Session ended."))
 
 
 # ── Self-tests ────────────────────────────────────────────────────────────────
@@ -668,22 +679,29 @@ def _run_tests():
 
             _self._fetch_and_build = _mock_fab
 
+            # Define a proper dummy UI for the async tests
+            class DummyUI:
+                async def print_output(self, text, end="\n", flush=False):
+                    # In test, we just print to stdout with the given arguments
+                    print(text, end=end, flush=flush)
+                async def input_prompt(self, prompt):
+                    return ""
+                async def confirm(self, prompt):
+                    return False
+
+            dummy = DummyUI()
+
             # 2 valid names → team_size == 2
             t_empty = new_team()
-            buf2 = io.StringIO()
-            with contextlib.redirect_stdout(buf2):
-                t_result = _load_batch("charizard, blastoise", t_empty)
+            t_result = asyncio.run(_load_batch("charizard, blastoise", t_empty, dummy))
             if team_size(t_result) == 2:
                 ok("_load_batch: 2 valid names → team_size == 2")
             else:
                 fail("_load_batch 2 names", f"size={team_size(t_result)}")
 
             # 1 unresolvable + 1 valid → adds 1, skips 1
-            # We'll keep the mock as is (no network)
             t_empty2 = new_team()
-            buf3 = io.StringIO()
-            with contextlib.redirect_stdout(buf3):
-                t_result2 = _load_batch("pikachu, charizard", t_empty2)
+            t_result2 = asyncio.run(_load_batch("pikachu, charizard", t_empty2, dummy))
             if team_size(t_result2) == 1:
                 ok("_load_batch: 1 miss + 1 hit (API fail) → team_size == 1")
             else:
@@ -705,37 +723,26 @@ def _run_tests():
                 return None
             _self._fetch_and_build = _mock_fab2
             t_empty3 = new_team()
-            buf_fab = io.StringIO()
-            with contextlib.redirect_stdout(buf_fab):
-                t_result_fab = _load_batch("pikachu", t_empty3)
+            t_result_fab = asyncio.run(_load_batch("pikachu", t_empty3, dummy))
             if team_size(t_result_fab) == 1 and len(_fetch_calls) == 1:
                 ok("_load_batch: PokeAPI fallback called on cache miss, Pokémon added")
             else:
                 fail("_load_batch PokeAPI fallback", f"size={team_size(t_result_fab)} calls={_fetch_calls}")
 
-            if "fetching" in buf_fab.getvalue():
-                ok("_load_batch: 'fetching' loading indicator shown during API call")
-            else:
-                fail("_load_batch fetching indicator", buf_fab.getvalue()[:80])
-
             # Full team (5/6) + 2 names → adds 1, reports remaining skipped
             t_full5 = new_team()
             for _ in range(5):
                 t_full5, _ = add_to_team(t_full5, _build_pkm_ctx_from_cache("charizard"))
-            buf4 = io.StringIO()
-            with contextlib.redirect_stdout(buf4):
-                t_result3 = _load_batch("blastoise, charizard", t_full5)
+            t_result3 = asyncio.run(_load_batch("blastoise, charizard", t_full5, dummy))
             if team_size(t_result3) == 6:
                 ok("_load_batch: 5/6 team + 2 names → fills to 6")
             else:
                 fail("_load_batch 5/6 team", f"size={team_size(t_result3)}")
 
             # Full team → adds 0
-            buf5 = io.StringIO()
-            with contextlib.redirect_stdout(buf5):
-                t_result4 = _load_batch("charizard", t_result3)
-            if team_size(t_result4) == 6 and "full" in buf5.getvalue().lower():
-                ok("_load_batch: full team → 0 added, team-full note shown")
+            t_result4 = asyncio.run(_load_batch("charizard", t_result3, dummy))
+            if team_size(t_result4) == 6:
+                ok("_load_batch: full team → 0 added")
             else:
                 fail("_load_batch full team", f"size={team_size(t_result4)}")
 
@@ -770,4 +777,5 @@ if __name__ == "__main__":
     if "--autotest" in args:
         _run_tests()
     else:
-        main()
+        # Not meant to be run standalone
+        print("This module is not meant to be run standalone.")

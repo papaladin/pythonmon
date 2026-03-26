@@ -108,6 +108,11 @@ def _parse_type(raw: str) -> str | None:
     return None
 
 
+def _is_tui(ui):
+    """Return True if the UI is the TUI implementation."""
+    return ui.__class__.__name__ == "TUI"
+
+
 # ── Roster building ───────────────────────────────────────────────────────────
 
 def _build_rows(type1: str, type2: str | None, game_gen: int | None = None) -> list:
@@ -201,30 +206,31 @@ _COL_GEN  =  4
 _TABLE_W  = _COL_NAME + _COL_T1 + _COL_T2 + _COL_GEN + 3  # separators
 
 
-def _print_header(ui, type1: str, type2: str | None, n: int) -> None:
+async def _print_header(ui, type1: str, type2: str | None, n: int) -> None:
     title = f"{type1} / {type2}" if type2 else type1
-    ui.print_output(f"\n  {title} Pokémon  ({n} found)")
-    ui.print_output("  " + "─" * _TABLE_W)
-    ui.print_output(f"  {'Name':<{_COL_NAME}}{'Type 1':<{_COL_T1}}{'Type 2':<{_COL_T2}}{'Gen':>{_COL_GEN}}")
-    ui.print_output("  " + "─" * _TABLE_W)
+    await ui.print_output(f"\n  {title} Pokémon  ({n} found)")
+    await ui.print_output("  " + "─" * _TABLE_W)
+    await ui.print_output(f"  {'Name':<{_COL_NAME}}{'Type 1':<{_COL_T1}}{'Type 2':<{_COL_T2}}{'Gen':>{_COL_GEN}}")
+    await ui.print_output("  " + "─" * _TABLE_W)
 
 
-def _print_rows(ui, rows: list) -> None:
+async def _print_rows(ui, rows: list) -> None:
     for r in rows:
         gen_str = str(r["gen"]) if r["gen"] is not None else "?"
-        ui.print_output(f"  {r['name']:<{_COL_NAME}}"
-                        f"{r['col_t1']:<{_COL_T1}}"
-                        f"{r['col_t2']:<{_COL_T2}}"
-                        f"{gen_str:>{_COL_GEN}}")
-    ui.print_output("")
+        await ui.print_output(f"  {r['name']:<{_COL_NAME}}"
+                              f"{r['col_t1']:<{_COL_T1}}"
+                              f"{r['col_t2']:<{_COL_T2}}"
+                              f"{gen_str:>{_COL_GEN}}")
+    await ui.print_output("")
 
 
 # ── Main feature entry point ──────────────────────────────────────────────────
 
-def run(game_ctx=None, ui=None) -> None:
+async def run(game_ctx=None, ui=None) -> None:
     """
     Interactive type browser.  Prompts for one or two types, then displays
-    the matching Pokémon table.  Loops until the user chooses to exit.
+    the matching Pokémon table.  In CLI mode, the user can choose to search again;
+    in TUI mode, the browser returns to the main menu after one search.
 
     If game_ctx is provided, the list is filtered to only include Pokémon that
     existed in that game (by generation).
@@ -233,60 +239,66 @@ def run(game_ctx=None, ui=None) -> None:
         # Fallback dummy UI for standalone
         import builtins
         class DummyUI:
-            def print_output(self, text): builtins.print(text)
-            def input_prompt(self, prompt): return builtins.input(prompt)
-            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
+            async def input_prompt(self, prompt): return builtins.input(prompt)
+            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
         ui = DummyUI()
 
     game_gen = game_ctx.get("game_gen") if game_ctx else None
-
     valid = _valid_types()
     valid_lower = {t.lower(): t for t in valid}
+    is_tui = _is_tui(ui)
 
+    # In TUI we run only once; in CLI we loop until user quits
     while True:
-        ui.print_output(f"\n  Types: {', '.join(valid)}")
-        raw1 = ui.input_prompt("\n  Enter type (or Q to quit): ")
+        await ui.print_output(f"\n  Types: {', '.join(valid)}")
+        raw1 = await ui.input_prompt("\n  Enter type (or Q to quit): ")
         if raw1.lower() == "q":
             return
 
         type1 = valid_lower.get(raw1.lower())
         if type1 is None:
-            ui.print_output(f"  Unknown type '{raw1}'. Please try again.")
+            await ui.print_output(f"  Unknown type '{raw1}'. Please try again.")
             continue
 
-        raw2 = ui.input_prompt(f"  Enter second type (or Enter for {type1} only): ")
+        raw2 = await ui.input_prompt(f"  Enter second type (or Enter for {type1} only): ")
         if raw2 == "":
             type2 = None
         else:
             type2 = valid_lower.get(raw2.lower())
             if type2 is None:
-                ui.print_output(f"  Unknown type '{raw2}'. Please try again.")
+                await ui.print_output(f"  Unknown type '{raw2}'. Please try again.")
                 continue
             if type2 == type1:
-                ui.print_output("  Both types are the same — showing single-type results.")
+                await ui.print_output("  Both types are the same — showing single-type results.")
                 type2 = None
 
         rows = _build_rows(type1, type2, game_gen)
         if not rows:
             label = f"{type1}/{type2}" if type2 else type1
-            ui.print_output(f"\n  No Pokémon found for {label} "
+            await ui.print_output(f"\n  No Pokémon found for {label} "
                             f"(or data could not be fetched).")
         else:
-            _print_header(ui, type1, type2, len(rows))
-            _print_rows(ui, rows)
+            await _print_header(ui, type1, type2, len(rows))
+            await _print_rows(ui, rows)
 
-        again = ui.input_prompt("  Search again? (y/n): ").strip().lower()
-        if again != "y":
+        # In TUI, we exit after one search; in CLI, we ask if user wants to continue.
+        if is_tui:
             return
+        else:
+            again = (await ui.input_prompt("  Search again? (y/n): ")).strip().lower()
+            if again != "y":
+                return
 
 
 # ── Standalone entry point ────────────────────────────────────────────────────
 
 def main() -> None:
-    run()
+    import asyncio
+    asyncio.run(run())
 
 
-# ── Unit tests ────────────────────────────────────────────────────────────────
+# ── Unit tests (unchanged) ────────────────────────────────────────────────────
 
 def _run_tests(with_cache: bool = False) -> None:
     passed = 0
@@ -398,14 +410,12 @@ def _run_tests(with_cache: bool = False) -> None:
     import pkm_cache as _cache
     import pkm_pokeapi as _api
 
-    # We'll create a temporary directory and set _BASE there, then use SQLite.
     orig_base = _cache._BASE
     tmp_dir = tempfile.mkdtemp()
     _cache._BASE = tmp_dir
     _cache.pkm_sqlite.set_base(tmp_dir)
 
     try:
-        # Build a fake roster and save it to SQLite (type roster)
         fake_roster = [
             {"slug": "charizard",       "slot": 1, "id": 6},
             {"slug": "charizard-mega-x","slot": 1, "id": 10034},
@@ -413,13 +423,11 @@ def _run_tests(with_cache: bool = False) -> None:
         ]
         _cache.save_type_roster("TestType", fake_roster)
 
-        # Verify before resolve: charizard-mega-x has no 'name'
         roster = _cache.get_type_roster("TestType")
         mega_entry = next(e for e in roster if e["slug"] == "charizard-mega-x")
         check("before resolve: charizard-mega-x has no 'name'",
               "name" not in mega_entry)
 
-        # Mock fetch_form_display_name to avoid network
         def _mock_fetch(slug):
             return {"charizard-mega-x": "Mega Charizard X"}.get(slug)
 
@@ -428,7 +436,6 @@ def _run_tests(with_cache: bool = False) -> None:
 
         _cache.resolve_type_roster_names("TestType")
 
-        # Re-read and verify
         roster2 = _cache.get_type_roster("TestType")
         mega2 = next(e for e in roster2 if e["slug"] == "charizard-mega-x")
         mr2   = next(e for e in roster2 if e["slug"] == "mr-mime")
@@ -441,7 +448,6 @@ def _run_tests(with_cache: bool = False) -> None:
         check("after resolve: charizard has no 'name' (no-hyphen skipped)",
               "name" not in char2)
 
-        # Second resolve call should be a no-op (no to_resolve entries)
         call_count = [0]
         orig_save = _cache.save_type_roster
         def _counting_save(t, r):
@@ -463,9 +469,6 @@ def _run_tests(with_cache: bool = False) -> None:
 
     # ── with_cache tests (optional) ──────────────────────────────────────────
     if with_cache:
-        # Requires the database to be populated. We'll run them only if we have a
-        # database already. Since the sync is done, we can just test that the
-        # type roster for Fire exists and has entries.
         roster = _cache.get_type_roster("Fire")
         if roster is None:
             check("withcache: Fire type roster fetched from cache", False)
@@ -486,7 +489,6 @@ def _run_tests(with_cache: bool = False) -> None:
             check("withcache: Arcanine in Fire roster",     "arcanine"     in slugs)
             check("withcache: Charmander in Fire roster",   "charmander"   in slugs)
 
-            # Resolve names (no-op if already done)
             _cache.resolve_type_roster_names("Fire")
             roster2 = _cache.get_type_roster("Fire")
             hyphenated = [e for e in roster2 if "-" in e["slug"]]

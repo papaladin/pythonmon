@@ -4,7 +4,8 @@ feat_nature_browser.py  Nature browser and recommender
 
 Displays all 25 natures and their stat effects.
 When a Pokémon is loaded, also shows the concrete stat-point impact of each
-nature on that Pokémon's base stats, and gives a top-3 role-aware recommendation.
+nature on that Pokémon's base stats, and gives a top-5 role-aware recommendation,
+plus two EV build profiles.
 
 Natures were introduced in Gen 3. A warning is shown for Gen 1/2 games but the
 feature is always accessible — the user may want to browse natures regardless.
@@ -168,7 +169,7 @@ def _group_label(boosted: str | None) -> str:
     return f"{STAT_SHORT[boosted]} boosters"
 
 
-def _print_nature_table(ui, natures: dict, stats: dict | None) -> None:
+async def _print_nature_table(ui, natures: dict, stats: dict | None) -> None:
     """
     Print the full 25-nature table.
     If stats is provided, add +pts / -pts / net columns.
@@ -195,11 +196,11 @@ def _print_nature_table(ui, natures: dict, stats: dict | None) -> None:
         if not names_in_group:
             continue
         if not first_group:
-            ui.print_output("")
+            await ui.print_output("")
         first_group = False
-        ui.print_output(f"\n  {_group_label(gkey)}")
-        ui.print_output(header)
-        ui.print_output(sep)
+        await ui.print_output(f"\n  {_group_label(gkey)}")
+        await ui.print_output(header)
+        await ui.print_output(sep)
         for name in names_in_group:
             entry = natures[name]
             inc   = entry["increased"]
@@ -210,19 +211,19 @@ def _print_nature_table(ui, natures: dict, stats: dict | None) -> None:
             if with_pts:
                 if inc:
                     gain, loss = _net_pts(inc, dec, stats)
-                    ui.print_output(_table_row(name, inc_s, dec_s, gain, loss, gain - loss))
+                    await ui.print_output(_table_row(name, inc_s, dec_s, gain, loss, gain - loss))
                 else:
                     # Neutral nature: show dashes in pts/net columns
                     row = (f"  {name:<{_C_NAME}}{_GAP}{'—':<{_C_STAT}}{_GAP}{'—':<{_C_STAT}}"
                            f"{_GAP}{'—':>{_C_PTS}}{_GAP}{'—':>{_C_PTS}}{_GAP}{'—':>{_C_NET}}")
-                    ui.print_output(row)
+                    await ui.print_output(row)
             else:
-                ui.print_output(_table_row(name, inc_s, dec_s))
+                await ui.print_output(_table_row(name, inc_s, dec_s))
 
 
 _C_RANK = 14    # "1. Modest     " — rank + nature name column
 
-def _print_top5(ui, natures: dict, stats: dict, form_name: str) -> None:
+async def _print_top5(ui, natures: dict, stats: dict, form_name: str) -> None:
     """
     Print the top-5 role-aware nature recommendations for a Pokémon.
     Effect column shows base stats + delta for full context,
@@ -244,21 +245,19 @@ def _print_top5(ui, natures: dict, stats: dict, form_name: str) -> None:
     scored.sort(key=lambda r: r[0], reverse=True)
     top5 = scored[:5]
 
-    ui.print_output(f"\n  Top-5 recommended natures for {form_name}  [{role}, {tier} speed]")
+    await ui.print_output(f"\n  Top-5 recommended natures for {form_name}  [{role}, {tier} speed]")
     hdr = (f"  {'':<{_C_RANK}}{_GAP}{'Boost':<{_C_STAT}}"
            f"{_GAP}{'Cut':<{_C_STAT}}{_GAP}Effect")
-    ui.print_output(hdr)
-    ui.print_output("  " + "─" * (len(hdr) + 12))
+    await ui.print_output(hdr)
+    await ui.print_output("  " + "─" * (len(hdr) + 12))
     for rank, (rs, name, inc, dec, gain, loss) in enumerate(top5, 1):
         inc_s  = STAT_SHORT[inc]
         dec_s  = STAT_SHORT[dec]
         effect = f"{stats[inc]}+{gain} {inc_s},  {stats[dec]}{_MINUS}{loss} {dec_s}"
         label  = f"{rank}. {name}"
-        ui.print_output(f"  {label:<{_C_RANK}}{_GAP}{inc_s:<{_C_STAT}}{_GAP}{dec_s:<{_C_STAT}}{_GAP}{effect}")
-    ui.print_output("")
+        await ui.print_output(f"  {label:<{_C_RANK}}{_GAP}{inc_s:<{_C_STAT}}{_GAP}{dec_s:<{_C_STAT}}{_GAP}{effect}")
+    await ui.print_output("")
 
-
-# ── Main feature entry point ──────────────────────────────────────────────────
 
 # ── Stat calculator (Lv 100, 31 IVs assumed) ─────────────────────────────────
 #
@@ -442,16 +441,16 @@ def _ev_label(ev: int) -> str:
     return ""
 
 
-def _print_build_profiles(ui, profiles: list, form_name: str) -> None:
+async def _print_build_profiles(ui, profiles: list, form_name: str) -> None:
     """Print the two build profiles for a Pokémon."""
     _SEP = "═" * 62
     _DIV = "─" * 62
 
     role_line = f"{profiles[0]['label'].split(' — ')[0]}"  # e.g. "Sweeper"
 
-    ui.print_output(f"\n  Build advisor  |  {form_name}")
-    ui.print_output(f"  ⚠  Assumes Lv 100, 31 IVs all stats")
-    ui.print_output("  " + _SEP)
+    await ui.print_output(f"\n  Build advisor  |  {form_name}")
+    await ui.print_output(f"  ⚠  Assumes Lv 100, 31 IVs all stats")
+    await ui.print_output("  " + _SEP)
 
     for i, p in enumerate(profiles):
         nature_entry = p["nature"]
@@ -464,12 +463,12 @@ def _print_build_profiles(ui, profiles: list, form_name: str) -> None:
                 ev_parts.append(f"{ev} {STAT_SHORT.get(key, key)}")
         ev_str = " / ".join(ev_parts)
 
-        ui.print_output(f"  ── Profile {i+1}: {p['label']}")
-        ui.print_output(f"  Nature  {nature_entry:<10}  (+{inc_s} / −{dec_s})"
+        await ui.print_output(f"  ── Profile {i+1}: {p['label']}")
+        await ui.print_output(f"  Nature  {nature_entry:<10}  (+{inc_s} / −{dec_s})"
                       f"      EVs  {ev_str}")
-        ui.print_output("")
-        ui.print_output(f"  {'Stat':<14}{'Base':>5}{'Final':>7}{'Change':>8}  Notes")
-        ui.print_output("  " + _DIV)
+        await ui.print_output("")
+        await ui.print_output(f"  {'Stat':<14}{'Base':>5}{'Final':>7}{'Change':>8}  Notes")
+        await ui.print_output("  " + _DIV)
 
         for r in p["stats"]:
             notes = []
@@ -477,16 +476,18 @@ def _print_build_profiles(ui, profiles: list, form_name: str) -> None:
             if r["nature_effect"] == "+": notes.append(f"+{inc_s}")
             if r["nature_effect"] == "-": notes.append(f"−{dec_s}")
             change_str = f"+{r['change']}" if r["change"] >= 0 else str(r["change"])
-            ui.print_output(f"  {r['label']:<14}{r['base']:>5}{r['final']:>7}"
+            await ui.print_output(f"  {r['label']:<14}{r['base']:>5}{r['final']:>7}"
                           f"{change_str:>8}  {'  '.join(notes)}")
 
         if i == 0 and len(profiles) > 1:
-            ui.print_output("")
+            await ui.print_output("")
 
-    ui.print_output("  " + _SEP)
+    await ui.print_output("  " + _SEP)
 
 
-def run(game_ctx=None, pkm_ctx=None, ui=None) -> None:
+# ── Main entry point ─────────────────────────────────────────────────────────
+
+async def run(game_ctx=None, pkm_ctx=None, ui=None) -> None:
     """
     Nature & EV build advisor entry point. Always accessible; warns for Gen 1/2 games.
     When a Pokémon is loaded: (1) full nature table with stat impact,
@@ -496,9 +497,9 @@ def run(game_ctx=None, pkm_ctx=None, ui=None) -> None:
         # Fallback dummy UI for standalone
         import builtins
         class DummyUI:
-            def print_output(self, text): builtins.print(text)
-            def input_prompt(self, prompt): return builtins.input(prompt)
-            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
+            async def input_prompt(self, prompt): return builtins.input(prompt)
+            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
         ui = DummyUI()
 
     # Gen 1/2 warning
@@ -506,14 +507,14 @@ def run(game_ctx=None, pkm_ctx=None, ui=None) -> None:
         game_gen = game_ctx.get("game_gen", 1)
         if game_gen < _NATURE_MIN_GEN:
             game_name = game_ctx.get("game", f"Gen {game_gen}")
-            ui.print_output(f"\n  ⚠  Natures did not exist in {game_name}.")
-            ui.print_output(    "     They were introduced in Generation 3 (Ruby / Sapphire).")
-            ui.print_output(    "     The table below is shown for reference only.\n")
+            await ui.print_output(f"\n  ⚠  Natures did not exist in {game_name}.")
+            await ui.print_output(    "     They were introduced in Generation 3 (Ruby / Sapphire).")
+            await ui.print_output(    "     The table below is shown for reference only.\n")
 
     # Fetch natures from cache / PokeAPI
     natures = cache.get_natures_or_fetch()
     if natures is None:
-        ui.print_output("\n  Could not load nature data (network unavailable and no cache).")
+        await ui.print_output("\n  Could not load nature data (network unavailable and no cache).")
         return
 
     # Reorder to canonical display order (fill in any that are in cache but not
@@ -532,34 +533,35 @@ def run(game_ctx=None, pkm_ctx=None, ui=None) -> None:
         form_name = pkm_ctx.get("form_name", pkm_ctx.get("pokemon", "?"))
 
     if stats:
-        ui.print_output(f"\n  Nature impact for {form_name}")
-        ui.print_output( "  (\u00b1pts = approximate stat change at base stat level; "
+        await ui.print_output(f"\n  Nature impact for {form_name}")
+        await ui.print_output( "  (\u00b1pts = approximate stat change at base stat level; "
                        "actual values depend on level, EVs, IVs)")
     else:
-        ui.print_output("\n  All natures  (load a Pokémon to see stat impact)")
+        await ui.print_output("\n  All natures  (load a Pokémon to see stat impact)")
 
     # 1) Full 25-nature table
-    _print_nature_table(ui, ordered, stats)
+    await _print_nature_table(ui, ordered, stats)
 
     # 2) Top-5 role-aware ranking
     if stats:
-        _print_top5(ui, ordered, stats, form_name)
+        await _print_top5(ui, ordered, stats, form_name)
 
     # 3) EV build profiles — shown last, after all nature reference material
     if stats:
         profiles = build_profiles(stats, ordered)
-        _print_build_profiles(ui, profiles, form_name)
+        await _print_build_profiles(ui, profiles, form_name)
 
-    ui.input_prompt("\n  Press Enter to continue...")
+    await ui.input_prompt("\n  Press Enter to continue...")
 
 
 # ── Standalone entry point ────────────────────────────────────────────────────
 
 def main() -> None:
-    run()
+    import asyncio
+    asyncio.run(run())
 
 
-# ── Unit tests ────────────────────────────────────────────────────────────────
+# ── Unit tests (unchanged) ────────────────────────────────────────────────────
 
 def _run_tests(with_cache: bool = False) -> None:
     passed = 0
@@ -786,11 +788,12 @@ def _run_tests(with_cache: bool = False) -> None:
     with _cl3.redirect_stdout(buf_b):
         # Create a dummy UI that writes to buf_b
         class DummyUI:
-            def print_output(self, text): buf_b.write(text + "\n")
-            def input_prompt(self, prompt): return ""
-            def confirm(self, prompt): return False
+            async def print_output(self, text): buf_b.write(text + "\n")
+            async def input_prompt(self, prompt): return ""
+            async def confirm(self, prompt): return False
         dummy = DummyUI()
-        _print_build_profiles(dummy, profiles, "Charizard")
+        import asyncio
+        asyncio.run(_print_build_profiles(dummy, profiles, "Charizard"))
     out_b = buf_b.getvalue()
 
     check("_print_build_profiles: form name present", "Charizard" in out_b)

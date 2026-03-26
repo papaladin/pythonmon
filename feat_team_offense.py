@@ -48,10 +48,10 @@ def _best_move_for_type(damage_pool: list, target_type: str):
     return None
 
 
-def _build_member_pools(team_ctx: list, game_ctx: dict,
-                        hitter_names: set,
-                        pool_cache: dict | None = None,
-                        ui=None) -> dict:
+async def _build_member_pools(team_ctx: list, game_ctx: dict,
+                              hitter_names: set,
+                              pool_cache: dict | None = None,
+                              ui=None) -> dict:
     """
     For each team member whose form_name is in hitter_names, build the scored
     damage pool via feat_moveset_data.build_candidate_pool().
@@ -75,7 +75,7 @@ def _build_member_pools(team_ctx: list, game_ctx: dict,
         if pool_cache is not None and cache_key in pool_cache:
             pools[pkm["form_name"]] = pool_cache[cache_key]
         else:
-            pool = msd.build_candidate_pool(pkm, game_ctx, ui=ui)
+            pool = await msd.build_candidate_pool(pkm, game_ctx, ui=ui)
             damage = pool["damage"]
             if pool_cache is not None:
                 pool_cache[cache_key] = damage
@@ -154,42 +154,42 @@ def _hitters_cell(hitters: list) -> str:
     )
 
 
-def _print_offense_table(ui, rows: list) -> None:
+async def _print_offense_table(ui, rows: list) -> None:
     hdr = (f"  {'Type':<{_COL_TYPE}}"
            f" | {'Who hits SE  (:moves per hitting type, letter=fallback)':<{_COL_HITTERS}}"
            f" | Comments")
     sep = (f"  {'-'*_COL_TYPE}"
            f"-+-{'-'*_COL_HITTERS}"
            f"-+-{'-'*10}")
-    ui.print_output("")
-    ui.print_output(hdr)
-    ui.print_output(sep)
+    await ui.print_output("")
+    await ui.print_output(hdr)
+    await ui.print_output(sep)
     for r in rows:
         cell    = _hitters_cell(r["hitters"])
         comment = "GAP" if not r["hitters"] else ""
-        ui.print_output(f"  {r['type']:<{_COL_TYPE}}"
+        await ui.print_output(f"  {r['type']:<{_COL_TYPE}}"
                         f" | {cell:<{_COL_HITTERS}}"
                         f" | {comment}")
 
 
-def display_team_offense(ui, team_ctx: list, game_ctx: dict,
-                         pool_cache: dict | None = None) -> None:
+async def display_team_offense(ui, team_ctx: list, game_ctx: dict,
+                               pool_cache: dict | None = None) -> None:
     era_key = game_ctx["era_key"]
     game    = game_ctx["game"]
     filled  = team_size(team_ctx)
 
     if filled == 0:
-        ui.print_output("\n  Team is empty -- load some Pokemon first (press T).")
+        await ui.print_output("\n  Team is empty -- load some Pokemon first (press T).")
         return
 
     # ── Roster header ─────────────────────────────────────────────────────────
-    ui.print_output(f"\n  Team offensive coverage  |  {game}")
-    ui.print_output("  " + "=" * 56)
+    await ui.print_output(f"\n  Team offensive coverage  |  {game}")
+    await ui.print_output("  " + "=" * 56)
     for _idx, pkm in team_slots(team_ctx):
         dual = (f"{pkm['type1']} / {pkm['type2']}"
                 if pkm["type2"] != "None" else pkm["type1"])
-        ui.print_output(f"  {pkm['form_name']:<24}  {dual}")
-    ui.print_output("  " + "=" * 56)
+        await ui.print_output(f"  {pkm['form_name']:<24}  {dual}")
+    await ui.print_output("  " + "=" * 56)
 
     # ── Build type-based offense table (now in core_team) ─────────────────────
     team_off = build_team_offense(team_ctx, era_key)
@@ -211,65 +211,67 @@ def display_team_offense(ui, team_ctx: list, game_ctx: dict,
             for h in hitter_names
         )
         if needs_fetch:
-            ui.print_output(f"\n  Loading move data for {len(hitter_names)} member(s)...")
-        member_pools = _build_member_pools(team_ctx, game_ctx, hitter_names,
-                                           pool_cache=pool_cache, ui=ui)
+            await ui.print_output(f"\n  Loading move data for {len(hitter_names)} member(s)...")
+        member_pools = await _build_member_pools(team_ctx, game_ctx, hitter_names,
+                                                 pool_cache=pool_cache, ui=ui)
         _enrich_rows_with_moves(rows, member_pools)
 
     # ── Table ─────────────────────────────────────────────────────────────────
     gaps = coverage_gaps(rows)
 
-    ui.print_output("\n  Abbrev:Move1[, Move2] = best scored move per hitting type"
+    await ui.print_output("\n  Abbrev:Move1[, Move2] = best scored move per hitting type"
                     "  |  letter = type fallback")
-    _print_offense_table(ui, rows)
+    await _print_offense_table(ui, rows)
 
     # ── Summary ───────────────────────────────────────────────────────────────
     _, valid_types, _ = calc.CHARTS[era_key]
     total    = len(valid_types)
     covered  = total - len(gaps)
-    ui.print_output(f"\n  Coverage: {covered} / {total} types", end="")
+    await ui.print_output(f"\n  Coverage: {covered} / {total} types", end="")
     if gaps:
-        ui.print_output(f"  |  Gaps: {' / '.join(gaps)}")
+        await ui.print_output(f"  |  Gaps: {' / '.join(gaps)}")
     else:
-        ui.print_output("  |  Full coverage!")
+        await ui.print_output("  |  Full coverage!")
 
 
 # ── Entry points ──────────────────────────────────────────────────────────────
 
-def run(team_ctx: list, game_ctx: dict,
-        pool_cache: dict | None = None, ui=None) -> None:
+async def run(team_ctx: list, game_ctx: dict,
+              pool_cache: dict | None = None, ui=None) -> None:
     """Called from pokemain."""
     if ui is None:
         # Fallback dummy UI for standalone
         import builtins
         class DummyUI:
-            def print_output(self, text): builtins.print(text)
-            def input_prompt(self, prompt): return builtins.input(prompt)
-            def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
+            async def input_prompt(self, prompt): return builtins.input(prompt)
+            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
         ui = DummyUI()
-    display_team_offense(ui, team_ctx, game_ctx, pool_cache=pool_cache)
-    ui.input_prompt("\n  Press Enter to continue...")
+    await display_team_offense(ui, team_ctx, game_ctx, pool_cache=pool_cache)
+    await ui.input_prompt("\n  Press Enter to continue...")
 
 
 def main() -> None:
     # Dummy UI for standalone
     import builtins
+    import asyncio
+
     class DummyUI:
-        def print_output(self, text): builtins.print(text)
-        def input_prompt(self, prompt): return builtins.input(prompt)
-        def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        async def print_output(self, text, end="\n"): builtins.print(text, end=end)
+        async def input_prompt(self, prompt): return builtins.input(prompt)
+        async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
     ui = DummyUI()
 
-    ui.print_output("")
-    ui.print_output("+===========================================+")
-    ui.print_output("|     Team Offensive Coverage               |")
-    ui.print_output("+===========================================+")
+    asyncio.run(ui.print_output(""))
+    asyncio.run(ui.print_output("+===========================================+"))
+    asyncio.run(ui.print_output("|     Team Offensive Coverage               |"))
+    asyncio.run(ui.print_output("+===========================================+"))
 
     try:
         from pkm_session import select_game, select_pokemon
         from feat_team_loader import new_team, add_to_team, TeamFullError
     except ModuleNotFoundError as e:
-        ui.print_output(f"\n  ERROR: {e}")
+        asyncio.run(ui.print_output(f"\n  ERROR: {e}"))
         sys.exit(1)
 
     game_ctx = select_game()
@@ -277,22 +279,22 @@ def main() -> None:
         sys.exit(0)
 
     team_ctx = new_team()
-    ui.print_output("\n  Add up to 6 Pokemon (blank name to stop).")
+    asyncio.run(ui.print_output("\n  Add up to 6 Pokemon (blank name to stop)."))
     for _ in range(6):
         pkm = select_pokemon(game_ctx=game_ctx)
         if pkm is None:
             break
         try:
             team_ctx, slot = add_to_team(team_ctx, pkm)
-            ui.print_output(f"  Added to slot {slot + 1}.")
+            asyncio.run(ui.print_output(f"  Added to slot {slot + 1}."))
         except TeamFullError:
             break
 
-    display_team_offense(ui, team_ctx, game_ctx)
-    ui.input_prompt("\n  Press Enter to exit...")
+    asyncio.run(display_team_offense(ui, team_ctx, game_ctx))
+    asyncio.run(ui.input_prompt("\n  Press Enter to exit..."))
 
 
-# ── Self-tests ────────────────────────────────────────────────────────────────
+# ── Self-tests (unchanged, but we need to adapt to async) ─────────────────────
 
 def _run_tests():
     errors = []
@@ -384,14 +386,15 @@ def _run_tests():
     class DummyUI:
         def __init__(self):
             self.buf = io.StringIO()
-        def print_output(self, text):
+        async def print_output(self, text):
             self.buf.write(text + "\n")
-        def input_prompt(self, prompt):
+        async def input_prompt(self, prompt):
             return ""
-        def confirm(self, prompt):
+        async def confirm(self, prompt):
             return False
     dummy = DummyUI()
-    _print_offense_table(dummy, rows)
+    import asyncio
+    asyncio.run(_print_offense_table(dummy, rows))
     out = dummy.buf.getvalue()
     if "Fire" in out and "GAP" in out:
         ok("_print_offense_table: works")

@@ -19,7 +19,7 @@ except ModuleNotFoundError as e:
     sys.exit(1)
 
 
-def build_candidate_pool(pkm_ctx: dict, game_ctx: dict, ui=None) -> dict:
+async def build_candidate_pool(pkm_ctx: dict, game_ctx: dict, ui=None) -> dict:
     """
     Build the scored candidate pool for a loaded Pokemon + game context.
 
@@ -54,13 +54,13 @@ def build_candidate_pool(pkm_ctx: dict, game_ctx: dict, ui=None) -> dict:
     if missing:
         total = len(missing)
         if ui:
-            ui.print_output(f"  Fetching details for {total} move(s) not yet in cache...")
+            await ui.print_output(f"  Fetching details for {total} move(s) not yet in cache...")
         else:
             print(f"  Fetching details for {total} move(s) not yet in cache...")
         batch = {}
         for i, name in enumerate(missing, start=1):
             if ui:
-                ui.print_progress(f"  {i}/{total}  {name:<28}", end="\r", flush=True)
+                await ui.print_progress(f"  {i}/{total}  {name:<28}", end="\r", flush=True)
             else:
                 print(f"  {i}/{total}  {name:<28}", end="\r", flush=True)
             try:
@@ -71,7 +71,7 @@ def build_candidate_pool(pkm_ctx: dict, game_ctx: dict, ui=None) -> dict:
         if batch:
             cache.upsert_move_batch(batch)
         if ui:
-            ui.print_progress("  Done.                                   ")
+            await ui.print_progress("  Done.                                   ")
         else:
             print("  Done.                                   ")
 

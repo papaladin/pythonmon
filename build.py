@@ -74,6 +74,7 @@ def build() -> None:
         "--onefile",            # single binary, not a folder of DLLs
         "--console",            # keep terminal visible (CLI tool)
         "--name", "pokemain",   # output file name
+        "--hidden-import", "textual",   # Add this line
         ENTRY,
     ]
 
