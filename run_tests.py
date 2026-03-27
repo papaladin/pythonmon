@@ -117,7 +117,7 @@ SUITES = [
     ("feat_team_offense",         "feat_team_offense.py",    ["--autotest"],               []),
     ("feat_team_moveset",         "feat_team_moveset.py",    ["--autotest"],               []),
     ("feat_egg_group",            "feat_egg_group.py",       ["--autotest"],               []),
-    ("feat_evolution",            "feat_evolution.py",       ["--autotest"],               []),
+    ("feat_quick_view",            "feat_quick_view.py",       ["--autotest"],               []),
     ("feat_learnset_compare",     "feat_learnset_compare.py", ["--autotest"],               []),
     ("feat_team_builder",         "feat_team_builder.py",     ["--autotest"],               []),
     ("feat_opponent",             "feat_opponent.py",        ["--autotest"],               []),
@@ -351,23 +351,13 @@ def main():
     print("╚" + "═" * (W + 2) + "╝")
 
     # ── Files with no test suite (known, display-only or wiring-only) ────────────
-    #
-    # These two files are intentionally excluded from automated testing:
-    #   feat_quick_view.py — display-only: all functions print to stdout;
-    #                        _stat_bar() is the only pure helper but is trivially
-    #                        verified by visual inspection of option 1 output.
-    #   pokemain.py        — wiring-only: the main menu loop; contains no logic
-    #                        of its own, only calls into feat_* modules that are
-    #                        fully tested. Interactive I/O makes unit testing
-    #                        impractical.
-    #
-    # All other feat_/pkm_/matchup_ files must have an --autotest suite.
+    # These files are intentionally excluded from automated testing:
+    # All other files must have an --autotest suite.
     # Any unexpected file appearing below indicates a missing test suite.
     import re as _re
     _suite_files = set(_re.findall(r'"((?:feat_|pkm_|matchup_)\w+\.py)"',
                                    open(__file__, encoding="utf-8").read()))
     _known_no_suite = {
-        "feat_quick_view.py": "display-only — all functions print to stdout; no pure logic to test",
         "pokemain.py":        "wiring-only  — menu loop with no logic; interactive I/O untestable",
         "build.py":           "build tool   — wraps PyInstaller; depends on external binary, not testable offline",
         "pkm_sqlite.py":      "SQLite layer — called by pkm_cache; no public interface for standalone testing",

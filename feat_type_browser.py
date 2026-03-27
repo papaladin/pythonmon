@@ -252,7 +252,7 @@ async def run(game_ctx=None, ui=None) -> None:
     # In TUI we run only once; in CLI we loop until user quits
     while True:
         await ui.print_output(f"\n  Types: {', '.join(valid)}")
-        raw1 = await ui.input_prompt("\n  Enter type (or Q to quit): ")
+        raw1 = await ui.input_prompt("\n  Enter type (Q to quit): ")
         if raw1.lower() == "q":
             return
 

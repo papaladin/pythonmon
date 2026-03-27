@@ -1930,3 +1930,73 @@ The TUI is the more user‑friendly interface and should be the default for end 
 
 ### Test count
 No new tests; existing tests pass.
+
+## §123 — Team builder: BST bonus in scoring formula
+
+### What changed
+- Modified `core_team.py` – added `_W_BST = 5` constant, imported `total_stats` from `core_stat`.
+- Updated `score_candidate` to include a BST bonus: `(total_stats / 720) * _W_BST`.
+- The bonus is added after the intrinsic score (coverage, defensive gaps, shared weakness penalty, role bonus) and before the lookahead component.
+- Updated docstring to mention the new bonus.
+
+### Why
+When multiple candidates provide similar coverage, the one with higher total base stats is generally more useful in practice. The BST bonus acts as a secondary differentiator, giving a small advantage to Pokémon with better raw stats without overshadowing the primary coverage considerations.
+
+### Key decisions
+- The bonus is normalized to a 0–1 scale (max total ~720) and multiplied by `_W_BST = 5`, so the maximum possible bonus is 5 points. This is less than the coverage bonuses (10 per type) and role bonus (4), ensuring coverage remains the dominant factor.
+- The bonus applies only when `base_stats` are available (i.e., when the candidate is already in the local cache). Uncached candidates receive no BST bonus, which is acceptable because they are less likely to be the best choice anyway.
+
+### Test count
+No new tests; existing tests pass. The scoring change is covered by existing candidate ranking tests (the scores change, but ranking logic remains correct).
+
+---
+
+## §124 — TUI polish and evolution module merge
+
+### What changed
+
+**TUI polish**
+- Scrollable left pane: wrapped context and menu in `ScrollableContainer` (4.2.4).
+- Progress bar for long operations: replaced text‑based progress with `ProgressBar` widget for move and TM/HM pre‑load (`Y` and `W`). Progress updates show percentage and current item.
+- Error modal: added `ErrorModal` screen for network failures and other errors; replaced `print_output` error messages with modal.
+- Keyboard navigation: added focus and key handlers to `GameSelectionScreen`, `FormSelectionScreen`, and `ConfirmModal` so arrow keys and Enter work; Escape cancels.
+- Output coloring: introduced `_colorize()` method in `ui_tui.py` that applies markup to session headers, section headers, errors, warnings, successes, weakness/resistance lines, profile headers, and dot ratings. Only TUI output is colored; CLI unchanged.
+- Type chart string conversion: `matchup_calculator.format_results()` added; `print_results` now uses it. `feat_quick_view` uses the string directly, removing `contextlib.redirect_stdout` capture.
+- Fixed blank line issue: changed `update_output` to use `RichLog.write()` without extra newline; adjusted `print_output` to not add duplicate newlines.
+
+**Module merge**
+- Merged `feat_evolution.py` into `feat_quick_view.py`. The evolution chain display is now part of the quick view screen (option 1). The pure logic remains in `core_evolution.py` for team builder use.
+- Updated `feat_quick_view.py` with all evolution helpers (`_get_types_for_slug`, `_type_tag`, `_get_species_gen`, `_get_or_fetch_chain`, `_display_evolution_block`) and moved the self‑tests.
+- Removed `feat_evolution.py` from the project.
+- Updated documentation (`README.md`, `ARCHITECTURE.md`, `run_tests.py`) to reflect the merge.
+
+### Why
+
+**TUI polish** was needed to make the interface more responsive, informative, and visually pleasant:
+- Scrollable left pane prevents clipping of long menus.
+- Progress bars give clear feedback during long operations.
+- Error modals make failures obvious.
+- Keyboard navigation improves accessibility.
+- Colours help distinguish different types of output at a glance.
+- The type chart string conversion simplifies TUI integration.
+
+**Module merge** reduces code duplication and keeps related UI code together. Evolution chain is only displayed in option 1, so there’s no need for a separate feature file.
+
+### Key decisions
+- Used `RichLog` for output pane because it supports markup and doesn’t add extra newlines.
+- Colouring rules are applied in the TUI’s `print_output` method based on line content, keeping the logic out of feature modules.
+- The evolution chain fetches types on demand with a cache‑first strategy; the progress bar shows “Fetching types for N stage(s)…” when needed.
+- The merged file’s self‑test now includes the evolution tests (4) alongside the existing quick view tests (none previously), so total tests for `feat_quick_view.py` are 4.
+
+### Bugs found during testing
+- `ui_cli.print_output` missing `flush` parameter caused `TypeError` when called by `feat_evolution` with `flush=True`; fixed by adding the parameter.
+- The type chart was not appearing in TUI after switching to `RichLog` because the output was being captured and printed with extra newlines; fixed by using `format_results` and updating `print_output`.
+- The “★ = current Pokémon” line was missing in TUI due to the blank line issue and was fixed by adjusting `update_output`.
+
+### Test count
+- `feat_quick_view.py`: 4 tests (evolution chain).
+- `matchup_calculator.py`: unchanged.
+- All other modules unchanged.
+- Full offline suite: unchanged (all tests pass).
+
+--

@@ -63,6 +63,11 @@ class UI(ABC):
         pass
 
     @abstractmethod
+    async def show_error(self, message: str) -> None:
+        """Display an error message to the user (modal in TUI, simple print in CLI)."""
+        pass
+
+    @abstractmethod
     async def run(self):
         """Start the UI main loop."""
         pass

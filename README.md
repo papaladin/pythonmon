@@ -4,9 +4,9 @@ A Python CLI for in-game Pokemon analysis. Load any Pokemon and game, then explo
 type matchups, learnable moves, moveset recommendations, egg group browsing, and team composition analysis.
 
 All data is fetched from [PokeAPI](https://pokeapi.co) on first use and cached locally
-as JSON. Subsequent runs are fully offline — no network needed.
+in a SQLite database. Subsequent runs are fully offline — no network needed.
 
-**Runs on Python 3.10+ with no installation.** Uses only the standard library + `requests`.
+**Runs on Python 3.10+ with no installation.** Uses only the standard library + `requests` + `textual`.
 
 ---
 
@@ -19,27 +19,31 @@ python pokemain.py
 Optional startup flags:
 ```
 python pokemain.py --cache-info               # show count of cached Pokémon, moves, learnsets, etc.
-python pokemain.py --check-cache              # scan all cache files and report issues
+python pokemain.py --check-cache              # scan the cache database and report issues
 python pokemain.py --refresh-moves            # force-refresh the full move table
-python pokemain.py --refresh-pokemon <name>   # force-refresh one Pokemon's cached data
-python pokemain.py --refresh-learnset <name> <game>  # force-refresh one learnset
-python pokemain.py --refresh-all <name>       # force-refresh all data for a Pokemon
-python pokemain.py --refresh-evolution <n>      # force-refresh one Pokemon's evolution chain
+python pokemain.py --refresh-pokemon <n>      # force-refresh one Pokemon's cached data
+python pokemain.py --refresh-learnset <n> <game>  # force-refresh one learnset
+python pokemain.py --refresh-all <n>          # force-refresh all data for a Pokemon
+python pokemain.py --refresh-evolution <n>    # force-refresh one Pokemon's evolution chain
 python pokemain.py --help                     # show usage summary and exit
 python pokemain.py --game "Scarlet / Violet"  # pre-select a game, skipping the selection prompt
-python pokemain.py --sync                     # pre‑load all Pokémon, moves, etc. into SQLite database
 python pokemain.py --cli                      # use CLI UI
 python pokemain.py --tui                      # use TUI (built with Textual) UI
 ```
 
+To pre-load all data upfront (recommended for offline use):
+```
+python pkm_sync.py          # download all Pokémon, moves, type rosters, etc. into the database
+python pkm_sync.py --force  # wipe and re-download from scratch
+```
+
 First run requires a network connection to populate the cache. After that, all
 features work offline. If PokeAPI is unreachable on a sparse cache, a warning is
-printed at startup. The **T** and **W** keys in the menu pre-warm the move and
+printed at startup. The **Y** and **W** keys in the menu pre-warm the move and
 machine tables in bulk — recommended before first moveset run.
 
-**Database location:** The SQLite database (`pokemon.db`) is stored in the same cache directory as before (`cache/`). 
-On macOS, if running the bundled app, it is placed in `~/Library/Application Support/PokemonToolkit/cache/`. 
-On Windows/Linux, it lives next to the executable.
+**Database location:** The SQLite database (`pokemon.db`) lives in the `cache/` folder
+next to the source files (or next to the executable when running a bundled build).
 
 **Bundled executable:** The pre‑built executable launches the Terminal UI (TUI) by default.  
 If you prefer the classic CLI, run it with `--cli` (e.g., `./pokemain --cli`).
@@ -51,7 +55,7 @@ If you prefer the classic CLI, run it with `--cli` (e.g., `./pokemain --cli`).
 ```
   G   Select game          P   Load Pokemon
   ─────────────────────────────────────────────
-  1   Type matchup         (needs Pokemon + game)
+  1   Quick View           (needs Pokemon + game)
   2   Learnable moves      (needs Pokemon + game)
   3   Scored move pool     (needs Pokemon + game)
   4   Moveset recommend    (needs Pokemon + game)
@@ -60,8 +64,8 @@ If you prefer the classic CLI, run it with `--cli` (e.g., `./pokemain --cli`).
   B   Type browser
   N   Nature browser
   A   Ability browser
-  C   Stat comparison       (needs Pokemon + game)
   E   Egg group browser     (needs Pokemon)
+  L   Compare learnsets     (needs Pokemon + game)
   ─────────────────────────────────────────────
   T   Manage team
   V   Team analysis        (needs team + game)
@@ -70,9 +74,9 @@ If you prefer the classic CLI, run it with `--cli` (e.g., `./pokemain --cli`).
   H   Team builder         (needs team + game)
   X   Team vs opponent     (needs team + game)
   ─────────────────────────────────────────────
-  MOVE  Pre-load move table
-  W     Pre-load TM/HM table
-  Q     Quit
+  Y   Pre-load move table
+  W   Pre-load TM/HM table
+  Q   Quit
 ```
 
 Features only appear in the menu when their required context is available.
@@ -83,7 +87,7 @@ has at least one member loaded.
 
 ## Features
 
-### 1 — Type matchup (quick view)
+### 1 — Quick view
 
 **Needs:** Pokemon + game
 
@@ -176,7 +180,7 @@ or a HM you need). Locked moves are included in all three recommendations.
 
 **Assumptions:**
 - Status moves are ranked separately from attacking moves and included based on
-  a hand-curated tier list (`STATUS_MOVE_TIERS` in `feat_moveset_data.py`).
+  a hand-curated tier list (`STATUS_MOVE_TIERS` in `core_move.py`).
   Moves not in the tier list fall to lowest priority.
 - The scoring formula does not account for in-game team composition or opponent AI.
   It optimises a single Pokemon's moveset in isolation.
@@ -249,11 +253,10 @@ and a top-5 role-aware nature ranking when a Pokémon is loaded.
 Browse all abilities with their effect descriptions. Enter a name (or partial name)
 to search. From any ability, drill in to see which Pokemon have it.
 
-Also available from the type matchup screen (option 1): the current Pokemon's abilities
+Also available from the quick view screen (option 1): the current Pokemon's abilities
 are shown with drill-in available.
 
 ---
-
 
 ### T — Team management
 
@@ -411,6 +414,7 @@ Up to 6 candidates are shown, ranked by a composite score:
               + defensive contribution × 8
               - shared weakness pairs  × 6
               + role diversity bonus   × 4
+              + BST bonus              (up to × 5, normalised to base-stat total)
   lookahead  =  patchability of remaining gaps / slots_remaining
                 (weighted ×2 when ≤2 slots remain)
   total      =  intrinsic + lookahead
@@ -423,8 +427,8 @@ When multiple stages of a pure level‑up evolution chain (e.g., Dratini → Dra
 - A note is shown when the team has fewer than 3 members (suggestions improve with more context).
 - Candidates are drawn from cached type rosters. Missing rosters are fetched automatically
   before the pool is built; a per-type progress indicator is shown.
-- Base stats are used for role diversity scoring when the Pokémon is already in the local
-  cache; type-only scoring is used for uncached entries.
+- Base stats are used for role diversity and BST scoring when the Pokémon is already in the
+  local cache; type-only scoring is used for uncached entries.
 
 ---
 
@@ -433,12 +437,12 @@ When multiple stages of a pure level‑up evolution chain (e.g., Dratini → Dra
 **Needs:** team (at least 1 member) + game
 
 Select a named opponent (gym leader, Elite Four member, Champion) from the chosen game.
-The toolkit analyses your loaded team against that opponent’s party, showing:
+The toolkit analyses your loaded team against that opponent's party, showing:
 
 - **Per‑opponent Pokémon blocks**:  
   *Name, type, level, and moveset*  
-  - ⚠️ **WEAK TO** – team members that are hit super‑effectively by the opponent’s moves (moveset‑aware)  
-  - ✓ **RESISTS** – team members that resist the opponent’s moves  
+  - ⚠️ **WEAK TO** – team members that are hit super‑effectively by the opponent's moves (moveset‑aware)  
+  - ✓ **RESISTS** – team members that resist the opponent's moves  
   - 💥 **HITS SE** – team members that can hit the opponent super‑effectively with their own STAB moves
 
 - **Uncovered threats** – opponents that no team member can hit SE with STAB moves  
@@ -446,7 +450,7 @@ The toolkit analyses your loaded team against that opponent’s party, showing:
 
 **Data source:** static `data/trainers.json` bundled with the toolkit. The file is updated manually as new games are added. Move types are resolved from the local move cache (no network needed after first run).
 
-**Era‑aware:** the type chart used for calculating resistances and weaknesses matches the selected game’s era (Gen 1, Gen 2–5, Gen 6+). Moves that changed type or category across generations are resolved correctly for the chosen game.
+**Era‑aware:** the type chart used for calculating resistances and weaknesses matches the selected game's era (Gen 1, Gen 2–5, Gen 6+). Moves that changed type or category across generations are resolved correctly for the chosen game.
 
 
 ---
@@ -484,16 +488,17 @@ The toolkit analyses your loaded team against that opponent’s party, showing:
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Wrong moves shown for a regional form | Pokemon cached before §42 (no variety_slug field) | Delete `cache/pokemon/<n>.json` and reload |
+| Wrong moves shown for a regional form | Pokemon cached before §42 (no variety_slug field) | Run `python pokemain.py --refresh-pokemon <n>` |
 | Wrong or missing learnset for a Pokemon form | Pokemon cached before §80 (old variety_slug value) | Run `python pokemain.py --refresh-pokemon <n>` |
-| Cache files corrupt or stale | JSON write interrupted / old schema | Run `python pokemain.py --check-cache` for a full report |
-| Move table shows `?` for all stats | Move cache is empty | Press **MOVE** then **F** (fetch missing) or **R** (fetch all) |
+| Cache data corrupt or stale | Old schema or interrupted write | Run `python pokemain.py --check-cache` for a full report |
+| Move table shows `?` for all stats | Move cache is empty | Press **Y** then confirm, or press **Y** → **F** (fetch missing only) |
 | Missing move in learnable list | PokeAPI incomplete for this game | Check PokeAPI directly; this is a data gap, not a bug |
 | Connection error on first load | PokeAPI unreachable | Check network; cached data is used on all subsequent runs |
 | `TypeError: too many values to unpack` | Stale `pkm_cache.py` from before §38 | Replace with latest version |
 | No egg group data shown in E or option 1 | Pokemon cached before Pythonmon-27 (`egg_groups` field missing) | Press **R** to refresh Pokemon data |
-| Evolution chain shows wrong conditions (missing "day/night" or held item) | Chain cached before §91 bug fixes | Run `python pokemain.py --refresh-evolution <n>` or delete `cache/evolution/` |
+| Evolution chain shows wrong conditions (missing "day/night" or held item) | Chain cached before §91 bug fixes | Run `python pokemain.py --refresh-evolution <n>` |
 | No evolution chain shown in option 1 | Pokemon cached before Pythonmon-9 (`evolution_chain_id` field missing) | Press **R** to refresh Pokemon data |
+
 ---
 
 ## Running the tests
@@ -501,38 +506,38 @@ The toolkit analyses your loaded team against that opponent’s party, showing:
 Every module with testable logic has an `--autotest` flag (offline unless noted):
 
 | Command | Tests |
-|---|---|
+|---------|-------|
 | `python matchup_calculator.py --autotest` | 79 — type chart, all 3 eras, all multipliers |
-| `python pkm_cache.py` | 62 — read/write/invalidate/upsert/batch/index/integrity/egg_groups/evolution/check_integrity/cache_info/learnset_age |
+| `python pkm_cache.py --autotest` | 21 — read/write/invalidate/upsert/batch/integrity/egg_groups/evolution/cache_info |
 | `python pkm_session.py --autotest` | 33 — cache upgrade, form selection, era/gen blocking, fuzzy search, form_gen fix, version_slugs, make_game_ctx |
-| `python feat_moveset_data.py --autotest` | 156 — scoring formula, combo selection, status ranking, batch cache regression |
+| `python feat_moveset_data.py --autotest` | 1 — module import smoke test (scoring logic moved to core_move.py) |
+| `python feat_moveset.py --autotest` | 0 — test body is a placeholder; scoring tests are in core_move.py |
 | `python feat_type_browser.py --autotest` | 41 (+8 cache) — gen derivation, name resolution |
 | `python feat_nature_browser.py --autotest` | 48 (+11 cache) — nature scoring, stat formula, build profiles |
 | `python feat_ability_browser.py --autotest` | 14 (+8 cache) — display helpers |
 | `python feat_team_loader.py --autotest` | 41 — team ops, summary line, batch load |
 | `python feat_team_analysis.py --autotest` | 75 — defense aggregation, gap labels, display, weakness pairs |
-| `python feat_team_offense.py --autotest` | 50 — offensive coverage, type-letter tags, gap detection, pool cache |
-| `python feat_team_moveset.py --autotest` | 70 — moveset engine, formatting helpers, coverage aggregation, pool cache |
-| `python feat_moveset.py --autotest` | 33 (+1 cache) — breakdown, coverage, locked moves, pool filter |
+| `python feat_team_offense.py --autotest` | 50 — offensive coverage, type‑letter tags, gap detection, pool cache |
+| `python feat_team_moveset.py --autotest` | 2 — recommend and display smoke tests (engine logic moved to core_team.py) |
 | `python feat_move_lookup.py --autotest` | 14 (+2 cache) — formatting, coverage all eras, effect line |
 | `python feat_movepool.py --autotest` | 16 (+2 cache) — row formatting, section headers, filter |
-| `python feat_stat_compare.py --autotest` | 26 — compare_stats, total_stats, infer_role, infer_speed_tier, display |
 | `python feat_learnset_compare.py --autotest` | 20 — flat_moves, compare, build rows, display |
 | `python feat_egg_group.py --autotest` | 18 — name mapping, formatting, display browser, graceful edge cases |
-| `python feat_evolution.py --autotest` | 35 — trigger parsing, chain flattening, gen filter, display (mock) |
+| `python feat_quick_view.py --autotest` | 4 — evolution chain display (merged from feat_evolution) |
 | `python feat_team_builder.py --autotest` | 57 — gap analysis, scoring, pool building, display, run() guards |
 | `python feat_opponent.py --autotest` | 18 — trainer data loading, merging, matchup logic, display |
 | `python core_stat.py --autotest` | 21 — stat bar, total stats, role, speed tier, compare |
 | `python core_egg.py --autotest` | 8 — egg group name mapping, formatting |
-| `python core_evolution.py --autotest` | 20 — trigger parsing, flattening, filtering |
+| `python core_evolution.py --autotest` | 28 — trigger parsing, flattening, filtering, level-up chain detection |
 | `python core_move.py --autotest` | 11 — move scoring, combo selection, status ranking |
 | `python core_team.py --autotest` | 24 — defensive/offensive analysis, team builder scoring |
 | `python core_opponent.py --autotest` | 5 — opponent analysis |
 | `python pkm_pokeapi.py --autotest` | 14 — versioned entry builder, mapping tables, fetch_pokemon offline, egg_groups, evolution_chain_id, check_connectivity |
 | `python pkm_sqlite.py --autotest` | 0 (no public interface; tested via pkm_cache) |
 | `python pkm_sync.py --autotest` | 0 (sync script, not unit‑tested) |
-| `ui_base.py --autotest` | 0 |
-| `ui_cli.py --autotest`  | 0 |
+| `ui_base.py --autotest` | 0 — abstract base class; no logic to test |
+| `ui_cli.py --autotest`  | 0 — CLI implementation is purely interactive I/O; no pure logic |
+| `ui_tui.py --autotest`  | 0 — TUI implementation is interactive; testing would require Textual's test harness, not covered by offline test runner |
 
 Run all suites at once:
 ```
@@ -548,9 +553,9 @@ python run_tests.py --quiet   # summary table only
 |---|---|
 | `pokemain.py` | Entry point; menu loop; context wiring |
 | `pkm_session.py` | Interactive game + Pokemon context selection |
-| `pkm_cache.py` | All cache reads and writes (single gateway, now uses SQLite) |
+| `pkm_cache.py` | All cache reads and writes (single gateway, uses SQLite) |
 | `pkm_sqlite.py` | SQLite database layer (tables, connections, low‑level access) |
-| `pkm_sync.py` | One‑time full data import from PokeAPI to SQLite (`--sync`) |
+| `pkm_sync.py` | One‑time full data import from PokeAPI to SQLite |
 | `pkm_pokeapi.py` | PokeAPI adapter; fetch + translate raw data |
 | `matchup_calculator.py` | Type chart data (ERA1/2/3) + multiplier logic |
 | `core_stat.py` | Pure stat functions (compare_stats, total_stats, infer_role, etc.) |
@@ -559,7 +564,7 @@ python run_tests.py --quiet   # summary table only
 | `core_move.py` | Pure move scoring and combo selection |
 | `core_team.py` | Pure team analysis and builder logic |
 | `core_opponent.py` | Pure opponent analysis logic |
-| `feat_quick_view.py` | Quick view (stats / abilities / egg groups / type chart) |
+| `feat_quick_view.py` | Quick view (stats / abilities / egg groups / type chart / evolution chain) |
 | `feat_move_lookup.py` | Move lookup by name |
 | `feat_movepool.py` | Learnable move list with learn conditions |
 | `feat_moveset.py` | Scored pool + moveset recommendation UI |
@@ -571,9 +576,7 @@ python run_tests.py --quiet   # summary table only
 | `feat_team_analysis.py` | Team defensive vulnerability table |
 | `feat_team_offense.py` | Team offensive type coverage (key O) |
 | `feat_team_moveset.py` | Team moveset synergy (key S) |
-| `feat_stat_compare.py` | Side-by-side base stat comparison (key C) |
 | `feat_egg_group.py` | Egg group browser + breeding partners (key E) |
-| `feat_evolution.py` | Evolution chain display (embedded in option 1) |
 | `feat_learnset_compare.py` | Learnset comparison between two Pokémon (key L) |
 | `feat_team_builder.py` | Team slot suggestion — gap analysis + ranked candidates (key H) |
 | `feat_opponent.py` | Team coverage vs in‑game opponents (key X) |
@@ -581,8 +584,11 @@ python run_tests.py --quiet   # summary table only
 | `build.py` | Build script — produces a single-file executable via PyInstaller |
 | `ui_base.py` | Abstract base class for UI implementations |
 | `ui_cli.py`  | CLI implementation of the UI interface |
+| `ui_tui.py`  | TUI implementation (Textual); default for bundled executables |
 
 **Obsolete files** (safe to delete):
 `feat_type_matchup.py` (renamed to `feat_quick_view.py` in §85),
+`feat_evolution.py` (merged into `feat_quick_view.py` in §124),
+`feat_stat_compare.py` (functions moved to `core_stat.py` in §109),
 `pkm_scraper.py`, `pkm_move_scraper.py`, `debug2.py`, `debug3.py`, `probe_forms.py`,
 `test_move_parser.py`, `test_status_categories.py`, `probe_status_categories.py`

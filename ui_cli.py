@@ -48,8 +48,8 @@ class CLI(UI):
                 print(box_line(line))
         print("└" + "─"*(W+2) + "┘")
 
-    async def print_output(self, text: str, end: str = "\n"):
-        print(text, end=end)
+    async def print_output(self, text: str, end: str = "\n", flush: bool = False):
+        print(text, end=end, flush=flush)
 
     async def print_progress(self, text: str, end: str = "\n", flush: bool = False):
         print(text, end=end, flush=flush)
@@ -84,6 +84,10 @@ class CLI(UI):
         if constraints:
             parts.append(f"Locked: {', '.join(constraints)}")
         await self.print_output("\n  [ " + "  •  ".join(parts) + " ]")
+
+    async def show_error(self, message: str) -> None:
+        """Display error message in CLI."""
+        await self.print_output(f"\n  ERROR: {message}")
 
     async def run(self):
         while True:

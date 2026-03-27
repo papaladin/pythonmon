@@ -293,8 +293,6 @@ def fetch_all_pokemon() -> dict:
     return results
 
 
-
-
 # ── Step 3: Move fetch ────────────────────────────────────────────────────────
 
 # PokeAPI type slug → capitalised display name
@@ -496,7 +494,7 @@ def fetch_move(name: str) -> list:
     return _build_versioned_entries(current, intro_gen, past_vals)
 
 
-def fetch_all_moves(dry_run: bool = False) -> dict:
+def fetch_all_moves(dry_run: bool = False, progress_cb=None) -> dict:
     """
     Fetch the complete move table from PokeAPI.
 
@@ -506,6 +504,9 @@ def fetch_all_moves(dry_run: bool = False) -> dict:
     dry_run=True fetches only the first 15 moves plus Flamethrower / Outrage /
     Thunderbolt (for assertion testing), without writing anything to disk.
     Prints a progress counter that overwrites the same line.
+
+    If progress_cb is provided, it is called with (current, total, move_slug)
+    after each move is fetched.
     """
     # 1. Get the full move name list
     all_moves_data = _get("move?limit=2000")
@@ -525,8 +526,8 @@ def fetch_all_moves(dry_run: bool = False) -> dict:
     results = {}
 
     for i, slug in enumerate(slugs_to_fetch, start=1):
-        # Progress counter — overwrites same line
-        print(f"  Fetching moves: {i} / {total}   ", end="\r", flush=True)
+        if progress_cb:
+            progress_cb(i, total, slug)
 
         try:
             # Display name: prefer English name from /move/{slug}, use title slug as fallback
@@ -564,11 +565,13 @@ def fetch_all_moves(dry_run: bool = False) -> dict:
         except (ValueError, ConnectionError):
             pass   # skip moves that 404 or fail (rare alternate-form moves)
 
-    print(f"  Fetched {len(results)} moves.                     ")
+    if not dry_run:
+        # Only print final count if not in dry_run
+        pass
     return results
 
 
-def fetch_missing_moves() -> dict:
+def fetch_missing_moves(progress_cb=None) -> dict:
     """
     Fetch only the moves not yet in moves.json.
 
@@ -580,6 +583,9 @@ def fetch_missing_moves() -> dict:
     Raises ConnectionError if the initial move-list request fails.
     Individual per-move failures are silently skipped (same behaviour as
     fetch_all_moves).
+
+    If progress_cb is provided, it is called with (current, total, move_slug)
+    after each move is fetched.
     """
     import pkm_cache as _cache
 
@@ -594,7 +600,8 @@ def fetch_missing_moves() -> dict:
     results = {}
 
     for i, slug in enumerate(missing, start=1):
-        print(f"  Fetching moves: {i} / {total}   ", end="\r", flush=True)
+        if progress_cb:
+            progress_cb(i, total, slug)
         try:
             move_data    = _get(f"move/{slug}")
             display_name = _en_name(move_data.get("names", []), None)
@@ -627,7 +634,6 @@ def fetch_missing_moves() -> dict:
         except (ValueError, ConnectionError):
             pass
 
-    print(f"  Fetched {len(results)} missing move(s).                    ")
     return results
 
 
@@ -914,16 +920,6 @@ def _test_fetch_pokemon_live():
     return all_ok
 
 
-    """Assert every GAMES entry has at least one slug in the mapping."""
-    missing = []
-    for game_name, _era, _gen in GAMES:
-        slugs = GAME_TO_VERSION_GROUPS.get(game_name)
-        if not slugs:
-            missing.append(game_name)
-    assert not missing, f"Missing version-group mapping for: {missing}"
-    print("  [PASS] All GAMES entries have at least one version-group slug")
-
-
 def _test_build_versioned_entries():
     """
     Offline unit tests for _build_versioned_entries() + _apply_gen1_3_category_rule().
@@ -1103,97 +1099,6 @@ def _test_fetch_moves_live():
                 for e in moves[move]:
                     print(f"    {e}")
     return all_ok
-
-
-    """
-    Live API test for fetch_all_moves() / _build_versioned_entries().
-
-    Runs --dry-run (fetches ~18 moves including Flamethrower/Outrage/Thunderbolt)
-    then applies the same 12 assertions used in pkm_cache.py self-test.
-    """
-    print("\n  Live fetch_all_moves(dry_run=True) test...")
-    moves = fetch_all_moves(dry_run=True)
-
-    # Helper
-    def resolve(move_name, game_gen, game=""):
-        versions = moves.get(move_name)
-        if not versions:
-            return None
-        for entry in versions:
-            games_list = entry.get("applies_to_games") or []
-            if game and game in games_list:
-                return entry
-        for entry in versions:
-            fg = entry.get("from_gen")
-            tg = entry.get("to_gen")
-            if fg is None:
-                continue
-            if fg <= game_gen and (tg is None or game_gen <= tg):
-                return entry
-        return None
-
-    def chk(label, result, **expected):
-        if result is None:
-            if "none" in expected:
-                print(f"    [OK]   {label}  (not available in this gen)")
-                return True
-            print(f"    [FAIL] {label}: expected {expected} but got None")
-            return False
-        for k, v in expected.items():
-            if k == "none":
-                continue
-            if result.get(k) != v:
-                print(f"    [FAIL] {label}: {k} expected {v!r} got {result.get(k)!r}")
-                print(f"           Full entry: {result}")
-                return False
-        detail = "  ".join(f"{k}={v}" for k, v in expected.items() if k != "none")
-        print(f"    [OK]   {label}  ({detail})")
-        return True
-
-    all_ok = True
-    checks = [
-        # Outrage
-        ("Outrage / Gen1",  resolve("Outrage", 1),            dict(none=True)),
-        ("Outrage / Gen2",  resolve("Outrage", 2),            dict(category="Special",  power=90,  pp=15)),
-        ("Outrage / Gen3",  resolve("Outrage", 3),            dict(category="Special",  power=90,  pp=15)),
-        ("Outrage / Gen4",  resolve("Outrage", 4),            dict(category="Physical", power=120, pp=15)),
-        ("Outrage / Gen5+", resolve("Outrage", 5),            dict(category="Physical", power=120, pp=10)),
-        ("Outrage / Gen9",  resolve("Outrage", 9),            dict(category="Physical", power=120, pp=10)),
-        # Flamethrower
-        ("Flamethrower/Gen1",  resolve("Flamethrower", 1),    dict(category="Special",  power=95,  pp=15)),
-        ("Flamethrower/Gen5",  resolve("Flamethrower", 5),    dict(category="Special",  power=95,  pp=15)),
-        ("Flamethrower/Gen6",  resolve("Flamethrower", 6),    dict(category="Special",  power=90,  pp=15)),
-        ("Flamethrower/Gen9",  resolve("Flamethrower", 9),    dict(category="Special",  power=90,  pp=15)),
-        # Thunderbolt — Z-A game override + standard gen9
-        ("Thunderbolt/Z-A",    resolve("Thunderbolt", 9, "Legends: Z-A"), dict(cooldown=2)),
-        ("Thunderbolt/Gen9",   resolve("Thunderbolt", 9),     dict(power=90, pp=15)),
-    ]
-
-    for label, result, expected in checks:
-        if not chk(label, result, **expected):
-            all_ok = False
-
-    if all_ok:
-        print("  [PASS] All 12 move assertions passed")
-    else:
-        print("  [FAIL] Some move assertions failed — see above")
-        # Show raw entries for failed moves to aid debugging
-        for move in ("Outrage", "Flamethrower", "Thunderbolt"):
-            if move in moves:
-                print(f"\n  Raw entries for {move}:")
-                for e in moves[move]:
-                    print(f"    {e}")
-    return all_ok
-
-
-    """Assert every GAMES entry has at least one slug in the mapping."""
-    missing = []
-    for game_name, _era, _gen in GAMES:
-        slugs = GAME_TO_VERSION_GROUPS.get(game_name)
-        if not slugs:
-            missing.append(game_name)
-    assert not missing, f"Missing version-group mapping for: {missing}"
-    print("  [PASS] All GAMES entries have at least one version-group slug")
 
 
 def _test_mapping_completeness():

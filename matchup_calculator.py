@@ -190,10 +190,7 @@ def compute_defense(era_key, type1, type2):
         results[atk] = m1 * m2
     return results
 
-
-# ── OUTPUT ────────────────────────────────────────────────────────────────────
-
-def print_results(type1, type2, game_name, era_key):
+def format_results(type1, type2, game_name, era_key):
     matchups = compute_defense(era_key, type1, type2)
 
     immunities  = sorted([t for t, m in matchups.items() if m == 0.0])
@@ -204,36 +201,42 @@ def print_results(type1, type2, game_name, era_key):
 
     dual = f"{type1} / {type2}" if type2 != "None" else type1
 
-    print()
-    print("=" * 54)
-    print(f"  Defending type : {dual}")
-    print(f"  Game           : {game_name}")
-    print(f"  Chart used     : {ERA_LABELS[era_key]}")
-    print("=" * 54)
+    lines = []
+    lines.append("")
+    lines.append("=" * 54)
+    lines.append(f"  Defending type : {dual}")
+    lines.append(f"  Game           : {game_name}")
+    lines.append(f"  Chart used     : {ERA_LABELS[era_key]}")
+    lines.append("=" * 54)
 
     if immunities:
-        print(f"\n  IMMUNITIES (x0) :")
+        lines.append(f"\n  IMMUNITIES (x0) :")
         for t in immunities:
-            print(f"    - {t}")
+            lines.append(f"    - {t}")
     else:
-        print("\n  IMMUNITIES : none")
+        lines.append("\n  IMMUNITIES : none")
 
     if resistances:
-        print(f"\n  RESISTANCES :")
+        lines.append(f"\n  RESISTANCES :")
         for t in resistances:
-            print(f"    - {t:12s}  x{matchups[t]}")
+            lines.append(f"    - {t:12s}  x{matchups[t]}")
     else:
-        print("\n  RESISTANCES : none")
+        lines.append("\n  RESISTANCES : none")
 
     if weaknesses:
-        print(f"\n  WEAKNESSES :")
+        lines.append(f"\n  WEAKNESSES :")
         for t in weaknesses:
-            print(f"    - {t:12s}  x{matchups[t]:.0f}")
+            lines.append(f"    - {t:12s}  x{matchups[t]:.0f}")
     else:
-        print("\n  WEAKNESSES : none")
+        lines.append("\n  WEAKNESSES : none")
 
-    print()
+    lines.append("")
+    return "\n".join(lines)
 
+# ── OUTPUT ────────────────────────────────────────────────────────────────────
+
+def print_results(type1, type2, game_name, era_key):
+    print(format_results(type1, type2, game_name, era_key))
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 

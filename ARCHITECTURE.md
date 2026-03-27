@@ -27,7 +27,7 @@ pokemon-toolkit/
   core_opponent.py          Pure opponent analysis logic
   
   # Feature modules (thin UI wrappers)
-  feat_quick_view.py        Feature: quick view (stats / abilities / egg groups / type chart)
+  feat_quick_view.py        Feature: quick view (stats / abilities / egg groups / type chart / evolution chain)
   feat_move_lookup.py       Feature: move lookup by name
   feat_movepool.py          Feature: learnable move list with learn conditions
   feat_moveset.py           Feature: scored pool + moveset recommendation UI
@@ -40,8 +40,7 @@ pokemon-toolkit/
   feat_team_offense.py      Feature: team offensive type coverage (key O)
   feat_team_moveset.py      Feature: team moveset synergy (key S)
   feat_egg_group.py         Feature: egg group browser + breeding partners (key E)
-  feat_evolution.py         Feature: evolution chain display (embedded in option 1)
-  feat_learnset_compare.py  Feature: learnset comparison between two Pokémon (key L)
+  feat_learnset_compare.py  Feature: stats and learnset comparison between two Pokémon (key L)
   feat_team_builder.py      Feature: team slot suggestion — gap analysis + ranked candidates (key H)
   feat_opponent.py          Feature: team coverage vs in‑game opponents (key X)
 
@@ -55,19 +54,77 @@ All cross-module imports use plain `import <module>` (no relative imports).
 ## 2. Layer model
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│ pokemain.py (entry point, menu loop, context wiring)     │
-├────────────────┬─────────────────────────────────────────┤
-│ feat_.py.      │ Display features (thin UI wrappers).    │
-│ pkm_session.py │ (context selection)                     │
-├────────────────┴──────────────┬──────────────────────────┤
-│ core_.py                │ matchup_calculator.py          │
-│ (pure logic)            │ (type chart library)           │
-├─────────────────────────┴────────────────────────────────┤
-│ pkm_cache.py (all cache reads and writes)                │
-├──────────────────────────────────────────────────────────┤
-│ pkm_pokeapi.py (network calls, data translation)         │
-└──────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              pokemain.py                                    │
+│  (entry point, menu loop, UI selection)                                     │
+└───────────────────────┬─────────────────────────────────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              UI layer                                       │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │  ui_base.py (abstract)                                                │  │
+│  │      ▲                                                                │  │
+│  │      │                                                                │  │
+│  │  ┌───┴──────────┐          ┌────────────────────┐                     │  │
+│  │  │   ui_cli.py  │          │     ui_tui.py      │                     │  │
+│  │  │   (CLI)      │          │     (TUI)          │                     │  │
+│  │  └──────────────┘          └────────────────────┘                     │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│  Dependencies:                                                              │
+│  ┌─────────────────────┐          ┌─────────────────────┐                   │
+│  │   menu_builder.py   │          │   pkm_session.py    │                   │
+│  │ (menu/context lines)│          │ (context selection) │                   │
+│  └─────────────────────┘          └─────────────────────┘                   │
+└───────────────────────┬─────────────────────────────────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Feature modules (feat_*.py)                         │
+│  feat_quick_view.py, feat_move_lookup.py, feat_movepool.py,                 │
+│  feat_moveset.py, feat_moveset_data.py, feat_type_browser.py,               │
+│  feat_nature_browser.py, feat_ability_browser.py, feat_team_loader.py,      │
+│  feat_team_analysis.py, feat_team_offense.py, feat_team_moveset.py,         │
+│  feat_team_builder.py, feat_opponent.py, feat_egg_group.py,                 │
+│  feat_learnset_compare.py,                                                  │
+│                                                                             │
+│  Data dependency: data/trainers.json (used by feat_opponent.py)             │
+└───────────────────────┬─────────────────────────────────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Core logic (core_*.py)                              │
+│  core_stat.py, core_egg.py, core_evolution.py, core_move.py,                │
+│  core_team.py, core_opponent.py                                             │
+│  (pure functions, no I/O)                                                   │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                    matchup_calculator.py                            │    │
+│  │  (type chart library, pure)                                         │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+└───────────────────────┬─────────────────────────────────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Cache layer (pkm_cache.py)                          │
+│  – Single gateway for all cached data                                       │
+│  – Calls pkm_sqlite.py for low‑level DB access                              │
+│  – Calls pkm_pokeapi.py for network fetches on cache miss                   │
+└───────────────────────┬─────────────────────────────────────────────────────┘
+                        │
+            ┌───────────┴───────────┐
+            ▼                       ▼
+┌───────────────────────┐   ┌───────────────────────┐
+│   pkm_sqlite.py       │   │   pkm_pokeapi.py      │
+│   SQLite low‑level    │   │   PokeAPI adapter     │
+│   – tables, queries   │   │   – fetch & translate │
+└───────────────────────┘   └───────────────────────┘
+            │                       │
+            ▼                       ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              SQLite database                                │
+│  cache/pokemon.db                                                           │
+└─────────────────────────────────────────────────────────────────────────────┘
 
 ```
 
@@ -86,23 +143,7 @@ Context objects are plain Python dicts. No classes. They are created in
 `pkm_session.py` and threaded through function arguments. Never store them
 in module-level globals.
 
-### game_ctx
-
-
-**Strict layering rule:** lower layers must not import from upper layers.
-`pkm_cache.py` never imports `feat_*.py` or `core_*.py`. `pkm_pokeapi.py` never imports `pkm_cache.py` directly (cache calls it). `matchup_calculator.py` imports nothing from this project.
-
-The one intentional exception: `feat_moveset_data.py` is a thin I/O layer that uses `core_move` for scoring. All other feature modules import core modules as needed.
-
----
-
-## 3. Context objects
-
-Context objects are plain Python dicts. No classes. They are created in
-`pkm_session.py` and threaded through function arguments. Never store them
-in module-level globals.
-
-### game_ctx
+### 3.1 game_ctx
 
 ```python
 {
@@ -114,7 +155,7 @@ in module-level globals.
                                  # e.g. ["red-blue", "yellow"] for Red/Blue/Yellow
 }
 
-### pkm_ctx
+### 3.2 pkm_ctx
 
 ```python
 {
@@ -140,7 +181,7 @@ in module-level globals.
 **Critical:** `type2` is always a string. It is `"None"` for single-typed Pokemon,
 never Python `None`. Every function that tests for dual-type checks `type2 != "None"`.
 
-### team_ctx
+### 3.3 team_ctx
 
 ```python
 team_ctx = [pkm_ctx_or_None, pkm_ctx_or_None, ..., pkm_ctx_or_None]  # always 6 elements
@@ -160,8 +201,6 @@ cache/pokemon.db Main database (tables listed below)
 ```
 The database is created on first access. Tables are created automatically. 
 All data is stored as JSON text in the appropriate columns, preserving the original data structures.
-
-
 
 ### SQLite database schema
 
@@ -187,8 +226,6 @@ The SQLite database (`pokemon.db`) replaces all JSON cache files. It is stored i
 - A learnset row (`learnsets`) belongs to one Pokémon variety (`variety_slug`) and one game (`game_slug`).
 - Moves are independent; learnsets reference move names (stored in the JSON).
 - Type rosters (`types`) reference Pokémon slugs.
-
-All JSON data follows the same structure as the original JSON cache. This design keeps the transition simple and maintains backward compatibility with the existing code that expects dict/list shapes.
 
 **Future normalisation:** For more complex queries (e.g., “all Fire‑type Pokémon with base Speed > 100”), the database could be normalised into separate tables for forms, stats, etc. This is a potential future enhancement.
 
@@ -361,7 +398,6 @@ The following is a representative list; each file's docstring describes its entr
 | `feat_team_offense.py` | Team offensive coverage (key O) |
 | `feat_team_moveset.py` | Team moveset synergy (key S) |
 | `feat_egg_group.py` | Egg group browser (key E) |
-| `feat_evolution.py` | Evolution chain display (embedded in option 1) |
 | `feat_learnset_compare.py` | Learnset comparison (key L) |
 | `feat_team_builder.py` | Team builder (key H) |
 | `feat_opponent.py` | Team vs opponent (key X) |
@@ -561,7 +597,7 @@ This section lists all static data that is **hard‑coded** in the source files 
 | `feat_stat_compare.py` | `_STAT_KEYS` | Ordered list of `(slug, label)` for the six stats. |
 | `feat_quick_view.py` | `_STAT_LABELS` | Same as above (duplicated). |
 
-### 11.7 Cache and network
+### 12.7 Cache and network
 
 | File | Constant | Purpose |
 |------|----------|---------|
@@ -588,7 +624,7 @@ This section lists all static data that is **hard‑coded** in the source files 
 | `feat_egg_group.py` | `_W`, `_COLS`, `_COL_WIDTH` | Layout for egg group roster grid. |
 | `feat_ability_browser.py` | `_C_NAME`, `_C_GEN`, `_C_EFFECT`, `_GAP` | Column widths for ability browser. |
 
-### 11.9 Duplicated constants (to be unified)
+### 12.9 Duplicated constants (to be unified)
 
 Several constants are defined in multiple files and should eventually be moved to a central location if a database migration is planned:
 

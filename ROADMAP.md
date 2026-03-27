@@ -54,6 +54,15 @@
 | V2 Package 1 | Core library / presentation separation | Moved all pure logic to core_*.py modules; feat_*.py now thin UI wrappers | §109 |
 | V2 Package 2 | SQLite data layer | Replaced JSON cache with SQLite database; added pkm_sqlite.py | §110 |
 | V2 Package 3 | One‑time full data import | Added `--sync` flag to pre‑download all data into SQLite; progress tracking | §111 |
+| UI abstraction layer | Created `ui_base.py`, `ui_cli.py`, `ui_tui.py`; all UI methods async; persistent input bar in TUI; modal screens for game, Pokémon, form, confirm, list selection. | §112 |
+| Team builder evolution filtering | Added `trigger_is_pure_level_up` and `is_pure_level_up_chain`; filter out lower‑stage pure level‑up evolutions when a higher stage is also a candidate. | §113 |
+| Stat comparison merged into learnset comparison | Removed standalone `C` menu entry; stat header now part of learnset comparison. | §114 |
+| Main menu reorganisation | Grouped menu entries logically; core actions (G, P, T) at the top. | §115 |
+| TUI foundation (split‑pane layout) | Added `textual`; implemented split‑pane TUI with left pane (context + menu) and right pane (output). | §117 |
+| Full async conversion and TUI enhancement | All features async; TUI now has persistent input bar, full key bindings, and modal screens for all prompts. | §118 |
+| Move table pre‑load key change and TM/HM fix | Changed move pre‑load from `MOVE` to `Y`; added `W` key for TM/HM table in TUI. | §121 |
+| Default UI for frozen builds | TUI becomes default for bundled executables; added `--cli` flag to force CLI mode. | §122 |
+| Team builder BST bonus | Added BST bonus to scoring formula; higher total base stats give a small advantage when coverage is equal. | §123 |
 
 ---
 
@@ -99,12 +108,23 @@ The following steps represent a phased approach to evolving the toolkit into ver
 
 ---
 
-### 4. Terminal UI (TUI)
+### 4. Terminal UI (TUI) ✅ Complete (see §112-123) 
 
 | **4.1. UI abstraction** | Refactor `pokemain.py` to use an abstract UI class. Replace all direct `print()` and `input()` calls with UI methods. Move interactive selection functions (`select_pokemon`, `select_game`) into the UI layer. Keep the current CLI as the first implementation. | 🟡 Medium | 🟡 Medium | Separates UI concerns from application logic, enabling alternative frontends (TUI, GUI). The foundation for all future UI work. | ✅ Complete (see §112) 
 | **4.2. Terminal UI (TUI)** | Build a persistent split‑pane interface (e.g., using `textual` or `curses`) that shows context at all times. Replace the menu loop with key‑driven navigation. | 🔴 High | 🔴 High | Drastically improves UX: no screen clearing, all context visible, faster workflows. Keeps CLI as fallback. |
 
+### 4.3. Installation script and one‑time sync
+**What:** Provide an installer script (or standalone installer) that:
+- Checks Python version and installs dependencies (`requests`, `textual`).
+- Runs `--sync` to pre‑download all data into the SQLite database (with progress feedback).
+- Optionally builds a standalone executable with `build.py`.
+- Places the executable and cache in appropriate system locations (e.g., `~/Applications` on macOS, `%APPDATA%` on Windows).
 
+**Why:** First‑run experience with an empty database is slow; users must wait for lazy fetches. A pre‑sync ensures instant launch after installation. It also simplifies distribution for non‑technical users.
+
+**Effort:** 🟡 Medium  
+**Complexity:** 🟡 Medium  
+**Added value:** Smooth out‑of‑box experience; can be extended to create desktop shortcuts or integrate with package managers.
 
 ---
 
