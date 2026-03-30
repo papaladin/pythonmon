@@ -41,7 +41,7 @@
 
 **Added value:** Cleaner terminal output, better user experience.  
 **Complexity:** 🟢 Low  
-**Status:** ⬜ To do
+**Status:** ✅ Done
 
 ---
 

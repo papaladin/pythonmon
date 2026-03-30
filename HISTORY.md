@@ -1999,4 +1999,32 @@ No new tests; existing tests pass. The scoring change is covered by existing can
 - All other modules unchanged.
 - Full offline suite: unchanged (all tests pass).
 
+---
+
+## §125 — Centralise dummy UI definition
+
+### What changed
+- New file: `ui_dummy.py` — contains the `DummyUI` class implementing all UI methods for standalone mode.
+- Modified all feature files (`feat_*.py`) that previously defined an inline `DummyUI`:
+  - Replaced inline class definitions with `from ui_dummy import DummyUI` and a simple instantiation.
+  - Removed unused `import builtins` statements from these files.
+- Modified `run_tests.py` — added `ui_dummy.py` to `_known_no_suite` (no tests needed).
+
+### Why
+The same `DummyUI` class was duplicated in every feature file that could be run standalone. Centralising it:
+- Eliminates code duplication (~70 lines removed, one 45‑line module added).
+- Makes future changes to the dummy UI (e.g., adding a new method) a single‑file update.
+- Keeps the codebase cleaner and easier to maintain.
+
+### Key decisions
+- The dummy UI delegates interactive functions (`select_pokemon`, `select_game`, etc.) to `pkm_session`, matching the behaviour of the inline versions.
+- All UI methods are async to match the abstract base class, but the implementation uses synchronous `builtins` calls.
+- The dummy is only created when `ui` is `None` in the entry points, preserving the same behaviour as before.
+
+### Bugs found during testing
+None – all tests passed after the refactor.
+
+### Test count
+No new tests. All existing offline tests pass.
+
 --

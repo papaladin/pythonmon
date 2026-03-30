@@ -268,11 +268,7 @@ async def run(game_ctx=None, pkm_ctx=None, ui=None) -> None:
     """
     if ui is None:
         # Fallback dummy UI for standalone
-        import builtins
-        class DummyUI:
-            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
-            async def input_prompt(self, prompt): return builtins.input(prompt)
-            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        from ui_dummy import DummyUI
         ui = DummyUI()
 
     # Gen 1/2 warning
@@ -363,13 +359,10 @@ def _run_tests(with_cache: bool = False) -> None:
     buf = _io.StringIO()
     _sys.stdout = buf
     # Create a dummy UI that writes to buf
-    class DummyUI:
-        async def print_output(self, text, end="\n"): _sys.stdout.write(text + "\n")
-        async def input_prompt(self, prompt): return ""
-        async def confirm(self, prompt): return False
-    dummy = DummyUI()
+    from ui_dummy import DummyUI
+    ui = DummyUI()
     import asyncio
-    asyncio.run(_print_pkm_abilities(dummy, fake_pkm, fake_index))
+    asyncio.run(_print_pkm_abilities(ui, fake_pkm, fake_index))
     _sys.stdout = _sys.__stdout__
     out = buf.getvalue()
 
@@ -385,7 +378,7 @@ def _run_tests(with_cache: bool = False) -> None:
     # Empty abilities list
     buf2 = _io.StringIO()
     _sys.stdout = buf2
-    asyncio.run(_print_pkm_abilities(dummy, {"form_name": "Lapras", "abilities": []}, fake_index))
+    asyncio.run(_print_pkm_abilities(ui, {"form_name": "Lapras", "abilities": []}, fake_index))
     _sys.stdout = _sys.__stdout__
     out2 = buf2.getvalue()
     check("_print_pkm_abilities: empty abilities shows fallback message",

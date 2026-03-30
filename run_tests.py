@@ -101,10 +101,12 @@ def _cache_items():
 
 
 SUITES = [
-    ("matchup_calculator",       "matchup_calculator.py",  ["--autotest"],               []),
+    ("matchup_calculator",       "matchup_calculator.py",   ["--autotest"],               []),
     ("pkm_cache",                "pkm_cache.py",            ["--autotest"],               []),
     ("pkm_pokeapi",              "pkm_pokeapi.py",          ["--autotest"],               []),
     ("pkm_session",              "pkm_session.py",          ["--autotest"],               []),
+    ("menu_builder",             "menu_builder.py",         ["--autotest"],               []),
+    ("ui_tui",                   "ui_tui.py",               ["--autotest"],               []),
     ("feat_moveset_data",        "feat_moveset_data.py",    ["--autotest"],               []),
     ("feat_moveset",             "feat_moveset.py",         ["--autotest"],               []),
     ("feat_move_lookup",         "feat_move_lookup.py",     ["--autotest"],               []),
@@ -355,19 +357,26 @@ def main():
     # All other files must have an --autotest suite.
     # Any unexpected file appearing below indicates a missing test suite.
     import re as _re
-    _suite_files = set(_re.findall(r'"((?:feat_|pkm_|matchup_)\w+\.py)"',
-                                   open(__file__, encoding="utf-8").read()))
+    # Match feat_*, pkm_*, matchup_*, core_*, ui_*, menu_builder.py
+    _suite_files = set(_re.findall(
+        r'"((?:feat_|pkm_|matchup_|core_|ui_)\w+\.py|menu_builder\.py)"',
+        open(__file__, encoding="utf-8").read()
+    ))
     _known_no_suite = {
         "pokemain.py":        "wiring-only  — menu loop with no logic; interactive I/O untestable",
         "build.py":           "build tool   — wraps PyInstaller; depends on external binary, not testable offline",
         "pkm_sqlite.py":      "SQLite layer — called by pkm_cache; no public interface for standalone testing",
         "pkm_sync.py":        "sync script  — one‑time data import; no unit tests",
+        "ui_base.py":         "abstract base class — no concrete logic to test",
+        "ui_cli.py":          "CLI UI — interactive; relies on pkm_session functions already tested",
+        "ui_dummy.py":        "dummy UI — no logic to test; delegates to pkm_session",
+
     }
     _all_py = sorted(
         f for f in os.listdir(HERE)
         if f.endswith(".py")
-        and (f.startswith("feat_") or f.startswith("pkm_")
-             or f in ("matchup_calculator.py", "pokemain.py", "build.py"))
+        and (f.startswith("feat_") or f.startswith("pkm_") or f.startswith("core_") or f.startswith("ui_")
+             or f in ("matchup_calculator.py", "pokemain.py", "build.py", "menu_builder.py"))
         and f not in ("run_tests.py",)
         and "_p" not in f.replace(".py", "")   # exclude temp test copies (_p28, _p32, etc.)
     )

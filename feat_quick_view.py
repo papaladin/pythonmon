@@ -212,11 +212,7 @@ async def _display_evolution_block(pkm_ctx: dict, paths: list,
     """
     if ui is None:
         # Fallback dummy UI for standalone
-        import builtins
-        class DummyUI:
-            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
-            async def input_prompt(self, prompt): return builtins.input(prompt)
-            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        from ui_dummy import DummyUI
         ui = DummyUI()
 
     current_slug = pkm_ctx.get("pokemon", "")
@@ -280,11 +276,7 @@ async def run(pkm_ctx: dict, game_ctx: dict, constraints: list = None, ui=None) 
     """
     if ui is None:
         # Fallback dummy UI for standalone
-        import builtins
-        class DummyUI:
-            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
-            async def input_prompt(self, prompt): return builtins.input(prompt)
-            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        from ui_dummy import DummyUI
         ui = DummyUI()
 
     await ui.print_session_header(pkm_ctx, game_ctx, constraints)
@@ -344,11 +336,7 @@ def main() -> None:
         if pkm_ctx is None:
             sys.exit(0)
         # In standalone, we don't have a UI instance; we'll use a dummy
-        import builtins
-        class DummyUI:
-            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
-            async def input_prompt(self, prompt): return builtins.input(prompt)
-            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        from ui_dummy import DummyUI
         ui = DummyUI()
         import asyncio
         asyncio.run(run(pkm_ctx, game_ctx, ui=ui))

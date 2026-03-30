@@ -400,12 +400,7 @@ async def run(team_ctx: list, game_ctx: dict, ui=None) -> None:
     """
     if ui is None:
         # Fallback dummy UI for standalone
-        import builtins
-        class DummyUI:
-            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
-            async def print_progress(self, text, end="\n", flush=False): builtins.print(text, end=end, flush=flush)
-            async def input_prompt(self, prompt): return builtins.input(prompt)
-            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        from ui_dummy import DummyUI
         ui = DummyUI()
 
     from feat_team_loader import team_size as _team_size

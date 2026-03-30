@@ -237,11 +237,7 @@ async def run(game_ctx=None, ui=None) -> None:
     """
     if ui is None:
         # Fallback dummy UI for standalone
-        import builtins
-        class DummyUI:
-            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
-            async def input_prompt(self, prompt): return builtins.input(prompt)
-            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        from ui_dummy import DummyUI
         ui = DummyUI()
 
     game_gen = game_ctx.get("game_gen") if game_ctx else None

@@ -585,6 +585,8 @@ python run_tests.py --quiet   # summary table only
 | `ui_base.py` | Abstract base class for UI implementations |
 | `ui_cli.py`  | CLI implementation of the UI interface |
 | `ui_tui.py`  | TUI implementation (Textual); default for bundled executables |
+| `ui_dummy.py`  | Dummy UI used when a feature is run standalone (no real UI). |
+
 
 **Obsolete files** (safe to delete):
 `feat_type_matchup.py` (renamed to `feat_quick_view.py` in §85),

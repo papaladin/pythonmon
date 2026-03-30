@@ -533,12 +533,7 @@ async def run_scored_pool(pkm_ctx, game_ctx, ui=None):
     """
     if ui is None:
         # Fallback for standalone (dummy)
-        import builtins
-        class DummyUI:
-            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
-            async def print_progress(self, text, end="\n", flush=False): builtins.print(text, end=end, flush=flush)
-            async def input_prompt(self, prompt): return builtins.input(prompt)
-            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        from ui_dummy import DummyUI
         ui = DummyUI()
 
     await ui.print_session_header(pkm_ctx, game_ctx)
@@ -630,12 +625,7 @@ async def run(pkm_ctx, game_ctx, constraints=None, ui=None):
     """
     if ui is None:
         # Fallback for standalone (dummy)
-        import builtins
-        class DummyUI:
-            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
-            async def print_progress(self, text, end="\n", flush=False): builtins.print(text, end=end, flush=flush)
-            async def input_prompt(self, prompt): return builtins.input(prompt)
-            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        from ui_dummy import DummyUI
         ui = DummyUI()
 
     await ui.print_session_header(pkm_ctx, game_ctx)
@@ -714,12 +704,7 @@ def main():
         return
 
     # Use a dummy UI for standalone
-    import builtins
-    class DummyUI:
-        async def print_output(self, text, end="\n"): builtins.print(text, end=end)
-        async def print_progress(self, text, end="\n", flush=False): builtins.print(text, end=end, flush=flush)
-        async def input_prompt(self, prompt): return builtins.input(prompt)
-        async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+    from ui_dummy import DummyUI
     ui = DummyUI()
     import asyncio
     asyncio.run(run(pkm_ctx, game_ctx, constraints=[], ui=ui))

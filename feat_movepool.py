@@ -332,12 +332,7 @@ async def run(pkm_ctx: dict, game_ctx: dict, constraints: list = None, ui=None) 
     """Called from pokemain with both contexts loaded."""
     if ui is None:
         # Fallback dummy UI for standalone
-        import builtins
-        class DummyUI:
-            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
-            async def print_progress(self, text, end="\n", flush=False): builtins.print(text, end=end, flush=flush)
-            async def input_prompt(self, prompt): return builtins.input(prompt)
-            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        from ui_dummy import DummyUI
         ui = DummyUI()
 
     name = pkm_ctx["pokemon"]
@@ -395,12 +390,7 @@ def main() -> None:
         sys.exit(1)
 
     # Use dummy UI for standalone (synchronous)
-    import builtins
-    class DummyUI:
-        async def print_output(self, text, end="\n"): builtins.print(text, end=end)
-        async def print_progress(self, text, end="\n", flush=False): builtins.print(text, end=end, flush=flush)
-        async def input_prompt(self, prompt): return builtins.input(prompt)
-        async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+    from ui_dummy import DummyUI
     ui = DummyUI()
 
     import asyncio

@@ -627,7 +627,7 @@ class TUI(UI):
                     except ValueError as e:
                         await self.show_error(str(e))
                 else:
-                    await self.print_output("DEBUG: Game selection cancelled")
+                    await self.print_output("Game selection cancelled")
             except Exception as e:
                 await self.show_error(f"Game selection error: {e}")
                 await self.print_output(traceback.format_exc())
@@ -840,3 +840,128 @@ class TUI(UI):
 
     async def run(self):
         await self.app.run_async()
+        
+        
+        
+# ── Self‑tests ────────────────────────────────────────────────────────────────
+
+def _run_tests():
+    import sys
+    errors = []
+    def ok(label):   print(f"  [OK]   {label}")
+    def fail(label, msg=""):
+        print(f"  [FAIL] {label}" + (f": {msg}" if msg else ""))
+        errors.append(label)
+
+    print("\n  ui_tui.py — self-test\n")
+
+    # ── index_search ──────────────────────────────────────────────────────────
+    # Mock index with a few Pokémon
+    mock_index = {
+        "charizard":   {"forms": [{"name": "Charizard",   "types": ["Fire","Flying"]}]},
+        "charmander":  {"forms": [{"name": "Charmander",  "types": ["Fire"]}]},
+        "charmeleon":  {"forms": [{"name": "Charmeleon",  "types": ["Fire"]}]},
+        "blastoise":   {"forms": [{"name": "Blastoise",   "types": ["Water"]}]},
+        "rotom-wash":  {"forms": [{"name": "Rotom-Wash",  "types": ["Water","Electric"]}]},
+        "rotom-heat":  {"forms": [{"name": "Rotom-Heat",  "types": ["Fire","Electric"]}]},
+        "rotom-frost": {"forms": [{"name": "Rotom-Frost", "types": ["Ice","Electric"]}]},
+    }
+
+    # Exact slug match → returns that slug alone
+    r = index_search("charizard", mock_index)
+    if r == ["charizard"]:
+        ok("index_search: exact slug → single result")
+    else:
+        fail("index_search exact", str(r))
+
+    # Prefix match → all three char* entries
+    r = index_search("char", mock_index)
+    if set(r) == {"charizard", "charmander", "charmeleon"}:
+        ok("index_search: prefix match")
+    else:
+        fail("index_search prefix", str(r))
+
+    # Case-insensitive
+    r = index_search("CHAR", mock_index)
+    if set(r) == {"charizard", "charmander", "charmeleon"}:
+        ok("index_search: case-insensitive")
+    else:
+        fail("index_search case", str(r))
+
+    # Substring match (rotom contains "oto")
+    r = index_search("oto", mock_index)
+    if all("rotom" in s for s in r) and len(r) == 3:
+        ok("index_search: substring fallback")
+    else:
+        fail("index_search substring", str(r))
+
+    # Prefix before substring
+    r = index_search("cha", mock_index)
+    prefix_names = {"charizard", "charmander", "charmeleon"}
+    if set(r[:3]) == prefix_names:
+        ok("index_search: prefix ranked before substring")
+    else:
+        fail("index_search prefix order", str(r))
+
+    # No match → empty list
+    r = index_search("pikachu", mock_index)
+    if r == []:
+        ok("index_search: no match → []")
+    else:
+        fail("index_search no match", str(r))
+
+    # Empty needle → empty list
+    r = index_search("", mock_index)
+    if r == []:
+        ok("index_search: empty needle → []")
+    else:
+        fail("index_search empty", str(r))
+
+    # Empty index → empty list
+    r = index_search("char", {})
+    if r == []:
+        ok("index_search: empty index → []")
+    else:
+        fail("index_search empty index", str(r))
+
+    # Cap at _MAX_SUGGESTIONS (8) – we set _MAX_SUGGESTIONS=8 in ui_tui.py
+    big_index = {f"rotom-{i}": {"forms": []} for i in range(20)}
+    r = index_search("rotom", big_index)
+    if len(r) == 8:
+        ok("index_search: capped at 8 suggestions")
+    else:
+        fail("index_search cap", f"got {len(r)}")
+
+    # ── Smoke test: ensure required imports and classes exist ─────────────────
+    # This just verifies that the module structure is intact (no syntax errors).
+    # We can check that the key classes are defined.
+    try:
+        # Attempt to instantiate some classes (no modal run, just existence)
+        game_screen = GameSelectionScreen()
+        pokemon_screen = PokemonSelectionScreen()
+        form_screen = FormSelectionScreen([])
+        input_modal = InputModal("")
+        confirm_modal = ConfirmModal("")
+        list_modal = ListSelectionModal("", [])
+        error_modal = ErrorModal("")
+        # Also verify that TUI class exists (it does)
+        tui_instance = TUI()
+        ok("ui_tui: all classes can be instantiated (smoke test)")
+    except Exception as e:
+        fail("ui_tui class instantiation", str(e))
+
+    print()
+    total = 10  # number of ok/fail calls above
+    if errors:
+        print(f"  FAILED ({len(errors)}): {errors}")
+        sys.exit(1)
+    else:
+        print(f"  All {total} tests passed")
+        
+        
+if __name__ == "__main__":
+    if "--autotest" in sys.argv:
+        _run_tests()
+    else:
+        # Not meant to be run standalone
+        print("This module is not meant to be run directly. Use --autotest to run self-tests.")

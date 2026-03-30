@@ -1,215 +1,112 @@
 # AI_WORKFLOW.md
-# How to handle implementation requests in this project
+# Implementation workflow for AI assistants
 
-> This document describes the exact workflow to follow when receiving a prompt
-> asking for a new feature, a fix, a refactor, or a display change.
+> This document defines a strict step-by-step workflow for implementing changes in this codebase.  
 > It is written for an AI assistant working on this codebase.
 > Follow these steps in order. Do not skip steps, even for small changes.
 
 ---
 
-## 0. Before anything else — restore context
+## 0. Restore context
 
-At the start of every session, or when picking up an unfinished task:
-
-1. Read `TASKS.md` — understand what is in progress and what the next step is.
-2. Read `ROADMAP.md` — understand where the current task fits in the bigger picture.
-3. If the task involves a specific module, read that module's header docstring.
-4. If the task is architecturally significant, read `ARCHITECTURE.md`.
-5. Verify the working environment: `python run_tests.py --offline`
-   All tests must pass before starting. If they do not, fix the environment first.
-6. If the feature involves the cache or data persistence, be aware that the toolkit now uses SQLite (single `pokemon.db` file) instead of JSON files. The cache directory still exists, but contains only the database. The `--sync` command can pre‑load all data for offline use.
-7. Session Resume Protocol (AI handoff safety). If the assistant is continuing work started in a previous session, it must verify that the **documentation state matches the implementation state** before writing any code : TASKS.md & ROADMAP.md aligns with codebase. If inconsistencies are detected: Produce a **reconstruction summary** describing how to repair documentation. Once the user confirms and the project state is clarified, you can proceed to next step.
+- Read `TASKS.md` (current task), `ROADMAP.md` (big picture).
+- Read relevant module docstrings and `ARCHITECTURE.md` if changes affect structure.
+- Run `python run_tests.py --offline` – all tests must pass.
+- If continuing a previous session, verify that docs match implementation. If not, produce a reconstruction summary and wait for user confirmation.
 
 ---
+
 
 ## 1. Understand the request
 
-- Read the request carefully. Identify:
-  - What **output** the user wants (new feature, display change, bug fix, refactor, new file).
-  - What **files** are likely involved (source + tests + docs).
-  - What **constraints** apply (offline-only, no new deps, must not break existing tests).
-- If the request is ambiguous, ask one focused clarifying question before proceeding.
-- If the request is large (more than 1 new file, or touches more than 3 existing files),
-  propose breaking it into smaller steps and confirm with the user before implementing.
+- Identify: output type (feature/fix/refactor), files involved, constraints (offline, no new deps, tests must pass).
+- If ambiguous, ask one clarifying question.
+- If >1 new file or >3 existing files, propose a breakdown and confirm.
 
 ---
 
-## 2. Explore the relevant code
+## 2. Explore the code
 
-Before writing a single line, read the relevant sections of existing files.
-Typical actions (visible in the assistant output as brief action lines):
+Use tools to inspect relevant files:
+- `grep -n "def \|class " <file>` – map API
+- `sed -n 'N,Mp' <file>` – read sections
+- `python3 -c "import mod; ..."` – probe live values
 
-    grep -n "def \|class " <file>          # map public API of a module
-    sed -n 'N,Mp' <file>                   # read a specific section
-    grep -n "keyword" <file>               # find where something is used
-    python3 -c "import mod; ..."           # probe a live value or return shape
-
-The goal is to answer:
-- What data structures flow in and out of the area being changed?
-- What functions/constants will be reused vs written from scratch?
-- Are there existing tests that exercise the code being modified?
-
-Do NOT assume what a function returns. Verify it by reading the code or probing it live.
+Answer: data flow, reusable functions, existing tests. Never assume – verify.
 
 ---
 
-## 3. Propose a plan (for non-trivial changes)
+## 3. Plan (for non-trivial changes)
 
-For any change that touches more than one function or adds a new file:
+For changes touching >1 function or adding a new file:
 
-- State which files will be created or modified.
-- List the new functions with their signature and one-line purpose.
-- Identify the test cases that will be added (what invariant each one checks).
-- If multiple implementation approaches exist, describe them and recommend one.
-  Wait for user confirmation before proceeding.
+- List files to create/modify.
+- New functions: signature + one-line purpose.
+- Test cases: what invariants to check.
+- If multiple approaches, recommend one and wait for confirmation.
 
-For small changes (single function, display tweak, rename): skip the proposal
-and go directly to implementation, but still narrate what you are doing.
-
+Skip planning for trivial changes (single function, display tweak) but narrate.
 
 ---
 
-## 3.5 Design Freeze (mandatory for architectural or roadmap work)
+## 3.5 Design freeze (mandatory for architectural/roadmap work)
 
-If the task involves **any of the following**, implementation MUST NOT begin immediately:
+If the task involves **any** of the following, **stop and produce a Design Freeze**:
 
-* architectural decisions
-* feature design choices
-* breaking work into tasks or substeps
-* proposing a new module
-* proposing a new menu screen or feature
-* suggesting changes to the project roadmap
-* identifying future work during exploration
+- Architectural decisions
+- Feature design choices
+- Breaking work into tasks
+- Proposing new modules/screens
+- Changing roadmap
 
-Instead, the assistant must **produce a Design Freeze output first**.
+**Design Freeze must contain**:
+1. Design decisions (chosen approach, alternatives, rationale)
+2. Architecture changes (new modules/data structures/dependencies)
+3. Feature breakdown (list of tasks)
+4. Documentation updates required (TASKS, ROADMAP, ARCHITECTURE, README)
+5. Implementation scope (files to create/modify, tests)
 
-### Design Freeze output must contain
-
-1. **Design decisions**
-
-   * Chosen approach
-   * Alternatives considered
-   * Rationale
-
-2. **Architecture changes (if any)**
-
-   * New modules
-   * New data structures
-   * New dependencies between modules
-
-3. **Feature breakdown**
-
-   * List of tasks or subtasks required for implementation
-   * Any follow-up tasks discovered
-
-4. **Documentation updates required**
-
-   * `TASKS.md`
-   * `ROADMAP.md`
-   * `ARCHITECTURE.md`
-   * `README.md` (if relevant)
-
-5. **Implementation scope**
-
-   * Files that will be created
-   * Files that will be modified
-   * Test suites that will be added or updated
-
-### Important rule
-
-The assistant must **stop after presenting the Design Freeze output** and wait for the user to approve or modify it.
-
-No code should be written at this stage.
-
-### After approval
-
-Once the user confirms the plan:
-
-1. Update the relevant documentation files **before implementation begins**:
-
-   * `TASKS.md` — reflect the detailed task list
-   * `ROADMAP.md` — update progress or next step
-   * `ARCHITECTURE.md` — record architectural changes
-   * `README.md` if the user-visible feature set changes
-
-2. Only after documentation is updated may the assistant proceed to implementation.
-
-### Reason for this rule
-
-AI sessions can terminate unexpectedly.
-Capturing decisions and future work **before implementation** ensures that another AI can resume work without losing design context.
-
+Wait for user approval. After approval, update docs **before** writing code.
 
 ---
 
-## 4. Write tests first (or alongside implementation)
+## 4. Write tests first (or alongside)
 
-Tests live in the `_run_tests()` function at the bottom of each module,
-invoked via `python <file>.py --autotest`.
-
-Rules:
-- Test **pure logic** (data transformations, calculations, sorting, string
-  formatting helpers). Do not test print output beyond presence of key strings.
-- Use inline fixtures (small dicts/lists defined inside `_run_tests()`).
-  Do not rely on live cache or network in offline tests.
-- Each test has a one-line label passed to `ok()` or `fail()`.
-  Labels must be specific enough to diagnose the failure without reading the code.
-  Example: "weakness_summary: Rock sorted first (x4 priority)"
-  Not: "sort test 3"
-- After writing tests for a new function, run them — they should fail before
-  the function exists. If they pass, the test is wrong.
-
-Exception: display-only changes (column renames, spacing) — write tests after,
-since the "before" state has no meaningful invariant to assert.
+- Test pure logic only. Use inline fixtures. Offline tests only.
+- Each test: one-line label (`<function>: what is asserted`).
+- After writing tests for a new function, run them – they must fail initially.
+- For display-only changes, tests can be written after.
 
 ---
 
-## 5. Implement the feature
+## 5. Implement
 
-Implementation order:
-1. Pure logic functions first (no I/O, no print statements).
-2. Display / formatting helpers second.
-3. Entry points (`run()`, `main()`) last.
+Order:
+1. Pure logic (no I/O)
+2. Display helpers
+3. Entry points (`run`, `main`)
 
-During implementation:
-- Reuse existing helpers rather than reimplementing them.
-  Key shared utilities: `_abbrev()`, `_names_cell()`, `calc.compute_defense()`,
-  `team_slots()`, `team_size()`, `select_pokemon()`, `select_game()`. If an existing function performs ≥70% of the required behavior, reuse or extend it instead of writing a new one.
-- Match the style of surrounding code (indentation, comment style, docstring format).
-- Do not add new pip dependencies without explicit user approval.
-- If a function grows beyond ~50 lines, consider splitting it. The exception is
-  display functions that build a single visual output — these can be longer.
-
-After each logical unit (pure logic done, display done), run the tests:
-    python <file>.py --autotest
-Fix failures before continuing. Do not accumulate failures across steps.
+Reuse existing helpers. Match code style. No new deps without approval.
+After each logical unit, run `python <file>.py --autotest` and fix failures immediately.
 
 ---
 
-## 6. Wire into pokemain.py (if applicable)
+## 6. Wire into pokemain (if applicable)
 
-If the feature is a new screen reachable from the main menu:
-- Add the import at the top of `pokemain.py` (inside the try/except block).
-- Add the menu line in `_print_menu()`, conditional on required context.
-  Examples: show V only when team is loaded; show options 1-4 only when Pokemon selected.
-- Add the `elif choice == "x":` handler in the main loop.
-- Guard against missing context with a clear error message, never a crash.
+- Add import (inside try/except).
+- Add menu line in `_build_menu_lines` with visibility condition.
+- Add handler with context guards.
+- Use `await ui.show_error()` for missing context.
 
-Verify the import compiles cleanly:
-    python -c "import pokemain; print('OK')"
+Verify import: `python -c "import pokemain; print('OK')"`
 
 ---
 
-## 7. Run the full test suite
+## 7. Run full test suite
 
-    python run_tests.py --offline
+`python run_tests.py --offline` – zero failures required.
 
-All tests must pass. Zero failures is the only acceptable result before delivery.
-If a pre-existing test breaks, fix it — do not leave known failures in the suite.
-
-Also verify: the `total = N` constant at the bottom of each module's `_run_tests()`
-must match the actual number of `ok()` / `fail()` calls in that function.
+Verify each module’s `total = N` matches actual test count.
 
 ---
 
@@ -250,15 +147,12 @@ Update all of the following. None are optional.
 
 ## 9. Deliver outputs
 
-- Copy all modified files to the output directory.
-- Present the files to the user using the file-present tool.
-- Write a short summary: what was changed, which files to replace, anything to watch out for.
-- Do NOT explain line by line what the code does. The user can read it.
-  Focus on: what changed, why, and any caveats.
+- Copy modified files to output directory.
+- Present them using the file-present tool.
+- Write a short summary: what changed, why, caveats.
+- Do not explain line by line.
 
 ---
-
-## Quick reference — full workflow
 
 ## Quick reference — full workflow
 
@@ -273,7 +167,7 @@ Update all of the following. None are optional.
 6. Implement           logic first, display second, entry point last
 7. Wire pokemain       import, menu line, handler, context guard
 8. Full suite          run_tests.py --offline — zero failures
-9. Final docs          README + ROADMAP + TASKS + HISTORY
+9. Final docs          README + ROADMAP + TASKS + HISTORY + ARCHITECTURE
 10. Deliver            copy outputs, present files, short summary
 ```
 

@@ -134,24 +134,16 @@ async def run(pkm_ctx: dict, ui=None) -> None:
     """Called from pokemain (key E)."""
     if ui is None:
         # Fallback dummy UI for standalone
-        import builtins
-        class DummyUI:
-            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
-            async def input_prompt(self, prompt): return builtins.input(prompt)
-            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        from ui_dummy import DummyUI
         ui = DummyUI()
     await display_egg_group_browser(ui, pkm_ctx)
     await ui.input_prompt("\n  Press Enter to continue...")
 
 
 def main() -> None:
-    import builtins
     import asyncio
 
-    class DummyUI:
-        async def print_output(self, text, end="\n"): builtins.print(text, end=end)
-        async def input_prompt(self, prompt): return builtins.input(prompt)
-        async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+    from ui_dummy import DummyUI
     ui = DummyUI()
 
     asyncio.run(ui.print_output(""))

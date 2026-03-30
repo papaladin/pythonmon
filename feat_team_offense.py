@@ -241,11 +241,7 @@ async def run(team_ctx: list, game_ctx: dict,
     """Called from pokemain."""
     if ui is None:
         # Fallback dummy UI for standalone
-        import builtins
-        class DummyUI:
-            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
-            async def input_prompt(self, prompt): return builtins.input(prompt)
-            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        from ui_dummy import DummyUI
         ui = DummyUI()
     await display_team_offense(ui, team_ctx, game_ctx, pool_cache=pool_cache)
     await ui.input_prompt("\n  Press Enter to continue...")
@@ -253,13 +249,8 @@ async def run(team_ctx: list, game_ctx: dict,
 
 def main() -> None:
     # Dummy UI for standalone
-    import builtins
     import asyncio
-
-    class DummyUI:
-        async def print_output(self, text, end="\n"): builtins.print(text, end=end)
-        async def input_prompt(self, prompt): return builtins.input(prompt)
-        async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+    from ui_dummy import DummyUI
     ui = DummyUI()
 
     asyncio.run(ui.print_output(""))

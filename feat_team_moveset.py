@@ -186,13 +186,9 @@ async def run(team_ctx: list, game_ctx: dict,
     """Menu entry point for key S — Team Moveset Synergy."""
     if ui is None:
         # Fallback dummy UI for standalone
-        import builtins
-        class DummyUI:
-            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
-            async def input_prompt(self, prompt): return builtins.input(prompt)
-            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
+        from ui_dummy import DummyUI
         ui = DummyUI()
-
+        
     if team_size(team_ctx) == 0:
         await ui.print_output("\n  Team is empty — load some Pokémon first (press T).")
         return

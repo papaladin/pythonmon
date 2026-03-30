@@ -240,14 +240,7 @@ async def run(pkm_ctx: dict, game_ctx: dict, ui=None) -> None:
     """Called from pokemain (key L)."""
     if ui is None:
         # Fallback dummy UI for standalone
-        import builtins
-        class DummyUI:
-            async def print_output(self, text, end="\n"): builtins.print(text, end=end)
-            async def input_prompt(self, prompt): return builtins.input(prompt)
-            async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
-            async def select_pokemon(self, game_ctx=None):
-                from pkm_session import select_pokemon as _sp
-                return _sp(game_ctx)
+        from ui_dummy import DummyUI
         ui = DummyUI()
 
     await ui.print_output(f"\n  Comparing {pkm_ctx['form_name']}'s learnset with...")
@@ -261,16 +254,9 @@ async def run(pkm_ctx: dict, game_ctx: dict, ui=None) -> None:
 
 def main() -> None:
     # Dummy UI for standalone
-    import builtins
     import asyncio
 
-    class DummyUI:
-        async def print_output(self, text, end="\n"): builtins.print(text, end=end)
-        async def input_prompt(self, prompt): return builtins.input(prompt)
-        async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
-        async def select_pokemon(self, game_ctx=None):
-            from pkm_session import select_pokemon as _sp
-            return _sp(game_ctx)
+    from ui_dummy import DummyUI
     ui = DummyUI()
 
     asyncio.run(ui.print_output(""))
