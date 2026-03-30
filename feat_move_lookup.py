@@ -313,7 +313,7 @@ def _run_tests(with_cache=False):
     else: fail("_attacking_coverage Ghost era1 Psychic", str(imm_ghost1))
 
     # ── _display_move effect line ─────────────────────────────────────────────
-    import io, contextlib
+    import io
 
     game_ctx_fake = {"game": "Scarlet / Violet", "era_key": "era3", "game_gen": 9}
 

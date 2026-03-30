@@ -20,10 +20,9 @@ try:
     from feat_team_loader import team_slots, team_size
     from feat_moveset_data import build_candidate_pool
     from core_move import select_combo
-    import matchup_calculator as calc
     from core_team import (weakness_types, se_types, build_offensive_coverage,
-                           empty_member_result, format_weak_line,
-                           format_move_pair, format_se_line)
+                           format_weak_line, format_move_pair,
+                           format_se_line)
 except ModuleNotFoundError as e:
     print(f"\n  ERROR: {e}")
     print("  Make sure all files are in the same folder.\n")
@@ -275,7 +274,7 @@ def _run_tests():
         _this.select_combo = _orig_combo
 
     # ── display_team_movesets (stdout capture) ─────────────────────────────
-    import io, contextlib
+    import io
     fake_result = {
         "form_name": "Charizard",
         "types": ["Fire","Flying"],

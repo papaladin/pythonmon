@@ -423,7 +423,6 @@ if __name__ == "__main__":
     import tempfile
     import pkm_cache as _cache
     import pkm_session as _self
-    import pkm_sqlite
 
     print("\n  pkm_session.py — self-test\n")
     errors = []

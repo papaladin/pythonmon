@@ -276,7 +276,6 @@ def fetch_pokemon(name: str) -> dict:
 
 def fetch_all_pokemon() -> dict:
     """Fetch all Pokémon from PokeAPI, returning a dict keyed by slug with full data."""
-    import json
     all_data = _get("pokemon?limit=2000")
     results = {}
     total = len(all_data["results"])

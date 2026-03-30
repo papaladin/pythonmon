@@ -402,7 +402,7 @@ def _run_tests(with_cache: bool = False) -> None:
           name_no_hyphen == "Charizard")
 
     # ── resolve_type_roster_names: offline test with mock ────────────────────
-    import tempfile, os as _os, json as _json
+    import tempfile
     import pkm_cache as _cache
     import pkm_pokeapi as _api
 

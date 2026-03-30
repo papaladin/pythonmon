@@ -372,7 +372,7 @@ def _run_tests():
         fail("_hitters_cell with moves", repr(cell))
 
     # ── _print_offense_table (smoke test) ────────────────────────────────────
-    import io, contextlib
+    import io
     rows = [{"type": "Fire", "hitters": []}]
     class DummyUI:
         def __init__(self):

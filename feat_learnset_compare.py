@@ -398,7 +398,7 @@ def _run_tests():
         fail("_build_move_rows empty")
 
     # ── display smoke test (mock learnset fetch) ──────────────────────────────
-    import io, contextlib
+    import io
 
     _pkm_a = {
         "form_name": "Charizard", "pokemon": "charizard",

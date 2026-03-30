@@ -375,10 +375,8 @@ def main() -> None:
 # ── Self-tests ────────────────────────────────────────────────────────────────
 
 def _run_tests():
-    import os
     import tempfile
     import pkm_cache as _cache
-    import pkm_sqlite
 
     errors = []
 

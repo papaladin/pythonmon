@@ -10,7 +10,6 @@ All public functions in pkm_cache.py will eventually call these.
 import sqlite3
 import json
 import os
-import sys
 from contextlib import contextmanager
 from datetime import datetime, timezone
 

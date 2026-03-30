@@ -17,7 +17,7 @@ from ui_base import UI
 
 from menu_builder import build_context_lines, build_menu_lines
 from feat_team_loader import new_team, team_size, add_to_team, TeamFullError
-from pkm_session import select_game, select_form, refresh_pokemon, get_form_gen
+from pkm_session import refresh_pokemon, get_form_gen
 import pkm_cache as cache
 import pkm_pokeapi
 import matchup_calculator as calc

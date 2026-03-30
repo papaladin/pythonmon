@@ -24,9 +24,7 @@ try:
     import matchup_calculator as calc
     from feat_team_loader import team_slots, team_size
     from core_team import (team_offensive_gaps, team_defensive_gaps,
-                           candidate_passes_filter, patchability_score,
-                           shared_weakness_count, new_weak_pairs,
-                           score_candidate, rank_candidates)
+                           candidate_passes_filter, rank_candidates)
     from core_evolution import is_pure_level_up_chain
 except ModuleNotFoundError as e:
     print(f"\n  ERROR: {e}")
@@ -517,7 +515,7 @@ def _run_tests():
         fail("_dot_rating middle", str(_dot_rating(60.0, scores5)))
 
     # ── _print_suggestion (stdout capture) ────────────────────────────────────
-    import io, contextlib
+    import io
     fake_result = {
         "form_name"         : "Garchomp",
         "types"             : ["Dragon", "Ground"],

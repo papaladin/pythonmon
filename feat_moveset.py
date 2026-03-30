@@ -19,9 +19,9 @@ import sys
 try:
     import matchup_calculator as calc
     import pkm_cache as cache
-    from pkm_session import select_game, select_pokemon, print_session_header
+    from pkm_session import select_game, select_pokemon
     from feat_moveset_data import build_candidate_pool
-    from core_move import select_combo, rank_status_moves, TWO_TURN_MOVES, LOW_ACCURACY_THRESHOLD
+    from core_move import select_combo, rank_status_moves, TWO_TURN_MOVES
 except ModuleNotFoundError as e:
     print(f"\n  ERROR: {e}")
     print("  Make sure all files are in the same folder.\n")
@@ -687,8 +687,6 @@ async def run(pkm_ctx, game_ctx, constraints=None, ui=None):
 
 def main():
     """Run moveset recommendation as a standalone script."""
-    import pkm_cache as cache
-    import pkm_pokeapi as pokeapi
 
     print()
     print("╔" + "═"*46 + "╗")
@@ -713,9 +711,7 @@ def main():
 # ── Self-tests (unchanged, but some need to use asyncio) ───────────────────────
 
 def _run_tests(with_cache=False):
-    import sys, os, tempfile
-    import pkm_cache as _cache
-    import io
+    import sys
 
     errors = []
     def ok(label):   print(f"  [OK]   {label}")

@@ -18,7 +18,7 @@ Entry points:
 import sys
 
 try:
-    from pkm_session import select_game, select_pokemon
+    from pkm_session import select_pokemon
     from core_egg import egg_group_name, format_egg_groups
 except ModuleNotFoundError as e:
     print(f"\n  ERROR: {e}")
@@ -170,7 +170,7 @@ def _run_tests():
     print("\n  feat_egg_group.py — self-test\n")
 
     # ── display_egg_group_browser (stdout capture) ────────────────────────────
-    import io, contextlib
+    import io
 
     # Mock get_or_fetch_roster to avoid network calls
     _orig_get_or_fetch = globals().get("get_or_fetch_roster")

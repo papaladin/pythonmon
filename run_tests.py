@@ -284,7 +284,11 @@ def main():
         cmd = [sys.executable, os.path.join(HERE, filename)] + args
 
         t0      = time.monotonic()
-        proc    = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+        # Force UTF-8 encoding for the subprocess to avoid Unicode errors on Windows
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",env=env)
         elapsed = time.monotonic() - t0
 
         output = proc.stdout + (proc.stderr or "")

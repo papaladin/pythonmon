@@ -27,7 +27,6 @@ Entry points:
   main()                             standalone
 """
 
-import os
 import sys
 
 try:

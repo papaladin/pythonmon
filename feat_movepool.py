@@ -17,10 +17,9 @@ Entry points:
 import sys
 
 try:
-    from pkm_session import select_game, select_pokemon, print_session_header
+    from pkm_session import select_game, select_pokemon
     import pkm_cache as cache
     import pkm_pokeapi as pokeapi
-    import matchup_calculator as calc
 except ModuleNotFoundError as e:
     print(f"\n  ERROR: {e}")
     print("  Make sure all files are in the same folder.\n")
@@ -446,7 +445,7 @@ def _run_tests(with_cache=False):
     else: fail("_fmt_move_row status power", row_s[:60])
 
     # ── _section_header (smoke — just check no exception) ─────────────────────
-    import io, contextlib
+    import io
     class DummyUI:
         def __init__(self): self.buf = io.StringIO()
         async def print_output(self, text): self.buf.write(text + "\n")

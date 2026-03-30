@@ -13,8 +13,7 @@ Entry points:
 import sys
 
 try:
-    import matchup_calculator as calc
-    from feat_team_loader import team_slots, team_size, print_team
+    from feat_team_loader import team_slots, team_size
     from core_team import build_team_defense, build_unified_rows, gap_label, build_weakness_pairs, gap_pair_label
 except ModuleNotFoundError as e:
     print(f"\n  ERROR: {e}")
@@ -249,7 +248,7 @@ def main() -> None:
 # ── Self-tests (unchanged, but we need to adapt to async) ─────────────────────
 
 def _run_tests():
-    import io, contextlib
+    import io
     errors = []
     def ok(label):   print(f"  [OK]   {label}")
     def fail(label, msg=""):

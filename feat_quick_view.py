@@ -23,11 +23,11 @@ import sys
 
 try:
     import matchup_calculator as calc
-    from pkm_session import select_game, select_pokemon, select_from_list, print_session_header
+    from pkm_session import select_game, select_pokemon, select_from_list
     from core_stat import stat_bar, infer_role, infer_speed_tier
     from core_egg import format_egg_groups
     import pkm_cache as cache
-    from core_evolution import parse_trigger, flatten_chain, filter_paths_for_game
+    from core_evolution import flatten_chain, filter_paths_for_game
 except ModuleNotFoundError as e:
     print(f"\n  ERROR: {e}")
     print("  Make sure all files are in the same folder.\n")
@@ -361,7 +361,7 @@ def main() -> None:
 # ── Self‑tests (includes evolution tests) ─────────────────────────────────────
 
 def _run_tests():
-    import io, contextlib, sys as _sys
+    import io
     errors = []
     def ok(label):  print(f"  [OK]   {label}")
     def fail(label, msg=""):

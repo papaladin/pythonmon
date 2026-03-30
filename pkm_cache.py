@@ -10,9 +10,7 @@ All public functions remain unchanged from the JSON version.
 
 import sys
 import os
-import json
 from datetime import datetime, timezone
-import sqlite3
 import pkm_sqlite
 
 # ── Base directory (where pokemon.db will live) ───────────────────────────────
