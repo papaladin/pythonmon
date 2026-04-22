@@ -2027,4 +2027,41 @@ None – all tests passed after the refactor.
 ### Test count
 No new tests. All existing offline tests pass.
 
---
+---
+
+## §126 — Joint team optimisation (GA) implementation
+
+### What changed
+- New functions in `core_team.py`: `precompute_pokemon_data`, `team_fitness`, `create_individual`,
+  `crossover`, `mutate`, `tournament_selection`, `run_ga`.
+- New functions in `feat_team_builder.py`: `run_joint_team`, `filter_pure_level_up_evolutions`,
+  `_build_pkm_ctx_from_cache`, `se_types_from_pokemon`, `display_joint_team_result`.
+- Modified `menu_builder.py` – added `J` menu key (visible when game selected).
+- Modified `ui_cli.py` and `ui_tui.py` – added `J` key handler.
+
+### Why
+To provide a fully automated team suggestion using a genetic algorithm, complementing the
+slot‑by‑slot team builder (key H). This feature finds a complete 6‑Pokémon team optimised
+for type synergy.
+
+### Key decisions
+- **Baseline GA** with fixed weights, population 200, generations 200, tournament selection,
+  uniform crossover, 5% mutation, elitism 10%, early stopping after 20 generations.
+- **Fitness function** combines offensive coverage, defensive critical gaps, role diversity,
+  individual BST proxy, and weakness overlap penalty.
+- **Candidate pool** built from all cached Pokémon filtered by generation, excluding pure
+  level‑up evolutions and Mega/Gigantamax forms.
+- **Precomputation** of offensive/defensive bitmasks for fast fitness evaluation.
+- **Off‑thread execution** in TUI to keep UI responsive.
+
+### Bugs found during testing
+- Tournament selection test failed due to deterministic seed; fixed expected value.
+- TUI froze during candidate pool building; moved heavy operations to thread executor.
+- Missing `cache` import in `feat_team_builder.py` caused `NameError`; added import.
+
+### Test count
+`core_team.py`: 5 new GA tests (total ~70). `feat_team_builder.py`: 8 new tests (total 21).
+Full suite unchanged, all tests pass.
+
+---
+

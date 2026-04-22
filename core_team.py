@@ -7,9 +7,11 @@ Contains functions for:
   - Offensive analysis (hitting_types, build_team_offense, build_offense_rows, coverage_gaps)
   - Moveset synergy (weakness_types, se_types, build_offensive_coverage, formatting helpers)
   - Team builder (offensive/defensive gaps, candidate scoring, ranking)
+  - Joint team optimisation (precomputation, fitness, GA core)
 """
 
 import sys
+import random
 
 try:
     import matchup_calculator as calc
@@ -18,11 +20,10 @@ except ModuleNotFoundError as e:
     print("  Make sure all files are in the same folder.\n")
     sys.exit(1)
 
-# Import total_stats from core_stat
-from core_stat import total_stats
+from core_stat import total_stats, infer_role
 
 # ── Constants for display (used in formatting functions) ──────────────────────
-_NAME_ABBREV = 4          # characters to keep when abbreviating Pokémon names
+_NAME_ABBREV = 4
 _COL_TYPE = 10
 _COL_CNT = 2
 _COL_WNAMES = 30
@@ -30,40 +31,25 @@ _COL_RNAMES = 28
 _COL_INAMES = 20
 _GAP_WIDTH = 12
 
-# Offensive table constants
 _COL_HITTERS = 70
 _MOVE_NAME_LEN = 12
 
-# Moveset synergy constants
 _COL_MOVE = 22
 _BLOCK_SEP = 56
 
-# Team builder scoring weights
 _W_OFFENSIVE   = 10
 _W_DEFENSIVE   = 8
 _W_WEAK_PAIR   = 6
 _W_ROLE        = 4
-_W_BST         = 5   # weight for total base stat bonus
+_W_BST         = 5
 _LOOKAHEAD_END = 2
 
 
 # ── Defensive analysis ────────────────────────────────────────────────────────
 
 def build_team_defense(team_ctx: list, era_key: str) -> dict:
-    """
-    For each attacking type in the era, collect each member's multiplier.
-
-    Returns:
-      {
-        atk_type: [
-          {"form_name": str, "multiplier": float},
-          ...  (one entry per filled team slot, in slot order)
-        ]
-      }
-    """
     _, valid_types, _ = calc.CHARTS[era_key]
     result = {t: [] for t in valid_types}
-
     for pkm in team_ctx:
         if pkm is None:
             continue
@@ -78,55 +64,28 @@ def build_team_defense(team_ctx: list, era_key: str) -> dict:
 
 
 def build_unified_rows(team_defense: dict, era_key: str) -> list:
-    """
-    Build one row per attacking type with all defensive info.
-
-    Each row:
-      {
-        "type":           str,
-        "weak_members":   [(form_name, mult), ...]   mult >= 2
-        "resist_members": [(form_name, mult), ...]   0 < mult < 1
-        "immune_members": [form_name, ...]            mult == 0
-        "neutral_count":  int                         mult == 1
-      }
-
-    Sorted: weak_count desc, then cover_count (resist+immune) desc, then name asc.
-    """
     _, all_types, _ = calc.CHARTS[era_key]
     rows = []
     for t in all_types:
         members = team_defense.get(t, [])
-        weak    = [(m["form_name"], m["multiplier"])
-                   for m in members if m["multiplier"] >= 2.0]
-        resist  = [(m["form_name"], m["multiplier"])
-                   for m in members if 0.0 < m["multiplier"] < 1.0]
+        weak    = [(m["form_name"], m["multiplier"]) for m in members if m["multiplier"] >= 2.0]
+        resist  = [(m["form_name"], m["multiplier"]) for m in members if 0.0 < m["multiplier"] < 1.0]
         immune  = [m["form_name"] for m in members if m["multiplier"] == 0.0]
         neutral = sum(1 for m in members if m["multiplier"] == 1.0)
         rows.append({
-            "type":           t,
-            "weak_members":   weak,
+            "type": t,
+            "weak_members": weak,
             "resist_members": resist,
             "immune_members": immune,
-            "neutral_count":  neutral,
+            "neutral_count": neutral,
         })
-
-    rows.sort(key=lambda r: (
-        -len(r["weak_members"]),
-        -(len(r["resist_members"]) + len(r["immune_members"])),
-        r["type"]
-    ))
+    rows.sort(key=lambda r: (-len(r["weak_members"]),
+                             -(len(r["resist_members"]) + len(r["immune_members"])),
+                             r["type"]))
     return rows
 
 
 def gap_label(weak_count: int, cover_count: int) -> str:
-    """
-    Return a gap severity label, or empty string if no gap.
-
-    Rules:
-      !! CRITICAL  3+ weak, 0 cover
-      !  MAJOR     3+ weak, <=1 cover
-      .  MINOR     2 weak,  0 cover
-    """
     if weak_count >= 3 and cover_count == 0:
         return "!! CRITICAL"
     if weak_count >= 3 and cover_count <= 1:
@@ -137,20 +96,6 @@ def gap_label(weak_count: int, cover_count: int) -> str:
 
 
 def build_weakness_pairs(team_ctx: list, era_key: str) -> list:
-    """
-    For each pair of filled team slots (i < j), find types where both members
-    are weak (multiplier > 1.0). Return pairs with ≥ 2 shared weaknesses.
-
-    Each result dict:
-      {
-        "name_a":       str,
-        "name_b":       str,
-        "shared_types": list[str],   # alphabetically sorted
-        "shared_count": int,
-      }
-
-    Sorted descending by shared_count, then name_a ascending.
-    """
     slots = [(i, pkm) for i, pkm in enumerate(team_ctx) if pkm is not None]
     pairs = []
     for ai, (_, pkm_a) in enumerate(slots):
@@ -162,8 +107,8 @@ def build_weakness_pairs(team_ctx: list, era_key: str) -> list:
             shared = sorted(weak_a & weak_b)
             if len(shared) >= 2:
                 pairs.append({
-                    "name_a":       pkm_a["form_name"],
-                    "name_b":       pkm_b["form_name"],
+                    "name_a": pkm_a["form_name"],
+                    "name_b": pkm_b["form_name"],
                     "shared_types": shared,
                     "shared_count": len(shared),
                 })
@@ -172,16 +117,12 @@ def build_weakness_pairs(team_ctx: list, era_key: str) -> list:
 
 
 def gap_pair_label(shared_count: int) -> str:
-    """Return severity label for a weakness-sharing pair."""
     return "!! CRITICAL" if shared_count >= 3 else ""
 
 
 # ── Offensive analysis ────────────────────────────────────────────────────────
 
 def hitting_types(era_key: str, type1: str, type2: str, target: str) -> list:
-    """
-    Return list of first letters of the member's types that hit target SE (x2+).
-    """
     letters = []
     if calc.get_multiplier(era_key, type1, target) >= 2.0:
         letters.append(type1[0])
@@ -191,25 +132,8 @@ def hitting_types(era_key: str, type1: str, type2: str, target: str) -> list:
 
 
 def build_team_offense(team_ctx: list, era_key: str) -> dict:
-    """
-    For each defending type in the era, collect which team members can hit it SE
-    and which of their own types are responsible.
-
-    Returns:
-      {
-        def_type: [
-          {
-            "form_name":       str,
-            "hitting_letters": [str, ...],
-            "hitting_types":   [str, ...],
-          },
-          ...
-        ]
-      }
-    """
     _, valid_types, _ = calc.CHARTS[era_key]
     result = {t: [] for t in valid_types}
-
     for pkm in team_ctx:
         if pkm is None:
             continue
@@ -222,53 +146,35 @@ def build_team_offense(team_ctx: list, era_key: str) -> dict:
                     if t != "None" and calc.get_multiplier(era_key, t, target) >= 2.0
                 ]
                 result[target].append({
-                    "form_name":      pkm["form_name"],
+                    "form_name": pkm["form_name"],
                     "hitting_letters": letters,
-                    "hitting_types":  full_types,
+                    "hitting_types": full_types,
                 })
     return result
 
 
 def build_offense_rows(team_offense: dict, era_key: str) -> list:
-    """
-    Build one row per defending type, sorted: most covered first, gaps last.
-    Rows with equal SE count are sorted alphabetically by type name.
-
-    Each row:
-      {
-        "type":     str,
-        "hitters":  [{"form_name": str, "hitting_letters": [...],
-                      "hitting_types": [...], ...}, ...]
-      }
-    """
     _, valid_types, _ = calc.CHARTS[era_key]
     rows = []
     for t in valid_types:
         hitters = team_offense.get(t, [])
         rows.append({"type": t, "hitters": hitters})
-
     rows.sort(key=lambda r: (-len(r["hitters"]), r["type"]))
     return rows
 
 
 def coverage_gaps(rows: list) -> list:
-    """Return list of type names where no member can hit SE (hitters is empty)."""
     return [r["type"] for r in rows if not r["hitters"]]
 
 
 # ── Moveset synergy ───────────────────────────────────────────────────────────
 
 def weakness_types(pkm_ctx: dict, era_key: str) -> list:
-    """Return types that hit this Pokemon SE (multiplier > 1.0)."""
     defense = calc.compute_defense(era_key, pkm_ctx["type1"], pkm_ctx["type2"])
     return [t for t, m in defense.items() if m > 1.0]
 
 
 def se_types(combo: list, era_key: str) -> list:
-    """
-    Return types hit SE (>= 2x) by at least one move in the combo,
-    over all valid single-type defenders for the era.
-    """
     _, valid_types, _ = calc.CHARTS[era_key]
     move_types = [mv["type"] for mv in combo if mv.get("type")]
     if not move_types:
@@ -282,73 +188,50 @@ def se_types(combo: list, era_key: str) -> list:
 
 
 def build_offensive_coverage(member_results: list, era_key: str) -> dict:
-    """
-    Aggregate SE coverage across all member results.
-
-    Each member result is a dict with key "se_types" (list of type strings).
-    Returns:
-      {
-        "counts":      {type: int},   — how many members cover each type SE
-        "covered":     list[str],     — types covered by ≥1 member
-        "gaps":        list[str],     — types covered by 0 members
-        "overlap":     [(type, int)], — types covered by ≥3 members, desc count
-        "total_types": int,           — total type count for the era
-      }
-    """
     _, valid_types, _ = calc.CHARTS[era_key]
-
     counts = {t: 0 for t in valid_types}
     for result in member_results:
         for t in result.get("se_types", []):
             if t in counts:
                 counts[t] += 1
-
     covered = [t for t in valid_types if counts[t] >= 1]
     gaps    = [t for t in valid_types if counts[t] == 0]
     overlap = sorted(
         [(t, counts[t]) for t in valid_types if counts[t] >= 3],
         key=lambda x: (-x[1], x[0]),
     )
-
     return {
-        "counts":      counts,
-        "covered":     covered,
-        "gaps":        gaps,
-        "overlap":     overlap,
+        "counts": counts,
+        "covered": covered,
+        "gaps": gaps,
+        "overlap": overlap,
         "total_types": len(valid_types),
     }
 
 
 def empty_member_result(form_name: str) -> dict:
-    """Return a correctly-shaped empty member result dict."""
     return {
-        "form_name":      form_name,
-        "types":          [],
-        "moves":          [],
+        "form_name": form_name,
+        "types": [],
+        "moves": [],
         "weakness_types": [],
-        "se_types":       [],
+        "se_types": [],
     }
 
 
 def format_weak_line(weakness_types: list) -> str:
-    """Format the weakness summary line for one member block."""
     if not weakness_types:
         return "Weak:  —"
     return "Weak:  " + "  ".join(weakness_types)
 
 
 def format_move_pair(left: str | None, right: str | None) -> str:
-    """
-    Format two move names side by side.  None renders as "—".
-    Left column is _COL_MOVE characters wide.
-    """
     l = left  if left  is not None else "—"
     r = right if right is not None else "—"
     return f"{l:<{_COL_MOVE}}  {r}"
 
 
 def format_se_line(se_types: list, era_key: str) -> str:
-    """Format the SE coverage count line."""
     _, valid_types, _ = calc.CHARTS[era_key]
     return f"SE: {len(se_types)} / {len(valid_types)} types"
 
@@ -356,115 +239,67 @@ def format_se_line(se_types: list, era_key: str) -> str:
 # ── Team builder ──────────────────────────────────────────────────────────────
 
 def team_offensive_gaps(team_ctx: list, era_key: str) -> list:
-    """
-    Return era types that no filled team member can hit SE using their own types.
-
-    Empty team → all era types are gaps.
-    Returns sorted list.
-    """
     _, valid_types, _ = calc.CHARTS[era_key]
     slots = [(i, pkm) for i, pkm in enumerate(team_ctx) if pkm is not None]
-
     if not slots:
         return sorted(valid_types)
-
     covered = set()
     for _, pkm in slots:
-        for atk_type in [pkm["type1"]] + (
-                [pkm["type2"]] if pkm["type2"] != "None" else []):
+        for atk_type in [pkm["type1"]] + ([pkm["type2"]] if pkm["type2"] != "None" else []):
             for def_type in valid_types:
                 if calc.get_multiplier(era_key, atk_type, def_type) >= 2.0:
                     covered.add(def_type)
-
     return sorted(t for t in valid_types if t not in covered)
 
 
 def team_defensive_gaps(team_ctx: list, era_key: str) -> list:
-    """
-    Return types that are CRITICAL defensive gaps for the team.
-
-    A type is critical when:
-      - ≥2 team members are weak to it (multiplier > 1.0), AND
-      - 0 team members resist or are immune to it (multiplier < 1.0)
-
-    Single-member teams can never have a critical gap (threshold is 2).
-    Returns sorted list.
-    """
     _, valid_types, _ = calc.CHARTS[era_key]
     slots = [(i, pkm) for i, pkm in enumerate(team_ctx) if pkm is not None]
     gaps = []
-
     for atk_type in valid_types:
-        weak_count   = 0
-        cover_count  = 0
+        weak_count = cover_count = 0
         for _, pkm in slots:
             defense = calc.compute_defense(era_key, pkm["type1"], pkm["type2"])
             m = defense.get(atk_type, 1.0)
             if m > 1.0:
-                weak_count  += 1
+                weak_count += 1
             elif m < 1.0:
                 cover_count += 1
         if weak_count >= 2 and cover_count == 0:
             gaps.append(atk_type)
-
     return sorted(gaps)
 
 
 def candidate_passes_filter(candidate_types: list, off_gaps: list,
-                             def_gaps: list, era_key: str) -> bool:
-    """
-    Return True if the candidate is relevant to the team's gaps.
-
-    Passes if at least one candidate type:
-      - hits ≥1 offensive gap type SE (get_multiplier ≥ 2.0), OR
-      - resists or is immune to ≥1 critical defensive gap (get_multiplier ≤ 0.5)
-    """
+                            def_gaps: list, era_key: str) -> bool:
     if not off_gaps and not def_gaps:
         return True
-
     for ctype in candidate_types:
         for gap in off_gaps:
             if calc.get_multiplier(era_key, ctype, gap) >= 2.0:
                 return True
         for gap in def_gaps:
-            # gap_type attacking candidate_type: ≤0.5 means candidate resists/immune
             if calc.get_multiplier(era_key, gap, ctype) <= 0.5:
                 return True
     return False
 
 
 def patchability_score(remaining_off_gaps: list, era_key: str) -> float:
-    """
-    Measure how easy the remaining offensive gaps are to fill.
-
-    For each remaining gap type G: count era types T that hit G SE.
-    Return the sum across all gaps. Higher = easier to patch.
-    """
     if not remaining_off_gaps:
         return 0.0
-
     _, valid_types, _ = calc.CHARTS[era_key]
     total = 0.0
     for gap in remaining_off_gaps:
-        count = sum(
-            1 for t in valid_types
-            if calc.get_multiplier(era_key, t, gap) >= 2.0
-        )
+        count = sum(1 for t in valid_types if calc.get_multiplier(era_key, t, gap) >= 2.0)
         total += count
     return total
 
 
-def shared_weakness_count(candidate_types: list, team_ctx: list,
-                           era_key: str) -> int:
-    """
-    Count existing team members that would share ≥2 weakness types with
-    the candidate if added.
-    """
+def shared_weakness_count(candidate_types: list, team_ctx: list, era_key: str) -> int:
     ctype1 = candidate_types[0]
     ctype2 = candidate_types[1] if len(candidate_types) > 1 else "None"
     cand_defense = calc.compute_defense(era_key, ctype1, ctype2)
     cand_weak = {t for t, m in cand_defense.items() if m > 1.0}
-
     count = 0
     for pkm in team_ctx:
         if pkm is None:
@@ -476,17 +311,11 @@ def shared_weakness_count(candidate_types: list, team_ctx: list,
     return count
 
 
-def new_weak_pairs(candidate_types: list, team_ctx: list,
-                    era_key: str) -> list:
-    """
-    Return human-readable strings describing new shared-weakness pairs.
-    e.g. ["Charizard + Candidate share: Ice  Electric"]
-    """
+def new_weak_pairs(candidate_types: list, team_ctx: list, era_key: str) -> list:
     ctype1 = candidate_types[0]
     ctype2 = candidate_types[1] if len(candidate_types) > 1 else "None"
     cand_defense = calc.compute_defense(era_key, ctype1, ctype2)
     cand_weak = {t for t, m in cand_defense.items() if m > 1.0}
-
     pairs = []
     for pkm in team_ctx:
         if pkm is None:
@@ -500,46 +329,16 @@ def new_weak_pairs(candidate_types: list, team_ctx: list,
 
 
 def score_candidate(candidate_types: list, team_ctx: list, era_key: str,
-                    off_gaps: list, def_gaps: list,
-                    slots_remaining: int,
+                    off_gaps: list, def_gaps: list, slots_remaining: int,
                     base_stats: dict = None) -> float:
-    """
-    Compute the composite score for a candidate Pokémon.
-
-    candidate_types — list of 1–2 type strings
-    team_ctx        — current team (used for shared-weakness + role checks)
-    era_key         — "era1" | "era2" | "era3"
-    off_gaps        — team's current offensive gap types
-    def_gaps        — team's current critical defensive gap types
-    slots_remaining — empty slots left after adding this candidate
-    base_stats      — dict from pokemon cache, or None for type-only scoring
-
-    Returns float. Higher is better.
-    """
-    # Offensive contribution
-    off_covered = [
-        g for g in off_gaps
-        if any(calc.get_multiplier(era_key, ct, g) >= 2.0
-               for ct in candidate_types)
-    ]
+    off_covered = [g for g in off_gaps if any(calc.get_multiplier(era_key, ct, g) >= 2.0 for ct in candidate_types)]
     offensive_contribution = len(off_covered)
-
-    # Defensive contribution
-    def_covered = [
-        g for g in def_gaps
-        if any(calc.get_multiplier(era_key, g, ct) <= 0.5
-               for ct in candidate_types)
-    ]
+    def_covered = [g for g in def_gaps if any(calc.get_multiplier(era_key, g, ct) <= 0.5 for ct in candidate_types)]
     defensive_contribution = len(def_covered)
-
-    # Shared weakness penalty
     shared_penalty = shared_weakness_count(candidate_types, team_ctx, era_key)
-
-    # Role diversity bonus
     role_bonus = 0
     if base_stats and isinstance(base_stats, dict):
         try:
-            from core_stat import infer_role
             candidate_role = infer_role(base_stats)
             team_roles = set()
             for pkm in team_ctx:
@@ -550,104 +349,234 @@ def score_candidate(candidate_types: list, team_ctx: list, era_key: str,
                     team_roles.add(infer_role(bs))
             if candidate_role not in team_roles:
                 role_bonus = 1
-        except (ImportError, Exception):
+        except Exception:
             pass
-
-    # Intrinsic score
-    intrinsic = (
-        offensive_contribution  * _W_OFFENSIVE
-        + defensive_contribution  * _W_DEFENSIVE
-        - shared_penalty          * _W_WEAK_PAIR
-        + role_bonus              * _W_ROLE
-    )
-
-    # BST bonus (normalized to 0–1 scale, multiplied by weight)
+    intrinsic = (offensive_contribution * _W_OFFENSIVE +
+                 defensive_contribution * _W_DEFENSIVE -
+                 shared_penalty * _W_WEAK_PAIR +
+                 role_bonus * _W_ROLE)
     bst_bonus = 0
     if base_stats and isinstance(base_stats, dict):
-        total = total_stats(base_stats)  # sum of all 6 stats
-        # Normalize to 0–1 (max ~720)
+        total = total_stats(base_stats)
         bst_bonus = (total / 720) * _W_BST
     total_intrinsic = intrinsic + bst_bonus
-
-    # Lookahead score
     remaining_off_gaps = [g for g in off_gaps if g not in off_covered]
     patch = patchability_score(remaining_off_gaps, era_key)
-
     weight = _LOOKAHEAD_END if slots_remaining <= 2 else 1
     lookahead = patch / max(slots_remaining, 1) * weight
-
     return total_intrinsic + lookahead
 
 
 def rank_candidates(candidates: list, team_ctx: list, era_key: str,
-                    off_gaps: list, def_gaps: list,
-                    slots_remaining: int,
+                    off_gaps: list, def_gaps: list, slots_remaining: int,
                     top_n: int = 6) -> list:
-    """
-    Score all candidates and return the top_n sorted by score descending.
-
-    Each candidate dict in:
-      { slug, form_name, types, base_stats (or None) }
-
-    Each result dict out:
-      {
-        slug, form_name, types, score,
-        off_covered, def_covered,
-        new_weak_pairs,
-        remaining_off_gaps,
-        role, speed_tier
-      }
-    """
     if not candidates:
         return []
-
     scored = []
     for c in candidates:
         ctypes = c["types"]
         base_stats = c.get("base_stats")
-
-        s = score_candidate(ctypes, team_ctx, era_key,
-                            off_gaps, def_gaps,
-                            slots_remaining, base_stats)
-
-        off_covered = [
-            g for g in off_gaps
-            if any(calc.get_multiplier(era_key, ct, g) >= 2.0
-                   for ct in ctypes)
-        ]
-        def_covered = [
-            g for g in def_gaps
-            if any(calc.get_multiplier(era_key, g, ct) <= 0.5
-                   for ct in ctypes)
-        ]
+        s = score_candidate(ctypes, team_ctx, era_key, off_gaps, def_gaps, slots_remaining, base_stats)
+        off_covered = [g for g in off_gaps if any(calc.get_multiplier(era_key, ct, g) >= 2.0 for ct in ctypes)]
+        def_covered = [g for g in def_gaps if any(calc.get_multiplier(era_key, g, ct) <= 0.5 for ct in ctypes)]
         remaining = [g for g in off_gaps if g not in off_covered]
         pairs = new_weak_pairs(ctypes, team_ctx, era_key)
-
-        role = None
-        speed_tier = None
+        role = speed_tier = None
         if base_stats and isinstance(base_stats, dict):
             try:
-                from core_stat import infer_role, infer_speed_tier
+                from core_stat import infer_speed_tier
                 role = infer_role(base_stats)
                 speed_tier = infer_speed_tier(base_stats)
-            except (ImportError, Exception):
+            except Exception:
                 pass
-
         scored.append({
-            "slug":               c["slug"],
-            "form_name":          c["form_name"],
-            "types":              ctypes,
-            "score":              s,
-            "off_covered":        off_covered,
-            "def_covered":        def_covered,
-            "new_weak_pairs":     pairs,
+            "slug": c["slug"],
+            "form_name": c["form_name"],
+            "types": ctypes,
+            "score": s,
+            "off_covered": off_covered,
+            "def_covered": def_covered,
+            "new_weak_pairs": pairs,
             "remaining_off_gaps": remaining,
-            "role":               role,
-            "speed_tier":         speed_tier,
+            "role": role,
+            "speed_tier": speed_tier,
         })
-
     scored.sort(key=lambda r: r["score"], reverse=True)
     return scored[:top_n]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Joint team optimisation — Genetic Algorithm helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+def precompute_pokemon_data(pkm_ctx_list: list, era_key: str) -> dict:
+    _, valid_types, _ = calc.CHARTS[era_key]
+    _TYPE_TO_BIT = {t: 1 << i for i, t in enumerate(valid_types)}
+    result = {}
+    for pkm in pkm_ctx_list:
+        slug = pkm["pokemon"]
+        types = pkm.get("types", [])
+        if not types:
+            t1 = pkm.get("type1")
+            t2 = pkm.get("type2")
+            types = [t1] if t2 == "None" else [t1, t2]
+        off_mask = 0
+        for t in types:
+            for def_type in valid_types:
+                if calc.get_multiplier(era_key, t, def_type) >= 2.0:
+                    off_mask |= _TYPE_TO_BIT[def_type]
+        def_mask = 0
+        defense_multipliers = {}
+        for atk_type in valid_types:
+            mult = calc.get_multiplier(era_key, atk_type, types[0])
+            if len(types) > 1:
+                mult *= calc.get_multiplier(era_key, atk_type, types[1])
+            defense_multipliers[atk_type] = mult
+            if mult > 1.0:
+                def_mask |= _TYPE_TO_BIT[atk_type]
+        base_stats = pkm.get("base_stats", {})
+        role = infer_role(base_stats)
+        total = total_stats(base_stats)
+        result[slug] = {
+            "types": types,
+            "offensive_bitmask": off_mask,
+            "defensive_bitmask": def_mask,
+            "defense_multipliers": defense_multipliers,
+            "base_stats": base_stats,
+            "total_stats": total,
+            "role": role,
+            "form_name": pkm.get("form_name", slug.replace("-", " ").title()),
+            "slug": slug,
+        }
+    return result
+
+
+def team_fitness(team_slugs: frozenset, precomputed: dict, era_key: str,
+                 locked_slugs: frozenset | None = None) -> float:
+    members = [precomputed[s] for s in team_slugs if s in precomputed]
+    if len(members) != 6:
+        return 0.0
+    _, valid_types, _ = calc.CHARTS[era_key]
+    combined_off_mask = 0
+    for m in members:
+        combined_off_mask |= m["offensive_bitmask"]
+    covered_types = bin(combined_off_mask).count("1")
+    offensive_score = (covered_types / len(valid_types)) * 40
+    weak_counts = [0] * len(valid_types)
+    resist_counts = [0] * len(valid_types)
+    immune_counts = [0] * len(valid_types)
+    for m in members:
+        mults = m["defense_multipliers"]
+        for i, atk_type in enumerate(valid_types):
+            mult = mults[atk_type]
+            if mult >= 2.0:
+                weak_counts[i] += 1
+            elif 0.0 < mult < 1.0:
+                resist_counts[i] += 1
+            elif mult == 0.0:
+                immune_counts[i] += 1
+    critical_gaps = sum(1 for i in range(len(valid_types))
+                        if weak_counts[i] >= 3 and (resist_counts[i] + immune_counts[i]) <= 1)
+    defensive_score = ((len(valid_types) - critical_gaps) / len(valid_types)) * 30
+    roles = [m["role"] for m in members]
+    distinct_roles = len(set(roles))
+    role_score = (distinct_roles / 3) * 15
+    individual_sum = sum(min(m["total_stats"] / 720, 1.0) * 100 for m in members)
+    individual_score = (individual_sum / 600) * 15
+    pair_penalty = 0
+    members_list = list(members)
+    for i in range(5):
+        for j in range(i + 1, 6):
+            overlap = members_list[i]["defensive_bitmask"] & members_list[j]["defensive_bitmask"]
+            if bin(overlap).count("1") >= 2:
+                pair_penalty += 5
+    pair_penalty = min(pair_penalty, 15)
+    total = offensive_score + defensive_score + role_score + individual_score - pair_penalty
+    return max(0.0, total)
+
+
+# ── GA Core Functions ─────────────────────────────────────────────────────────
+
+def create_individual(pool_slugs: list, locked_slugs: frozenset, rng: random.Random) -> frozenset:
+    available = [s for s in pool_slugs if s not in locked_slugs]
+    needed = 6 - len(locked_slugs)
+    chosen = set(rng.sample(available, needed))
+    return frozenset(locked_slugs.union(chosen))
+
+
+def crossover(parent1: frozenset, parent2: frozenset, locked_slugs: frozenset,
+              pool_slugs: list, rng: random.Random) -> frozenset:
+    union = parent1.union(parent2)
+    candidates = [s for s in union if s not in locked_slugs]
+    needed = 6 - len(locked_slugs)
+    if len(candidates) >= needed:
+        chosen = set(rng.sample(candidates, needed))
+    else:
+        extra_pool = [s for s in pool_slugs if s not in locked_slugs and s not in parent1 and s not in parent2]
+        chosen = set(candidates) | set(rng.sample(extra_pool, needed - len(candidates)))
+    return frozenset(locked_slugs.union(chosen))
+
+
+def mutate(individual: frozenset, locked_slugs: frozenset, pool_slugs: list,
+           rng: random.Random, mutation_rate: float = 0.05) -> frozenset:
+    if rng.random() > mutation_rate:
+        return individual
+    non_locked = [s for s in individual if s not in locked_slugs]
+    if not non_locked:
+        return individual
+    to_replace = rng.choice(non_locked)
+    available = [s for s in pool_slugs if s not in individual and s not in locked_slugs]
+    if not available:
+        return individual
+    replacement = rng.choice(available)
+    new_set = set(individual)
+    new_set.remove(to_replace)
+    new_set.add(replacement)
+    return frozenset(new_set)
+
+
+def tournament_selection(population: list, fitnesses: list, k: int, rng: random.Random):
+    participants = rng.sample(list(zip(population, fitnesses)), k)
+    best = max(participants, key=lambda x: x[1])
+    return best[0]
+
+
+def run_ga(pool_slugs: list, locked_slugs: frozenset, precomputed: dict, era_key: str,
+           population_size: int = 200, generations: int = 200, mutation_rate: float = 0.05,
+           elitism_ratio: float = 0.1, random_seed=None, progress_callback=None) -> tuple:
+    rng = random.Random(random_seed)
+    population = [create_individual(pool_slugs, locked_slugs, rng) for _ in range(population_size)]
+    best_individual = None
+    best_fitness = -1.0
+    no_improve_count = 0
+    current_mutation_rate = mutation_rate
+    for gen in range(generations):
+        fitnesses = [team_fitness(ind, precomputed, era_key, locked_slugs) for ind in population]
+        gen_best_ind, gen_best_fit = max(zip(population, fitnesses), key=lambda x: x[1])
+        if gen_best_fit > best_fitness:
+            best_fitness = gen_best_fit
+            best_individual = gen_best_ind
+            no_improve_count = 0
+            current_mutation_rate = max(0.02, current_mutation_rate - 0.01)
+        else:
+            no_improve_count += 1
+            if no_improve_count >= 5:
+                current_mutation_rate = min(0.3, current_mutation_rate + 0.02)
+        if no_improve_count >= 20:
+            break
+        elite_count = int(population_size * elitism_ratio)
+        sorted_pop = sorted(zip(population, fitnesses), key=lambda x: -x[1])
+        new_population = [ind for ind, _ in sorted_pop[:elite_count]]
+        while len(new_population) < population_size:
+            p1 = tournament_selection(population, fitnesses, 3, rng)
+            p2 = tournament_selection(population, fitnesses, 3, rng)
+            child = crossover(p1, p2, locked_slugs, pool_slugs, rng)
+            child = mutate(child, locked_slugs, pool_slugs, rng, current_mutation_rate)
+            new_population.append(child)
+        population = new_population
+        if progress_callback:
+            progress_callback(gen + 1, generations, best_fitness)
+    return best_individual, best_fitness
 
 
 # ── Self‑tests ────────────────────────────────────────────────────────────────
@@ -667,22 +596,19 @@ def _run_tests():
 
     print("\n  core_team.py — self-test\n")
 
-    # ── Fixtures ──────────────────────────────────────────────────────────────
+    # Fixtures
     def _pkm(name, t1, t2="None"):
         return {"form_name": name, "type1": t1, "type2": t2}
 
     charizard = _pkm("Charizard", "Fire", "Flying")
     blastoise = _pkm("Blastoise", "Water")
-    venusaur = _pkm("Venusaur", "Grass", "Poison")
-    lapras = _pkm("Lapras", "Water", "Ice")
-    snorlax = _pkm("Snorlax", "Normal")
-
     team1 = [charizard, None, None, None, None, None]
     team2 = [charizard, blastoise, None, None, None, None]
-    team_cc = [charizard, charizard, None, None, None, None]   # two Charizard
-    team3 = [charizard, blastoise, venusaur, None, None, None]
+    team_cc = [charizard, charizard, None, None, None, None]
 
     ERA = "era3"
+    _, valid_types, _ = calc.CHARTS[ERA]
+    type_to_bit = {t: 1 << i for i, t in enumerate(valid_types)}
 
     # ── build_team_defense ───────────────────────────────────────────────────
     td = build_team_defense(team1, ERA)
@@ -860,6 +786,219 @@ def _run_tests():
     else:
         fail("rank_candidates", str(ranked))
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # Tests for precompute_pokemon_data and team_fitness
+    # ──────────────────────────────────────────────────────────────────────────
+    print("\n  --- precompute_pokemon_data tests ---")
+    # Create minimal mock Pokémon contexts
+    mock_pkm_list = [
+        {
+            "pokemon": "charizard",
+            "form_name": "Charizard",
+            "types": ["Fire", "Flying"],
+            "type1": "Fire",
+            "type2": "Flying",
+            "base_stats": {"hp": 78, "attack": 84, "defense": 78,
+                           "special-attack": 109, "special-defense": 85, "speed": 100},
+        },
+        {
+            "pokemon": "blastoise",
+            "form_name": "Blastoise",
+            "types": ["Water"],
+            "type1": "Water",
+            "type2": "None",
+            "base_stats": {"hp": 79, "attack": 83, "defense": 100,
+                           "special-attack": 85, "special-defense": 105, "speed": 78},
+        },
+        {
+            "pokemon": "gengar",
+            "form_name": "Gengar",
+            "types": ["Ghost", "Poison"],
+            "type1": "Ghost",
+            "type2": "Poison",
+            "base_stats": {"hp": 60, "attack": 65, "defense": 60,
+                           "special-attack": 130, "special-defense": 75, "speed": 110},
+        },
+    ]
+
+    precomp = precompute_pokemon_data(mock_pkm_list, "era3")
+
+    # Check keys exist
+    if set(precomp.keys()) == {"charizard", "blastoise", "gengar"}:
+        ok("precompute_pokemon_data: all three slugs present")
+    else:
+        fail("precompute_pokemon_data keys", str(precomp.keys()))
+
+    # Check Charizard
+    cz = precomp["charizard"]
+    if cz["form_name"] == "Charizard" and cz["role"] == "special" and cz["total_stats"] == 534:
+        ok("precompute_pokemon_data: Charizard basic fields")
+    else:
+        fail("precompute_pokemon_data Charizard fields", f"role={cz['role']}, total={cz['total_stats']}")
+
+    # Offensive bitmask check: Fire hits Grass, Ice, Bug, Steel SE (at least)
+    if cz["offensive_bitmask"] != 0:
+        ok("precompute_pokemon_data: Charizard offensive bitmask non-zero")
+    else:
+        fail("precompute_pokemon_data Charizard off_mask zero")
+
+    # Defensive bitmask: Charizard weak to Rock, Water, Electric (among others)
+    if cz["defensive_bitmask"] != 0:
+        ok("precompute_pokemon_data: Charizard defensive bitmask non-zero")
+    else:
+        fail("precompute_pokemon_data Charizard def_mask zero")
+
+    # Defense multipliers: should have all 18 types
+    if len(cz["defense_multipliers"]) == 18:
+        ok("precompute_pokemon_data: defense_multipliers has 18 entries")
+    else:
+        fail("precompute_pokemon_data defense_multipliers length", str(len(cz["defense_multipliers"])))
+
+    # Check one known multiplier: Rock vs Charizard = 4.0
+    if cz["defense_multipliers"].get("Rock") == 4.0:
+        ok("precompute_pokemon_data: Charizard Rock multiplier 4.0")
+    else:
+        fail("precompute_pokemon_data Rock multiplier", str(cz["defense_multipliers"].get("Rock")))
+
+    # Blastoise (single type)
+    bl = precomp["blastoise"]
+    # Blastoise has Atk 83, SpA 85 → mixed attacker
+    if bl["role"] == "mixed" and bl["defense_multipliers"].get("Electric") == 2.0:
+        ok("precompute_pokemon_data: Blastoise basic")
+    else:
+        fail("precompute_pokemon_data Blastoise", f"role={bl['role']}, Elec={bl['defense_multipliers'].get('Electric')}")
+
+    # Gengar (Ghost/Poison)
+    ga = precomp["gengar"]
+    if ga["defense_multipliers"].get("Normal") == 0.0:
+        ok("precompute_pokemon_data: Gengar Normal immunity")
+    else:
+        fail("precompute_pokemon_data Gengar Normal", str(ga["defense_multipliers"].get("Normal")))
+
+    print("\n  --- team_fitness tests ---")
+    # Create a 6-member team from our mock Pokémon (duplicates allowed for testing)
+    team_slugs = frozenset(["charizard", "blastoise", "gengar", "charizard", "blastoise", "gengar"])
+    fitness = team_fitness(team_slugs, precomp, "era3")
+    if 0 <= fitness <= 100:
+        ok("team_fitness: returns value in range 0-100")
+    else:
+        fail("team_fitness range", f"got {fitness}")
+
+    # Test with incomplete team (<6)
+    incomplete = frozenset(["charizard", "blastoise"])
+    fit_incomplete = team_fitness(incomplete, precomp, "era3")
+    if fit_incomplete == 0.0:
+        ok("team_fitness: incomplete team returns 0")
+    else:
+        fail("team_fitness incomplete", f"got {fit_incomplete}")
+
+    # Test with perfect offensive coverage (create a team covering all types)
+    # We'll manually craft a precomputed dict where all Pokémon have full off_mask
+    all_types_mask = (1 << len(valid_types)) - 1
+    perfect_precomp = {}
+    for i in range(6):
+        slug = f"perfect{i}"
+        perfect_precomp[slug] = {
+            "offensive_bitmask": all_types_mask,
+            "defensive_bitmask": 0,
+            "defense_multipliers": {t: 1.0 for t in valid_types},
+            "role": "special",
+            "total_stats": 720,
+        }
+    perfect_team = frozenset(perfect_precomp.keys())
+    fit_perfect = team_fitness(perfect_team, perfect_precomp, "era3")
+    # Offensive: 40, Defensive: 30 (no weaknesses), Role: 5 (one role), Individual: 15, Penalty: 0
+    # Role: distinct_roles=1 -> (1/3)*15 = 5
+    # Individual: each total=720 -> indiv=100, sum=600 -> (600/600)*15 = 15
+    expected_perfect = 40 + 30 + 5 + 15 - 0
+    if abs(fit_perfect - expected_perfect) < 0.01:
+        ok("team_fitness: perfect team scores 90.0")
+    else:
+        fail("team_fitness perfect team", f"expected {expected_perfect}, got {fit_perfect}")
+
+    # Test defensive critical gaps (using Fire, which definitely exists)
+    fire_bit = type_to_bit["Fire"]
+    weak_precomp = {}
+    for i in range(6):
+        slug = f"weak{i}"
+        weak_precomp[slug] = {
+            "offensive_bitmask": 0,
+            "defensive_bitmask": fire_bit,
+            "defense_multipliers": {t: (2.0 if t == "Fire" else 1.0) for t in valid_types},
+            "role": "physical",
+            "total_stats": 500,
+        }
+    weak_team = frozenset(weak_precomp.keys())
+    fit_weak = team_fitness(weak_team, weak_precomp, "era3")
+    expected_defensive = ((len(valid_types) - 1) / len(valid_types)) * 30
+    expected = expected_defensive + 5 + 10.416  # role=5, indiv=10.416
+    if abs(fit_weak - expected) < 0.1:
+        ok("team_fitness: defensive critical gap reduces score")
+    else:
+        fail("team_fitness defensive gap", f"expected ~{expected}, got {fit_weak}")
+
+    # Test weakness overlap penalty (using Fire and Water)
+    fire_bit = type_to_bit["Fire"]
+    water_bit = type_to_bit["Water"]
+    mask = fire_bit | water_bit
+    overlap_precomp = {}
+    for i in range(6):
+        slug = f"overlap{i}"
+        overlap_precomp[slug] = {
+            "offensive_bitmask": 0,
+            "defensive_bitmask": mask,
+            "defense_multipliers": {t: (2.0 if t in ("Fire", "Water") else 1.0) for t in valid_types},
+            "role": "mixed",
+            "total_stats": 500,
+        }
+    overlap_team = frozenset(overlap_precomp.keys())
+    fit_overlap = team_fitness(overlap_team, overlap_precomp, "era3")
+    # 2 critical gaps (Fire and Water) -> defensive = ((18-2)/18)*30 ≈ 26.666
+    expected_overlap = 26.666 + 5 + 10.416 - 15  # penalty 15
+    if abs(fit_overlap - expected_overlap) < 0.1:
+        ok("team_fitness: weakness overlap penalty applied")
+    else:
+        fail("team_fitness overlap penalty", f"expected ~{expected_overlap}, got {fit_overlap}")
+
+    print("\n  --- GA core functions tests ---")
+    try:
+        rng = random.Random(42)
+        pool_slugs = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]
+        locked = frozenset()
+        precomputed_ga = {
+            s: {
+                "defense_multipliers": {t: 1.0 for t in valid_types},
+                "offensive_bitmask": 0,
+                "defensive_bitmask": 0,
+                "total_stats": 500,
+                "role": "physical",
+                "base_stats": {},
+            }
+            for s in pool_slugs
+        }
+        ind = create_individual(pool_slugs, locked, rng)
+        ok("create_individual: returns 6-element frozenset") if len(ind) == 6 else fail("create_individual", str(ind))
+        parent1 = frozenset(["a", "b", "c", "d", "e", "f"])
+        parent2 = frozenset(["a", "g", "h", "i", "j", "b"])
+        child = crossover(parent1, parent2, locked, pool_slugs, rng)
+        ok("crossover: returns 6-element frozenset") if len(child) == 6 else fail("crossover", str(child))
+        mutated = mutate(parent1, locked, pool_slugs, rng)
+        ok("mutate: returns 6-element frozenset") if len(mutated) == 6 else fail("mutate", str(mutated))
+        pop = [frozenset(["a"]), frozenset(["b"]), frozenset(["c"])]
+        fits = [0.5, 0.9, 0.2]
+        selected = tournament_selection(pop, fits, 2, rng)
+        # With seed 42, sample is ["a", "c"] → best is "a"
+        if selected == frozenset(["a"]):
+            ok("tournament_selection: picks best from sample (seed 42)")
+        else:
+            fail("tournament_selection", f"expected frozenset(['a']), got {selected}")
+        best, fit = run_ga(pool_slugs, locked, precomputed_ga, ERA, population_size=10, generations=5, random_seed=42)
+        ok("run_ga: completes") if len(best) == 6 and 0 <= fit <= 100 else fail("run_ga", f"best={best}, fit={fit}")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        fail("GA core functions tests", f"unhandled exception: {e}")
+
     print()
     if errors:
         print(f"  FAILED ({len(errors)}): {errors}")
@@ -870,6 +1009,11 @@ def _run_tests():
 
 if __name__ == "__main__":
     if "--autotest" in sys.argv:
-        _run_tests()
+        try:
+            _run_tests()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
     else:
         print("This module is a library; run with --autotest to test.")

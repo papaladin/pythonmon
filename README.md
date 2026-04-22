@@ -73,6 +73,7 @@ If you prefer the classic CLI, run it with `--cli` (e.g., `./pokemain --cli`).
   S   Team moveset synergy (needs team + game)
   H   Team builder         (needs team + game)
   X   Team vs opponent     (needs team + game)
+  J   Joint team optimisation (full 6‑member search)  (needs game)
   ─────────────────────────────────────────────
   Y   Pre-load move table
   W   Pre-load TM/HM table
@@ -429,6 +430,28 @@ When multiple stages of a pure level‑up evolution chain (e.g., Dratini → Dra
   before the pool is built; a per-type progress indicator is shown.
 - Base stats are used for role diversity and BST scoring when the Pokémon is already in the
   local cache; type-only scoring is used for uncached entries.
+
+---
+
+### J — Joint team optimisation
+
+**Needs:** game (team optional)
+
+Uses a genetic algorithm to suggest a full 6‑Pokémon team optimised for type synergy.
+The algorithm evolves a population of teams over 200 generations, scoring them on
+offensive coverage, defensive robustness, role diversity, and individual stats.
+
+- **Locked members** – Pokémon already in your team (if any) are automatically locked.
+  You can also enter additional Pokémon to lock via a comma‑separated list.
+- **Progress feedback** – A progress bar shows the GA generations and current best fitness.
+- **Output** – The best team found, with fitness score, type coverage summary, and
+  any remaining coverage gaps.
+
+**Assumptions / limitations:**
+- Uses only type‑based scoring; move data and abilities are not considered.
+- Candidate pool includes all Pokémon in the game (filtered by generation, excluding
+  pure level‑up evolutions and Mega/Gigantamax forms).
+- Fitness weights are fixed (offensive 40%, defensive 30%, role 15%, individual 15%).
 
 ---
 

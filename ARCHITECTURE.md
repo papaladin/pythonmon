@@ -344,7 +344,7 @@ Modules are grouped by layer. All live in a single flat folder.
 | `feat_team_moveset.py` | `run(team_ctx, game_ctx, pool_cache, ui)` | Team moveset synergy (key S). |
 | `feat_egg_group.py` | `run(pkm_ctx, ui)` | Egg group browser (key E). |
 | `feat_learnset_compare.py` | `run(pkm_ctx, game_ctx, ui)` | Compare learnsets and stats of two Pokémon (key L). |
-| `feat_team_builder.py` | `run(team_ctx, game_ctx, ui)` | Team builder — suggests next slot (key H). |
+| `feat_team_builder.py` | `run(team_ctx, game_ctx, ui)` – slot suggestion (H); `run_joint_team(team_ctx, game_ctx, ui)` – full team GA (J) | Team builder — suggests next slot or full 6‑member team via genetic algorithm. |
 | `feat_opponent.py` | `run(team_ctx, game_ctx, ui)` | Team vs in‑game opponent (key X). |
 
 All feature modules receive a `ui` parameter and use it for all I/O.  
@@ -358,7 +358,7 @@ They import core modules for pure logic and use `pkm_cache` for data access.
 | `core_egg.py` | `egg_group_name()`, `format_egg_groups()` | Egg group display formatting. |
 | `core_evolution.py` | `parse_trigger()`, `flatten_chain()`, `filter_paths_for_game()`, `trigger_is_pure_level_up()`, `is_pure_level_up_chain()` | Evolution chain parsing and filtering. |
 | `core_move.py` | `score_move()`, `rank_status_moves()`, `select_combo()`, `combo_score()`, `score_learnset()`, plus static tables (`TWO_TURN_MOVES`, `STATUS_MOVE_TIERS`, …) | Move scoring and combo selection. |
-| `core_team.py` | `build_team_defense()`, `build_unified_rows()`, `gap_label()`, `build_weakness_pairs()`, `team_offensive_gaps()`, `team_defensive_gaps()`, `score_candidate()`, `rank_candidates()`, … | Team analysis and builder logic. |
+| `core_team.py` | `build_team_defense()`, `build_unified_rows()`, `gap_label()`, `build_weakness_pairs()`, `team_offensive_gaps()`, `team_defensive_gaps()`, `score_candidate()`, `rank_candidates()`, `precompute_pokemon_data()`, `team_fitness()`, `create_individual()`, `crossover()`, `mutate()`, `tournament_selection()`, `run_ga()` | Team analysis, builder logic, and genetic algorithm for joint optimisation. |
 | `core_opponent.py` | `analyze_matchup()`, `uncovered_threats()`, `recommended_leads()` | Opponent analysis (trainer battles). |
 
 These modules contain no print statements, no input calls, and no network/cache I/O.  

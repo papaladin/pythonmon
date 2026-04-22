@@ -22,6 +22,9 @@ import pkm_cache as cache
 import pkm_pokeapi
 import matchup_calculator as calc
 
+# Compiled regex for progress bar pattern (e.g., "12/34")
+_PROGRESS_PATTERN = re.compile(r'(\d+)/(\d+)')
+
 # Feature registry
 PKM_FEATURES = [
     ("Quick view  (stats / abilities / types)", "feat_quick_view", "run", True, True, True),
@@ -524,7 +527,7 @@ class TUI(UI):
 
     async def print_progress(self, text: str, end: str = "\n", flush: bool = False):
         """Update the progress bar based on text containing 'X/Y' pattern."""
-        match = re.search(r'(\d+)/(\d+)', text)
+        match = _PROGRESS_PATTERN.search(text)
         if match:
             current = int(match.group(1))
             total = int(match.group(2))
@@ -665,6 +668,14 @@ class TUI(UI):
                 self.team_ctx = await team_loader_run(self, self.game_ctx, self.team_ctx)
                 self.app.refresh_left_pane()
             return
+
+        elif key == "j":
+            if self.game_ctx is None:
+                await self.show_error("Select a game first (press G).")
+            else:
+                from feat_team_builder import run_joint_team
+                await run_joint_team(self.team_ctx, self.game_ctx, ui=self)
+
 
         # ---- Move lookup ----
         elif key == "m":

@@ -561,8 +561,9 @@ def fetch_all_moves(dry_run: bool = False, progress_cb=None) -> dict:
 
             results[display_name] = _build_versioned_entries(current, intro_gen,
                                                               past_vals)
-        except (ValueError, ConnectionError):
-            pass   # skip moves that 404 or fail (rare alternate-form moves)
+        except (ValueError, ConnectionError) as e:
+            print(f"  Warning: failed to fetch move {slug} – {e}")
+            continue
 
     if not dry_run:
         # Only print final count if not in dry_run
@@ -630,8 +631,9 @@ def fetch_missing_moves(progress_cb=None) -> dict:
             intro_gen = _gen_name_to_int(move_data["generation"]["name"])
             past_vals = move_data.get("past_values", [])
             results[display_name] = _build_versioned_entries(current, intro_gen, past_vals)
-        except (ValueError, ConnectionError):
-            pass
+        except (ValueError, ConnectionError) as e:
+            print(f"  Warning: failed to fetch move {slug} – {e}")
+            continue
 
     return results
 
@@ -678,7 +680,10 @@ def _fetch_machines(version_group_slugs: list) -> dict:
                 label = item_name.upper()
             move_url = m.get("move", {}).get("url", "")
             result[move_url] = label
-        except (ValueError, ConnectionError, KeyError):
+        except (ValueError, ConnectionError, KeyError) as e:
+            # Skip malformed entries, but warn about the failure
+            machine_id = url.rstrip("/").split("/")[-1] if url else "unknown"
+            print(f"  Warning: failed to fetch machine {machine_id} – {e}")
             continue
 
     return result
@@ -721,8 +726,9 @@ def fetch_machines() -> dict:
             if vg not in result:
                 result[vg] = {}
             result[vg][move] = item.upper()
-        except (ValueError, KeyError):
-            pass   # skip malformed entries silently
+        except (ValueError, KeyError, ConnectionError) as e:
+            print(f"  Warning: failed to fetch machine {machine_id} – {e}")
+            continue
 
     print(f"\r  Machine table: {sum(len(v) for v in result.values())} entries "
           f"across {len(result)} version groups.")

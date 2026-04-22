@@ -98,6 +98,7 @@ def build_menu_lines(pkm_ctx, game_ctx, team_ctx=None, pkm_features=None):
         lines.append("O. Team offensive coverage")
         lines.append("S. Team moveset synergy")
         lines.append("H. Team builder  (suggest next slot)")
+        lines.append("J. Joint team optimisation (full 6‑member search)")
         lines.append("X. Team vs in-game opponent")
         lines.append("")
 

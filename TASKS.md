@@ -1,136 +1,106 @@
-# TASKS.md
-# Current and planned tasks – refactoring & polish
+# Joint Team Optimisation — Genetic Algorithm Implementation Guide
+
+> **STATUS:** Baseline GA (Phases 0–7) is **COMPLETE** and integrated as menu key `J`.
+> The sections below describe the optional enhancement levels that can be added incrementally.
 
 ---
 
-## Completed TUI polish items
+## ✅ Completed Baseline (Phases 0–7)
 
-- [x] 4.2.1 Progress bar for long operations (`y` and `w`)
-- [x] 4.2.2 Keyboard navigation hints (built into menu)
-- [x] 4.2.3 Mouse support (Textual native)
-- [x] 4.2.4 Left pane scrollable
-- [x] 4.2.5 Colours in output
-- [x] 4.2.6 `select_form` modal
-- [x] 4.2.8 Error modal for network failures
-- [x] 4.2.9 Loading spinner (progress bar)
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 0 | Pre‑computation (`precompute_pokemon_data`) | ✅ Done |
+| 1 | Fitness function (`team_fitness`) | ✅ Done |
+| 2 | GA core functions (`create_individual`, `crossover`, `mutate`, `tournament_selection`, `run_ga`) | ✅ Done |
+| 3–4 | Integration: `run_joint_team` in `feat_team_builder.py`, menu key `J` in CLI/TUI | ✅ Done |
+| 5 | Candidate pool filtering (`filter_pure_level_up_evolutions`) | ✅ Done |
+| 6 | Display (`display_joint_team_result`) | ✅ Done |
+| 7 | Tests in `core_team.py` and `feat_team_builder.py` | ✅ Done |
 
----
-
-## Remaining TUI polish
-
-### 4.2.7 Rewrite type chart to return string
-
-**Goal:** Replace `calc.print_results()` (which prints directly) with a function that returns a string, so the TUI can display it without `contextlib.redirect_stdout`.
-
-**Steps:**
-- Create `matchup_calculator.format_results(type1, type2, game, era_key) -> str`
-- Keep `print_results` for CLI backward compatibility (calls format and prints)
-- Update `feat_quick_view.py` to use the new format function and pass string to `ui.print_output`
-
-**Added value:** Cleaner TUI integration, eliminates output capture hack.  
-**Complexity:** 🟢 Low  
-**Status:** ✅ Done (§124 in History)
+**Current behavior:**
+- Population: 200, Generations: 200
+- Fitness weights: Offensive 40%, Defensive 30%, Role 15%, Individual 15%
+- Selection: Tournament (size 3), Crossover: Uniform set, Mutation: 5%, Elitism: 10%
+- Early stopping: 20 generations no improvement
+- Candidate pool: all Pokémon in game (filtered by generation, excluding pure level‑up evolutions and Mega/Gigantamax)
+- Output: best team with fitness score and type coverage summary
 
 ---
 
-## Code quality / refactoring tasks
+## 🔮 Optional Enhancements (Levels 1–4)
 
-### 1. Remove debug print statements from TUI
+These levels build on the baseline GA to improve team quality and performance.
 
-**Goal:** Remove all `DEBUG:` lines from `ui_tui.py` to avoid cluttering user output.
+### Level 1 – Improved Fitness Function
 
-**Added value:** Cleaner terminal output, better user experience.  
-**Complexity:** 🟢 Low  
-**Status:** ✅ Done
+**Goal:** Add move‑based synergy, type core bonuses, and speed tier analysis.
 
----
+**Tasks:**
+1. Extend `precompute_pokemon_data` to include presence of entry hazards, setup moves, priority moves.
+2. In `team_fitness`, add bonuses:
+   - +2 for entry hazard, +3 for setup sweeper, +1 for priority move.
+   - +3 for type cores (Fire/Water/Grass, Dragon/Steel/Fairy, etc.).
+   - Penalise all‑same speed tier (-5), reward balanced spread (+5).
+3. Update tests.
 
-### 2. Centralise dummy UI creation
-
-**Goal:** Extract the `DummyUI` class (currently repeated in every feature file) into a single module (e.g., `ui_dummy.py`). Feature files then import and instantiate it when `ui is None`.
-
-**Added value:** Eliminates code duplication, reduces maintenance overhead.  
-**Complexity:** 🟢 Low  
-**Status:** ⬜ To do
-
----
-
-### 3. Guard `get_moves()` returning `None`
-
-**Goal:** In `feat_move_lookup._fetch_move_cached` and other places where `get_moves()` is used, handle the `None` case gracefully (treat as empty dict) to avoid crashes when cache is corrupted or version mismatch.
-
-**Added value:** Prevents crashes in edge cases.  
-**Complexity:** 🟢 Low  
-**Status:** ⬜ To do
+**Files:** `core_team.py`  
+**Estimated lines:** +100
 
 ---
 
-### 4. Unify `PKM_FEATURES` registry
+### Level 2 – Adaptive GA Parameters
 
-**Goal:** Move the feature registry from `ui_cli.py` and `ui_tui.py` to a central location (e.g., `feature_registry.py` or `pokemain.py`). Both UI implementations import it.
+**Goal:** Dynamically adjust mutation rate, population size, and add early stopping (already present).
 
-**Added value:** Single source of truth for available features, easier to add or modify.  
-**Complexity:** 🟡 Medium (requires updating both UI files and ensuring imports work)  
-**Status:** ⬜ To do
+**Tasks:**
+1. Mutation rate adapts based on improvement (already implemented in `run_ga`).
+2. Increase population size if diversity drops (measured via fitness std dev).
+3. Log statistics if verbose mode.
 
----
-
-### 5. Move common display helpers to `core_ui.py`
-
-**Goal:** Extract duplicated helpers like `_abbrev`, `_stat_bar`, `_format_dots`, etc., into a shared module. This cleans up feature files and avoids inconsistency.
-
-**Added value:** Reduces duplication, improves maintainability, centralises display logic.  
-**Complexity:** 🟡 Medium (identify all duplicates, update imports, test)  
-**Status:** ⬜ To do
+**Files:** `core_team.py`  
+**Estimated lines:** +50
 
 ---
 
-### 6. Add type hints to public functions (gradual)
+### Level 3 – Surrogate Model (Random Forest)
 
-**Goal:** Start adding return and parameter type hints to core modules (`core_*.py`) and entry points (`feat_*.run`). Helps with documentation and IDE support.
+**Goal:** Use a lightweight surrogate model to prescreen individuals, reducing exact fitness evaluations.
 
-**Added value:** Better maintainability, easier for new contributors.  
-**Complexity:** 🟡 Medium (spread across many files)  
-**Status:** ⬜ To do
+**Tasks:**
+1. Add `scikit-learn` to `requirements.txt`.
+2. Extract team features (one‑hot roles, bitmasks, total stats) → fixed‑length vector.
+3. Train `RandomForestRegressor` every 10 generations on evaluated teams.
+4. Prescreen: only evaluate exactly if predicted fitness is in top 30%.
+5. Measure speedup (target >3×).
 
----
-
-### 7. Improve error handling in network functions
-
-**Goal:** In `pkm_pokeapi.fetch_machines` and similar, avoid silent skipping of entries when an error occurs. At a minimum, log the problematic machine ID or move name so issues can be debugged.
-
-**Added value:** Helps diagnose data gaps or API inconsistencies.  
-**Complexity:** 🟢 Low  
-**Status:** ⬜ To do
+**Files:** `core_team.py`, `requirements.txt`  
+**New dependency:** `scikit-learn`  
+**Estimated lines:** +150
 
 ---
 
-### 8. Centralise `build_pkm_ctx_from_cache` logic
+### Level 4 – Memetic Algorithm (GA + Local Search)
 
-**Goal:** The function `_build_pkm_ctx_from_cache` in `feat_team_loader.py` duplicates logic from `pkm_session.select_pokemon`. Move it to a utility (e.g., `core_pokemon` or `pkm_session`) and reuse.
+**Goal:** Apply greedy local search to elite individuals each generation to polish solutions.
 
-**Added value:** Reduces duplication, ensures consistency in building `pkm_ctx` from cached data.  
-**Complexity:** 🟡 Medium (requires refactoring `select_pokemon` and updating callers)  
-**Status:** ⬜ To do
+**Tasks:**
+1. Implement `local_search(team_slugs, ...)` that tries single‑member replacements.
+2. Restrict search to same‑role replacements to reduce attempts.
+3. Apply to top 10% individuals every 5 generations, or when stagnation occurs.
+4. Integrate with surrogate model if active.
 
----
-
-### 9. Compile regex patterns for performance
-
-**Goal:** Precompile `_PROGRESS_PATTERN` in `ui_tui.py` and any other regex used inside loops to avoid recompilation.
-
-**Added value:** Minor performance improvement, good practice.  
-**Complexity:** 🟢 Low  
-**Status:** ⬜ To do
+**Files:** `core_team.py`  
+**Estimated lines:** +120
 
 ---
 
-### 10. Remove unused imports
+## 📋 Summary of Dependencies and Order
 
-**Goal:** Scan the codebase for unused imports (e.g., `Footer` in `ui_tui.py`) and remove them.
+| Level | Requires previous level | New dependencies | Expected speed impact |
+|-------|------------------------|------------------|----------------------|
+| 1 | 0 (baseline) | None | Negligible |
+| 2 | 1 | None | Slightly faster |
+| 3 | 2 | scikit-learn | 3–5× faster |
+| 4 | 3 | None | Slower per generation, better quality |
 
-**Added value:** Cleaner code, reduces confusion.  
-**Complexity:** 🟢 Low  
-**Status:** ⬜ To do
-
----
+**Recommended order:** Implement Level 1 → 2 → 3 → 4 incrementally, testing after each.

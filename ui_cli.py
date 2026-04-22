@@ -136,6 +136,13 @@ class CLI(UI):
                     from feat_team_loader import run as team_loader_run
                     self.team_ctx = await team_loader_run(self, self.game_ctx, self.team_ctx)
 
+            elif choice == "j":
+                if self.game_ctx is None:
+                    await self.print_output("Select a game first (press G).")
+                else:
+                    from feat_team_builder import run_joint_team
+                    await run_joint_team(self.team_ctx, self.game_ctx, ui=self)
+
             elif choice in ("v", "o", "s", "h", "x"):
                 if self.game_ctx is None:
                     await self.print_output("Select a game first (press G).")

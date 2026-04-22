@@ -13,23 +13,56 @@ and a lookahead note showing what gaps would remain after the addition.
 
 Public API:
   run(team_ctx, game_ctx, ui=None)          called from pokemain (key H)
+  run_joint_team(team_ctx, game_ctx, ui)    joint optimisation (key J)
   main()                                    standalone
-
-All pure logic is now in core_team. This file retains only I/O and display.
 """
 
 import sys
+import asyncio
 
 try:
     import matchup_calculator as calc
+    import pkm_cache as cache
     from feat_team_loader import team_slots, team_size
     from core_team import (team_offensive_gaps, team_defensive_gaps,
-                           candidate_passes_filter, rank_candidates)
+                           candidate_passes_filter, rank_candidates,
+                           precompute_pokemon_data, team_fitness,
+                           create_individual, crossover, mutate,
+                           tournament_selection, run_ga)
     from core_evolution import is_pure_level_up_chain
 except ModuleNotFoundError as e:
     print(f"\n  ERROR: {e}")
     print("  Make sure all files are in the same folder.\n")
     sys.exit(1)
+
+
+# -- helper function for pkm_ctx ---
+
+def _build_pkm_ctx_from_cache(slug: str) -> dict | None:
+    """Build a pkm_ctx dict from cache for use in batch team load."""
+    import pkm_cache as cache
+    data = cache.get_pokemon(slug)
+    if not data or not data.get("forms"):
+        return None
+    form = data["forms"][0]
+    types = form.get("types", [])
+    if not types:
+        return None
+    return {
+        "pokemon": slug,
+        "variety_slug": form.get("variety_slug", slug),
+        "form_name": form["name"],
+        "types": types,
+        "type1": types[0],
+        "type2": types[1] if len(types) > 1 else "None",
+        "species_gen": data.get("species_gen", 1),
+        "form_gen": data.get("species_gen", 1),
+        "base_stats": form.get("base_stats", {}),
+        "abilities": form.get("abilities", []),
+        "egg_groups": data.get("egg_groups", []),
+        "evolution_chain_id": data.get("evolution_chain_id"),
+    }
+
 
 
 # ── Helper to filter Mega/Gigantamax forms ─────────────────────────────────────
@@ -446,26 +479,253 @@ async def run(team_ctx: list, game_ctx: dict, ui=None) -> None:
     await ui.input_prompt("\n  Press Enter to continue...")
 
 
-def main() -> None:
-    # Dummy UI for standalone
-    import builtins
+# ──────────────────────────────────────────────────────────────────────────────
+# Joint team optimisation (new)
+# ──────────────────────────────────────────────────────────────────────────────
+
+async def run_joint_team(team_ctx: list, game_ctx: dict, ui=None) -> None:
+    if ui is None:
+        from ui_dummy import DummyUI
+        ui = DummyUI()
+
+    if game_ctx is None:
+        await ui.show_error("Select a game first (press G).")
+        return
+
+    # Locked slugs from current team (if any)
+    locked_slugs = set()
+    for slot in team_ctx:
+        if slot is not None:
+            locked_slugs.add(slot["pokemon"])
+
+    if locked_slugs:
+        await ui.print_output(f"\n  Locked Pokémon from team: {', '.join(locked_slugs)}")
+
+    extra = await ui.input_prompt(
+        "  Enter additional Pokémon to lock (comma‑separated, or Enter to continue): "
+    )
+
+    if extra.strip():
+        index = cache.get_index()
+        for name in extra.split(','):
+            name = name.strip()
+            if not name:
+                continue
+            from pkm_session import _index_search
+            matches = _index_search(name, index)
+            if matches:
+                locked_slugs.add(matches[0])
+            else:
+                await ui.print_output(f"  Warning: '{name}' not found, skipping.")
+
+    locked_slugs = frozenset(locked_slugs)
+
+    if len(locked_slugs) > 6:
+        await ui.show_error("Cannot lock more than 6 Pokémon.")
+        return
+
+    await ui.print_output("\n  Preparing candidate pool...")
+
     import asyncio
 
-    class DummyUI:
-        async def print_output(self, text, end="\n"): builtins.print(text, end=end)
-        async def print_progress(self, text, end="\n", flush=False): builtins.print(text, end=end, flush=flush)
-        async def input_prompt(self, prompt): return builtins.input(prompt)
-        async def confirm(self, prompt): return builtins.input(prompt + " (y/n): ").lower() == "y"
-    ui = DummyUI()
+    # Helper to update progress from main thread
+    def set_progress_main(percent: int, text: str):
+        if hasattr(ui, "app"):
+            ui.app.update_progress(percent, text)
+        else:
+            print(f"\r{text}", end="", flush=True)
 
-    asyncio.run(ui.print_output(""))
-    asyncio.run(ui.print_output("  This module is not usable standalone."))
-    asyncio.run(ui.print_output("  Launch from pokemain.py instead."))
-    asyncio.run(ui.print_output(""))
-    asyncio.run(ui.input_prompt("  Press Enter to exit..."))
+    # Step 1: Build candidate pool in thread
+    def build_candidate_pool():
+        # This runs in thread; use call_from_thread for UI updates
+        def update(percent, text):
+            if hasattr(ui, "app"):
+                ui.app.call_from_thread(ui.app.update_progress, percent, text)
+        update(0, "Building candidate pool...")
+        all_pokemon = []
+        index = cache.get_index()
+        slugs = list(index.keys())
+        total = len(slugs)
+        for i, slug in enumerate(slugs):
+            if i % 20 == 0:
+                percent = int((i / total) * 100)
+                update(percent, f"Processing Pokémon {i}/{total}...")
+            data = cache.get_pokemon(slug)
+            if data and data.get("species_gen", 1) <= game_ctx["game_gen"]:
+                pkm = _build_pkm_ctx_from_cache(slug)
+                if pkm:
+                    all_pokemon.append(pkm)
+        update(100, "Filtering evolutions...")
+        result = filter_pure_level_up_evolutions(all_pokemon, game_ctx["game_gen"])
+        update(100, "Candidate pool ready.")
+        return result
+
+    loop = asyncio.get_event_loop()
+    candidate_pool = await loop.run_in_executor(None, build_candidate_pool)
+    # Clear progress bar from main thread
+    if hasattr(ui, "app"):
+        ui.app.update_progress(100, "")
+        # Or clear: ui.app.update_progress(0, "")
+    await ui.print_output(f"  Candidate pool size: {len(candidate_pool)}")
+
+    candidate_slugs = [p["pokemon"] for p in candidate_pool]
+    if len(candidate_slugs) < 6:
+        await ui.show_error("Not enough Pokémon in pool.")
+        return
+
+    # Step 2: Precompute data (fast, can run in main thread or thread)
+    await ui.print_output("  Precomputing Pokémon data...")
+    # Precompute is CPU-bound but quick; run in thread to avoid any lag
+    def precompute():
+        return precompute_pokemon_data(candidate_pool, game_ctx["era_key"])
+    precomputed = await loop.run_in_executor(None, precompute)
+    await ui.print_output("  Precomputation complete.")
+
+    # Step 3: Run GA in thread with progress
+    await ui.print_output("  Running genetic algorithm...")
+    set_progress_main(0, "GA starting...")
+
+    def run_ga_thread():
+        # We'll use a callback that calls call_from_thread
+        def ga_progress(current, total, fitness):
+            percent = int(current / total * 100)
+            text = f"Gen {current}/{total} | best fitness {fitness:.1f}"
+            if hasattr(ui, "app"):
+                ui.app.call_from_thread(ui.app.update_progress, percent, text)
+            else:
+                print(f"\r{text}", end="", flush=True)
+        return run_ga(
+            candidate_slugs,
+            locked_slugs,
+            precomputed,
+            game_ctx["era_key"],
+            population_size=200,
+            generations=200,
+            mutation_rate=0.05,
+            elitism_ratio=0.1,
+            random_seed=None,
+            progress_callback=ga_progress,
+        )
+
+    best_slugs, best_fitness = await loop.run_in_executor(None, run_ga_thread)
+    if hasattr(ui, "app"):
+        ui.app.update_progress(100, "")
+    await ui.print_output(f"  GA complete. Best fitness: {best_fitness:.1f}")
+
+    # Build team
+    best_team = []
+    for slug in best_slugs:
+        pkm = next((p for p in candidate_pool if p["pokemon"] == slug), None)
+        if pkm is None:
+            pkm = _build_pkm_ctx_from_cache(slug)
+        best_team.append(pkm)
+
+    await display_joint_team_result(ui, best_team, best_fitness, game_ctx)
+
+    # Ask user if they want to load this team
+    load_choice = await ui.confirm("\n  Load this team into your current team slots?")
+    if load_choice:
+        # Clear existing team slots
+        for i in range(len(team_ctx)):
+            team_ctx[i] = None
+        # Fill with new team (up to 6 slots)
+        for i, pkm in enumerate(best_team[:6]):
+            team_ctx[i] = pkm
+        await ui.print_output("  Team loaded successfully.")
+    else:
+        await ui.print_output("  Team not loaded.")
+
+    # In CLI mode, pause before returning; TUI handles via confirm modal
+    if not hasattr(ui, "app"):
+        await ui.input_prompt("\n  Press Enter to continue...")
+
+#----------------------------------------------------------------------------------------------------------------
+
+def filter_pure_level_up_evolutions(pokemon_list: list, game_gen: int) -> list:
+    """
+    Remove lower‑stage Pokémon that evolve purely by level‑up into a higher stage
+    that is also in the candidate pool.
+    """
+    import pkm_cache as cache
+    from core_evolution import is_pure_level_up_chain
+
+    candidate_slugs = {p["pokemon"] for p in pokemon_list}
+    slug_to_paths = {}
+
+    for p in pokemon_list:
+        slug = p["pokemon"]
+        data = cache.get_pokemon(slug)
+        if data is None:
+            continue
+        chain_id = data.get("evolution_chain_id")
+        if chain_id is None:
+            continue
+        paths = cache.get_evolution_chain(chain_id)
+        if paths is None:
+            continue
+        slug_to_paths[slug] = paths
+
+    to_remove = set()
+    for p in pokemon_list:
+        slug = p["pokemon"]
+        paths = slug_to_paths.get(slug)
+        if paths is None:
+            continue
+        for path in paths:
+            for i, stage in enumerate(path):
+                if stage["slug"] == slug:
+                    for j in range(i+1, len(path)):
+                        higher_slug = path[j]["slug"]
+                        if higher_slug in candidate_slugs:
+                            if is_pure_level_up_chain(paths, higher_slug):
+                                to_remove.add(slug)
+                            break
+                    break
+
+    return [p for p in pokemon_list if p["pokemon"] not in to_remove]
 
 
-# ── Self-tests (updated with Mega/Gigantamax test) ─────────────────────────────
+async def display_joint_team_result(ui, team: list, fitness: float, game_ctx: dict) -> None:
+    """Show best team with per‑member cards and team coverage summary."""
+    await ui.print_output(f"\n  Best team found (fitness: {fitness:.1f})")
+    await ui.print_output("  " + "═" * _BLOCK_SEP)
+
+    for i, pkm in enumerate(team, 1):
+        types = " / ".join(pkm["types"])
+        await ui.print_output(f"  {i}. {pkm['form_name']} [{types}]")
+        # Optionally compute per‑member notes here.
+
+    await ui.print_output("  " + "═" * _BLOCK_SEP)
+
+    from core_team import build_offensive_coverage
+    # Compute coverage from the team's types (no moves involved)
+    coverage = build_offensive_coverage(
+        [{"se_types": se_types_from_pokemon(pkm, game_ctx["era_key"])} for pkm in team],
+        game_ctx["era_key"]
+    )
+    await ui.print_output(
+        f"  Team coverage: {len(coverage['covered'])} / {coverage['total_types']} types hit SE"
+    )
+    if coverage.get("gaps"):
+        await ui.print_output(f"  Gaps: {', '.join(coverage['gaps'])}")
+    if coverage.get("overlap"):
+        overlap_str = "  ".join(f"{t} ({n})" for t, n in coverage["overlap"])
+        await ui.print_output(f"  Overlap: {overlap_str}")
+
+
+def se_types_from_pokemon(pkm_ctx: dict, era_key: str) -> list:
+    """Return types hit SE by this Pokémon's own types."""
+    _, valid_types, _ = calc.CHARTS[era_key]
+    se = []
+    for def_type in valid_types:
+        if calc.get_multiplier(era_key, pkm_ctx["type1"], def_type) >= 2.0:
+            se.append(def_type)
+        elif pkm_ctx["type2"] != "None" and calc.get_multiplier(era_key, pkm_ctx["type2"], def_type) >= 2.0:
+            se.append(def_type)
+    return se
+
+
+# ── Self-tests ────────────────────────────────────────────────────────────────
 
 def _run_tests():
     errors = []
@@ -555,14 +815,12 @@ def _run_tests():
     else:
         fail("_print_suggestion lookahead", out[:120])
 
-    # No ✗ line when new_weak_pairs is empty
     if "✗" not in out:
         ok("_print_suggestion: no ✗ line when new_weak_pairs is empty")
     else:
         fail("_print_suggestion no-pairs", out[:120])
 
     # ── display_team_builder (stdout capture) ─────────────────────────────────
-    # 1-member team → small-team note shown
     from feat_team_loader import new_team, add_to_team
     team_ctx = new_team()
     charizard = {"form_name": "Charizard", "type1": "Fire", "type2": "Flying"}
@@ -622,7 +880,6 @@ def _run_tests():
     else:
         fail("Mega/Gigantamax filtering", f"got {[c['form_name'] for c in filtered]}")
 
-    # Test Gigantamax form
     candidates_with_gmax = [
         {"slug": "charizard-gmax", "form_name": "Gigantamax Charizard", "types": ["Fire", "Flying"]},
         {"slug": "charizard", "form_name": "Charizard", "types": ["Fire", "Flying"]},
@@ -633,8 +890,256 @@ def _run_tests():
     else:
         fail("Mega/Gigantamax filtering gmax", f"got {[c['form_name'] for c in filtered2]}")
 
+    # ── New tests for joint team optimisation helpers ─────────────────────────
+    print("\n  --- Joint team optimisation helpers ---")
+
+    # 1. _build_pkm_ctx_from_cache
+    import tempfile
+    import pkm_cache as cache
+    import pkm_sqlite
+
+    # Set up temporary cache
+    orig_base = cache._BASE
+    tmp_dir = tempfile.mkdtemp()
+    cache._BASE = tmp_dir
+    pkm_sqlite.set_base(tmp_dir)
+
+    try:
+        fake_data = {
+            "pokemon": "charizard",
+            "species_gen": 1,
+            "egg_groups": ["monster", "dragon"],
+            "evolution_chain_id": 1,
+            "forms": [{
+                "name": "Charizard",
+                "variety_slug": "charizard",
+                "types": ["Fire", "Flying"],
+                "base_stats": {"hp": 78, "attack": 84, "defense": 78,
+                               "special-attack": 109, "special-defense": 85, "speed": 100},
+                "abilities": [{"slug": "blaze", "is_hidden": False}]
+            }]
+        }
+        cache.save_pokemon("charizard", fake_data)
+
+        pkm = _build_pkm_ctx_from_cache("charizard")
+        expected_keys = {"pokemon", "variety_slug", "form_name", "types",
+                         "type1", "type2", "species_gen", "form_gen",
+                         "base_stats", "abilities", "egg_groups", "evolution_chain_id"}
+        if pkm and expected_keys.issubset(pkm.keys()):
+            ok("_build_pkm_ctx_from_cache: returns full pkm_ctx")
+        else:
+            fail("_build_pkm_ctx_from_cache", f"missing keys: {expected_keys - set(pkm.keys()) if pkm else 'None'}")
+
+        if pkm and pkm["type1"] == "Fire" and pkm["type2"] == "Flying":
+            ok("_build_pkm_ctx_from_cache: types correct")
+        else:
+            fail("_build_pkm_ctx_from_cache types", str(pkm))
+
+        # Cache miss
+        pkm_miss = _build_pkm_ctx_from_cache("pikachu")
+        if pkm_miss is None:
+            ok("_build_pkm_ctx_from_cache: cache miss → None")
+        else:
+            fail("_build_pkm_ctx_from_cache miss", str(pkm_miss))
+
+    finally:
+        # Restore original cache
+        cache._BASE = orig_base
+        pkm_sqlite.set_base(orig_base)
+        import shutil
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # 2. se_types_from_pokemon
+    charizard_ctx = {
+        "type1": "Fire",
+        "type2": "Flying",
+        "types": ["Fire", "Flying"]
+    }
+    se = se_types_from_pokemon(charizard_ctx, "era3")
+    # Fire hits Grass, Ice, Bug, Steel; Flying hits Fighting, Bug, Grass
+    expected_se = {"Grass", "Ice", "Bug", "Steel", "Fighting"}
+    if expected_se.issubset(set(se)):
+        ok("se_types_from_pokemon: Charizard hits expected SE types")
+    else:
+        fail("se_types_from_pokemon", f"got {se}")
+
+    # Single-type
+    blastoise_ctx = {"type1": "Water", "type2": "None", "types": ["Water"]}
+    se_water = se_types_from_pokemon(blastoise_ctx, "era3")
+    if "Fire" in se_water and "Ground" in se_water and "Rock" in se_water:
+        ok("se_types_from_pokemon: Blastoise SE types correct")
+    else:
+        fail("se_types_from_pokemon Blastoise", str(se_water))
+
+    # 3. filter_pure_level_up_evolutions (requires evolution chain cache)
+    # Mock the cache to return a pure level-up chain for Charmander->Charmeleon->Charizard
+    # and a non-pure chain for Horsea->Seadra->Kingdra (trade item)
+    import tempfile
+    import pkm_cache as cache
+    import pkm_sqlite
+
+    tmp_dir2 = tempfile.mkdtemp()
+    cache._BASE = tmp_dir2
+    pkm_sqlite.set_base(tmp_dir2)
+
+    try:
+        # Mock Pokémon data for three stages
+        charmander_data = {
+            "pokemon": "charmander",
+            "species_gen": 1,
+            "egg_groups": ["monster", "dragon"],
+            "evolution_chain_id": 2,
+            "forms": [{"name": "Charmander", "variety_slug": "charmander", "types": ["Fire"]}]
+        }
+        charmeleon_data = {
+            "pokemon": "charmeleon",
+            "species_gen": 1,
+            "egg_groups": ["monster", "dragon"],
+            "evolution_chain_id": 2,
+            "forms": [{"name": "Charmeleon", "variety_slug": "charmeleon", "types": ["Fire"]}]
+        }
+        charizard_data = {
+            "pokemon": "charizard",
+            "species_gen": 1,
+            "egg_groups": ["monster", "dragon"],
+            "evolution_chain_id": 2,
+            "forms": [{"name": "Charizard", "variety_slug": "charizard", "types": ["Fire", "Flying"]}]
+        }
+        cache.save_pokemon("charmander", charmander_data)
+        cache.save_pokemon("charmeleon", charmeleon_data)
+        cache.save_pokemon("charizard", charizard_data)
+
+        # Mock evolution chain (pure level-up)
+        chain_pure = [
+            [{"slug": "charmander", "trigger": ""},
+             {"slug": "charmeleon", "trigger": "Level 16"},
+             {"slug": "charizard", "trigger": "Level 36"}]
+        ]
+        cache.save_evolution_chain(2, chain_pure)
+
+        # Create candidate pool with all three
+        pool = [
+            _build_pkm_ctx_from_cache("charmander"),
+            _build_pkm_ctx_from_cache("charmeleon"),
+            _build_pkm_ctx_from_cache("charizard")
+        ]
+        filtered = filter_pure_level_up_evolutions(pool, 9)
+        filtered_slugs = [p["pokemon"] for p in filtered]
+        # Only the highest stage should remain
+        if filtered_slugs == ["charizard"]:
+            ok("filter_pure_level_up_evolutions: pure chain keeps only final stage")
+        else:
+            fail("filter_pure_level_up_evolutions pure chain", str(filtered_slugs))
+
+        # Mixed chain: Horsea (pure level-up to Seadra) -> Kingdra (trade item)
+        # Mock Pokémon data
+        horsea_data = {
+            "pokemon": "horsea",
+            "species_gen": 1,
+            "egg_groups": ["water1", "dragon"],
+            "evolution_chain_id": 3,
+            "forms": [{"name": "Horsea", "variety_slug": "horsea", "types": ["Water"]}]
+        }
+        seadra_data = {
+            "pokemon": "seadra",
+            "species_gen": 1,
+            "egg_groups": ["water1", "dragon"],
+            "evolution_chain_id": 3,
+            "forms": [{"name": "Seadra", "variety_slug": "seadra", "types": ["Water"]}]
+        }
+        kingdra_data = {
+            "pokemon": "kingdra",
+            "species_gen": 2,
+            "egg_groups": ["water1", "dragon"],
+            "evolution_chain_id": 3,
+            "forms": [{"name": "Kingdra", "variety_slug": "kingdra", "types": ["Water", "Dragon"]}]
+        }
+        cache.save_pokemon("horsea", horsea_data)
+        cache.save_pokemon("seadra", seadra_data)
+        cache.save_pokemon("kingdra", kingdra_data)
+
+        chain_mixed = [
+            [{"slug": "horsea", "trigger": ""},
+             {"slug": "seadra", "trigger": "Level 32"},
+             {"slug": "kingdra", "trigger": "Trade holding Dragon Scale"}]
+        ]
+        cache.save_evolution_chain(3, chain_mixed)
+
+        pool2 = [
+            _build_pkm_ctx_from_cache("horsea"),
+            _build_pkm_ctx_from_cache("seadra"),
+            _build_pkm_ctx_from_cache("kingdra")
+        ]
+        filtered2 = filter_pure_level_up_evolutions(pool2, 9)
+        filtered2_slugs = [p["pokemon"] for p in filtered2]
+        # Seadra evolves to Kingdra via trade, so Seadra and Kingdra should both remain
+        # Horsea is pure level-up to Seadra, so Horsea should be filtered out
+        if set(filtered2_slugs) == {"seadra", "kingdra"}:
+            ok("filter_pure_level_up_evolutions: mixed chain keeps both Seadra and Kingdra, removes Horsea")
+        else:
+            fail("filter_pure_level_up_evolutions mixed chain", str(filtered2_slugs))
+
+    finally:
+        cache._BASE = orig_base
+        pkm_sqlite.set_base(orig_base)
+        import shutil
+        shutil.rmtree(tmp_dir2, ignore_errors=True)
+
+    # 4. Smoke test for run_joint_team (mocked)
+    # We'll mock cache, run_ga, etc. to ensure it doesn't crash.
+    print("\n  --- run_joint_team smoke test ---")
+    from unittest.mock import patch, AsyncMock, MagicMock
+    import asyncio
+
+    class MockUI:
+        def __init__(self):
+            self.output = []
+            self.app = MagicMock()
+            self.app.call_from_thread = MagicMock()
+            self.app.update_progress = MagicMock()
+            self.app.clear_progress = MagicMock()
+        async def print_output(self, text):
+            self.output.append(text)
+        async def input_prompt(self, prompt):
+            return ""
+        async def show_error(self, msg):
+            self.output.append(f"ERROR: {msg}")
+        async def confirm(self, prompt):
+            return False
+
+    mock_ui = MockUI()
+    mock_game_ctx = {"era_key": "era3", "game_gen": 9, "game": "Scarlet / Violet"}
+
+    # Mock dependencies
+    with patch('feat_team_builder.cache') as mock_cache, \
+         patch('feat_team_builder.run_ga') as mock_run_ga, \
+         patch('feat_team_builder.precompute_pokemon_data') as mock_precomp, \
+         patch('feat_team_builder.filter_pure_level_up_evolutions') as mock_filter, \
+         patch('feat_team_builder._build_pkm_ctx_from_cache') as mock_build:
+
+        # Setup mock returns
+        mock_cache.get_index.return_value = {"charizard": {}, "blastoise": {}}
+        mock_cache.get_pokemon.return_value = {
+            "species_gen": 1,
+            "forms": [{"name": "Charizard", "variety_slug": "charizard", "types": ["Fire", "Flying"]}]
+        }
+        mock_build.return_value = {"pokemon": "charizard", "form_name": "Charizard", "types": ["Fire", "Flying"]}
+        mock_filter.return_value = [mock_build.return_value] * 10  # 10 candidates
+        mock_precomp.return_value = {"charizard": {"offensive_bitmask": 0, "defensive_bitmask": 0, "total_stats": 534, "role": "special"}}
+        mock_run_ga.return_value = (frozenset(["charizard"] * 6), 95.0)
+
+        # Also mock the team_ctx
+        team_ctx = [None] * 6  # empty team
+
+        # Run the function
+        try:
+            asyncio.run(run_joint_team(team_ctx, mock_game_ctx, ui=mock_ui))
+            ok("run_joint_team: completes without exception")
+        except Exception as e:
+            fail("run_joint_team smoke test", str(e))
+
     print()
-    total = 13  # added 2 new tests
+    total = 13 + 8  # original 13 + 8 new tests (adjust as needed)
     if errors:
         print(f"  FAILED ({len(errors)}): {errors}")
         sys.exit(1)
